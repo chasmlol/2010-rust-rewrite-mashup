@@ -344,7 +344,9 @@ fn update(
     for match_ in installed.read() {
         stop(&mut runtime, &mut view);
         if assets::minecraft_map::is_minecraft(&match_.zone) {
-            let saved = assets::minecraft_map::world_dir(&match_.zone);
+            // "New World" is saved into a folder of its own, as Minecraft does.
+            let saved = assets::minecraft_map::world_dir(&match_.zone)
+                .or_else(assets::minecraft_map::new_world_dir);
             let (send, receive) = mpsc::channel();
             let _ = std::thread::Builder::new()
                 .name("minecraft-world-load".into())

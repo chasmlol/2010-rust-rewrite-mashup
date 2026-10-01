@@ -43,6 +43,7 @@ world). To bring in an older world, open it once in Minecraft 26.3, which\r\n\
 upgrades it, then copy its folder here.\r\n\
 \r\n\
 An empty folder here becomes a new world that is saved into it.\r\n\
+The \"New World\" entry saves into a new folder here each time.\r\n\
 Edits you make in a world are saved into its folder: keep a backup of worlds\r\n\
 you care about.\r\n";
 
@@ -76,6 +77,32 @@ fn world_folders() -> Vec<String> {
         .collect();
     names.sort_by_key(|name| name.to_lowercase());
     names
+}
+
+/// The display name of a Minecraft zone in the map list: "New World" for the
+/// generated overworld, the folder's name for a saved world.
+pub fn world_label(zone: &str) -> Option<String> {
+    let zone = if is_minecraft(zone) { zone } else { zone.split_once(':')?.1 };
+    if !is_minecraft(zone) {
+        return None;
+    }
+    Some(if zone.eq_ignore_ascii_case(ZONE) {
+        "New World".to_owned()
+    } else {
+        zone[WORLD_PREFIX.len()..].to_owned()
+    })
+}
+
+/// Creates the next free `New World`, `New World 2`, ... folder in the worlds
+/// folder for the "New World" entry to save into.
+pub fn new_world_dir() -> Option<std::path::PathBuf> {
+    let dir = worlds_dir();
+    create_worlds_dir(&dir);
+    (1..).map(|n| if n == 1 { "New World".to_owned() } else { format!("New World {n}") }).take(10_000).find_map(|name| {
+        let path = dir.join(name);
+        // create_dir fails if the folder exists, so two loads never share one.
+        std::fs::create_dir(&path).ok().map(|()| path)
+    })
 }
 
 /// The zones of the saved worlds in the worlds folder.
@@ -179,5 +206,8 @@ mod tests {
         assert!(!is_minecraft("iw4:mp_rust"));
         assert!(is_minecraft_load("iw4:minecraft:world/a"));
         assert!(world_dir("minecraft:overworld").is_none());
+        assert_eq!(world_label("minecraft:overworld").as_deref(), Some("New World"));
+        assert_eq!(world_label("minecraft:world/Survival 1").as_deref(), Some("Survival 1"));
+        assert_eq!(world_label("iw4:mp_rust"), None);
     }
 }

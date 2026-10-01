@@ -91,7 +91,7 @@ pub(crate) fn route(
     mut party: ResMut<UiPartyState>,
     mut menus: MessageWriter<UiMenuRequest>,
     mut transition: ResMut<session::SessionSwapRequest>,
-    maps: Res<ui::MenuMapList>,
+    mut maps: ResMut<ui::MenuMapList>,
     settings: Res<frame::GameSettings>,
     localize: Option<Res<asset_game::LocalizeCatalog>>,
     catalog: Option<Res<asset_game::MenuCatalog>>,
@@ -216,6 +216,7 @@ pub(crate) fn route(
                 }
                 "ui_vote_skip" => services.submit(net::MasterMenuAction::VoteToSkip)?,
                 "ui_maps" => {
+                    maps.refresh_minecraft_worlds();
                     let map = dvars.get("ui_mapname").unwrap_or_default();
                     state.map_pack = maps.pack_of(map).unwrap_or(0);
                     let index = pack_maps(&maps, state.map_pack)
