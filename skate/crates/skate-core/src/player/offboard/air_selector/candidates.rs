@@ -18,23 +18,33 @@ pub(super) fn prepare(
     {
         return Err("Invalid authored BipedAir selector settings");
     }
-    if [p.scalar_96, p.scalar_100, p.scalar_104]
-        .iter()
-        .any(|x| !x.is_finite())
-        || [
-            p.velocity_0,
+    for (message, value) in [
+        ("Nonfinite BipedAir launch packet: scalar_96", p.scalar_96),
+        ("Nonfinite BipedAir launch packet: scalar_100", p.scalar_100),
+        ("Nonfinite BipedAir launch packet: scalar_104", p.scalar_104),
+    ] {
+        if !value.is_finite() {
+            return Err(message);
+        }
+    }
+    for (message, vector) in [
+        ("Nonfinite BipedAir launch packet: velocity_0", p.velocity_0),
+        (
+            "Nonfinite BipedAir launch packet: secondary_velocity_16",
             p.secondary_velocity_16,
-            p.position_32,
-            p.up_48,
-            p.forward_64,
+        ),
+        ("Nonfinite BipedAir launch packet: position_32", p.position_32),
+        ("Nonfinite BipedAir launch packet: up_48", p.up_48),
+        ("Nonfinite BipedAir launch packet: forward_64", p.forward_64),
+        (
+            "Nonfinite BipedAir launch packet: board_position_80",
             p.board_position_80,
-            gravity,
-        ]
-        .into_iter()
-        .flatten()
-        .any(|x| !x.is_finite())
-    {
-        return Err("Nonfinite BipedAir launch packet");
+        ),
+        ("Nonfinite BipedAir launch packet: gravity", gravity),
+    ] {
+        if vector.into_iter().any(|x| !x.is_finite()) {
+            return Err(message);
+        }
     }
     let initial = scale(UP, -(s.height - s.sphere_radius));
     let mut correction = [0., 0.1, 0., 0.];

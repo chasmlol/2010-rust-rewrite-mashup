@@ -273,3 +273,23 @@ fn air_six_lines_consume_even_when_all_miss() {
     assert!(ledge::consume_lines(&[None; 6]).is_ok());
     assert!(ledge::consume_lines(&[None; 7]).is_err());
 }
+#[test]
+fn nonfinite_launch_packet_names_the_offending_field() {
+    let gravity = [0., -9.8, 0., 0.];
+    let cases: [(&str, fn(&mut Packet)); 4] = [
+        ("scalar_100", |p| p.scalar_100 = f32::NAN),
+        ("velocity_0", |p| p.velocity_0[1] = f32::NAN),
+        ("position_32", |p| p.position_32[2] = f32::INFINITY),
+        ("forward_64", |p| p.forward_64[0] = f32::NAN),
+    ];
+    for (field, corrupt) in cases {
+        let mut s = Selector::default();
+        let mut p = packet();
+        corrupt(&mut p);
+        let error = s.begin_launch(p, gravity, settings()).unwrap_err();
+        assert!(
+            error.contains(field),
+            "error should name {field}, got {error:?}"
+        );
+    }
+}
