@@ -397,7 +397,7 @@ fn sync_remote_bodies(
             rotation: Quat::from_rotation_z(yaw.to_radians()),
             scale: Vec3::ONE,
         };
-        if skate.active && !skate.bones.is_empty() && client.0 == skate.client {
+        if skate.active && !skate.bones.is_empty() && u32::from(identity.number()) == skate.client {
             pose = Transform::from_matrix(skate.root);
         }
         if let Some(puppet) = puppet.as_ref().filter(|p| p.active && client.0 == p.client) {
