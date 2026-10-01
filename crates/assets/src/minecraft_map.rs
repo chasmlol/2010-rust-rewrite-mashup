@@ -8,14 +8,91 @@ const PROXY_ZONE: &str = "iw4:mp_rust";
 /// The map whose level script the Minecraft world runs.
 pub const PROXY_MAP: &str = "mp_rust";
 
+/// A saved world from the worlds folder is the zone `minecraft:world/<folder>`.
+pub const WORLD_PREFIX: &str = "minecraft:world/";
+
+/// The generated overworld, or a saved world from the worlds folder.
 pub fn is_minecraft(zone: &str) -> bool {
     zone.eq_ignore_ascii_case(ZONE)
+        || zone
+            .get(..WORLD_PREFIX.len())
+            .is_some_and(|head| head.eq_ignore_ascii_case(WORLD_PREFIX))
+            && zone.len() > WORLD_PREFIX.len()
 }
 
 /// Whether a load's zone, with or without its content namespace, is the
 /// Minecraft map.
 pub fn is_minecraft_load(zone: &str) -> bool {
     is_minecraft(zone) || zone.split_once(':').is_some_and(|(_, rest)| is_minecraft(rest))
+}
+
+/// Where saved worlds go, one folder each: `MINECRAFT_WORLDS_DIR`, else
+/// `minecraft-worlds` next to where the game runs.
+pub fn worlds_dir() -> std::path::PathBuf {
+    std::env::var_os("MINECRAFT_WORLDS_DIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_default().join("minecraft-worlds"))
+}
+
+const WORLDS_README: &str = "\
+Put Minecraft worlds here, one folder per world, and they appear in the\r\n\
+Minecraft tab of the map list.\r\n\
+\r\n\
+Worlds must be in Minecraft 26.x's layout (a `dimensions` folder inside the\r\n\
+world). To bring in an older world, open it once in Minecraft 26.3, which\r\n\
+upgrades it, then copy its folder here.\r\n\
+\r\n\
+An empty folder here becomes a new world that is saved into it.\r\n\
+Edits you make in a world are saved into its folder: keep a backup of worlds\r\n\
+you care about.\r\n";
+
+fn create_worlds_dir(dir: &std::path::Path) {
+    if std::fs::create_dir_all(dir).is_ok() {
+        let readme = dir.join("README.txt");
+        if !readme.exists() {
+            let _ = std::fs::write(readme, WORLDS_README);
+        }
+    }
+}
+
+/// The folder names under the worlds folder that can be loaded: worlds in the
+/// 26.x layout, and empty folders, which start a new world. Older layouts
+/// (a `level.dat` or `region` folder with no `dimensions`) are left out.
+fn world_folders() -> Vec<String> {
+    let dir = worlds_dir();
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return Vec::new();
+    };
+    let mut names: Vec<String> = entries
+        .flatten()
+        .filter(|entry| entry.path().is_dir())
+        .filter_map(|entry| {
+            let name = entry.file_name().into_string().ok()?;
+            let path = entry.path();
+            let legacy = !path.join("dimensions").is_dir()
+                && (path.join("level.dat").is_file() || path.join("region").is_dir());
+            (!legacy && !name.starts_with('.') && !name.contains(['/', '\\'])).then_some(name)
+        })
+        .collect();
+    names.sort_by_key(|name| name.to_lowercase());
+    names
+}
+
+/// The zones of the saved worlds in the worlds folder.
+pub fn world_zones() -> Vec<String> {
+    world_folders().into_iter().map(|name| format!("{WORLD_PREFIX}{name}")).collect()
+}
+
+/// The world folder a zone names, if it is a saved world. Zone names are
+/// lowercased on their way here, so the folder is found without regard to case.
+pub fn world_dir(zone: &str) -> Option<std::path::PathBuf> {
+    let zone = if is_minecraft(zone) { zone } else { zone.split_once(':')?.1 };
+    if !is_minecraft(zone) || zone.eq_ignore_ascii_case(ZONE) {
+        return None;
+    }
+    let wanted = &zone[WORLD_PREFIX.len()..];
+    let name = world_folders().into_iter().find(|name| name.eq_ignore_ascii_case(wanted))?;
+    Some(worlds_dir().join(name))
 }
 
 /// Where the world's Minecraft files are: a MinecraftOSS checkout named by
@@ -31,6 +108,7 @@ pub fn root() -> Option<std::path::PathBuf> {
 
 /// Starts fetching Minecraft's files from Mojang when nothing supplies them.
 pub fn prepare() {
+    create_worlds_dir(&worlds_dir());
     if root().is_none() {
         crate::minecraft_setup::begin();
     }
@@ -53,7 +131,11 @@ pub fn find_zone_file(root_dir: &GamesRoot, zone: &str) -> Result<ZoneFile, Stri
         }
     };
     let mut proxy = asset_transport::find_zone_file(root_dir, PROXY_ZONE)?;
-    proxy.zone_name = ZONE.to_owned();
+    // A saved world keeps its own zone name, so the load knows which folder.
+    proxy.zone_name = match world_dir(zone) {
+        Some(dir) => format!("{WORLD_PREFIX}{}", dir.file_name().unwrap_or_default().to_string_lossy()),
+        None => ZONE.to_owned(),
+    };
     proxy.alias_note = Some(format!("Minecraft world from {}", checkout.display()));
     Ok(proxy)
 }
@@ -66,7 +148,7 @@ pub fn list_mp_map_packs(root_dir: &GamesRoot) -> Vec<asset_transport::MapPack> 
     if asset_transport::find_zone_file(root_dir, PROXY_ZONE).is_ok() {
         packs.push(asset_transport::MapPack {
             label: "Minecraft".to_owned(),
-            maps: vec![ZONE.to_owned()],
+            maps: std::iter::once(ZONE.to_owned()).chain(world_zones()).collect(),
         });
     }
     packs
@@ -78,8 +160,24 @@ pub fn list_mp_maps(root_dir: &GamesRoot) -> Vec<String> {
     prepare();
     if asset_transport::find_zone_file(root_dir, PROXY_ZONE).is_ok() {
         maps.push(ZONE.to_owned());
+        maps.extend(world_zones());
     }
     maps.sort();
     maps.dedup();
     maps
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn saved_worlds_are_minecraft_zones() {
+        assert!(is_minecraft("minecraft:overworld"));
+        assert!(is_minecraft("Minecraft:World/My World"));
+        assert!(!is_minecraft("minecraft:world/"));
+        assert!(!is_minecraft("iw4:mp_rust"));
+        assert!(is_minecraft_load("iw4:minecraft:world/a"));
+        assert!(world_dir("minecraft:overworld").is_none());
+    }
 }

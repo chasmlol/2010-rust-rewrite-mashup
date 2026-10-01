@@ -41,6 +41,7 @@ bytemuck = { version = "1", features = ["derive"] }
 
 skate-host = { path = "../../skate/crates/skate-host" }
 minecraft_terrain = { path = "../minecraft_terrain" }
+minecraftoss-world = { path = "../../third_party/minecraftoss/world" }
 minecraftoss-core = { path = "../../third_party/minecraftoss/core" }
 minecraftoss-entities = { path = "../../third_party/minecraftoss/entities" }
 minecraftoss-player = { path = "../../third_party/minecraftoss/player" }
