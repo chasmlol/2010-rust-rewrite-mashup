@@ -24,6 +24,12 @@ Modern Warfare 2, Skate 3 and Minecraft in one game, all running on
 
 You don't need Minecraft installed. The first time the game starts, it downloads Minecraft 26.3's own files (textures, sounds, world data) straight from Mojang's official servers, the same way the Minecraft launcher does. That's about 125 MB, into `iw4l-artifacts/minecraft-26.3`. After that it plays offline. Nothing from Minecraft is included in this repository.
 
+### Your own worlds
+
+On first start the game creates a `minecraft-worlds` folder next to `iw4l.exe`. Open **Create Game**, then the map list's **Minecraft** tab. It lists **New World**, which starts a fresh world saved into a new folder, and then each world folder in `minecraft-worlds`. Drop a Minecraft world folder in and it appears the next time the list opens. An empty folder there becomes a new world that is saved into it. Edits you make are saved into the world's folder, so keep a backup of worlds you care about.
+
+Worlds must be in Minecraft 26.x's layout (a `dimensions` folder inside the world). To bring in an older world, open it once in Minecraft 26.3, which upgrades it, then copy it over. Areas you haven't explored are generated from the world's seed. `MINECRAFT_WORLDS_DIR` moves the folder.
+
 ## What you'll need
 
 - **MW2**, only tested with the Steam version.

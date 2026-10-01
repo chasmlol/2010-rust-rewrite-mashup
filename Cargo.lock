@@ -5255,6 +5255,7 @@ dependencies = [
  "minecraftoss-core",
  "minecraftoss-entities",
  "minecraftoss-player",
+ "minecraftoss-world",
  "net",
  "perf",
  "playerstate_iw4",

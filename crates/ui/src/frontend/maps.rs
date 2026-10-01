@@ -1,6 +1,9 @@
 use crate::MenuMapList;
 
 pub fn map_label(map: &str) -> String {
+    if let Some(name) = assets::minecraft_map::world_label(map) {
+        return name.to_uppercase();
+    }
     map.split_once(':')
         .map_or(map, |(_, name)| name)
         .trim_start_matches("mp_")

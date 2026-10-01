@@ -17,6 +17,20 @@ impl MenuMapList {
         self.maps().any(|installed| installed == map)
     }
 
+    /// Rereads the worlds folder into the Minecraft pack, so worlds copied in
+    /// while the game runs show up the next time the list opens.
+    pub fn refresh_minecraft_worlds(&mut self) {
+        let Some(pack) = self.0.iter_mut().find(|pack| pack.maps.iter().any(|map| map == assets::minecraft_map::ZONE)) else {
+            return;
+        };
+        let fresh: Vec<String> = std::iter::once(assets::minecraft_map::ZONE.to_owned())
+            .chain(assets::minecraft_map::world_zones())
+            .collect();
+        if pack.maps != fresh {
+            pack.maps = fresh;
+        }
+    }
+
     pub fn pack_of(&self, map: &str) -> Option<usize> {
         self.0
             .iter()

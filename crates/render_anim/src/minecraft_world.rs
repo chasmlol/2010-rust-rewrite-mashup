@@ -214,7 +214,7 @@ pub(crate) fn register(app: &mut App) {
         );
 }
 
-fn load(seed: i64) -> Result<Loaded, String> {
+fn load(seed: i64, world: Option<std::path::PathBuf>) -> Result<Loaded, String> {
     let root = assets::minecraft_map::root().ok_or_else(assets::minecraft_setup::status)?;
     let paths = DataPaths::under(&root);
     let registries = Arc::new(Registries::load(&paths)?);
@@ -225,7 +225,7 @@ fn load(seed: i64) -> Result<Loaded, String> {
         seed,
         VIEW_DISTANCE,
         Dimension::Overworld,
-        None,
+        world.as_deref(),
     )
     .map_err(|e| e.to_string())?;
     let build = minecraft_terrain::mesh::build(&HandcraftedScene::default(), &packs)
@@ -283,6 +283,21 @@ fn pad_trigger(pad: Option<&bevy::input::gamepad::Gamepad>, button: GamepadButto
     pad.is_some_and(|pad| if just { pad.just_pressed(button) } else { pad.pressed(button) })
 }
 
+/// The seed of a saved world, or, for a folder that holds no world yet, a new
+/// seed saved into it so the world is the same next time.
+fn saved_seed(dir: &std::path::Path) -> Result<i64, String> {
+    use minecraftoss_world::settings::WorldSettings;
+    if let Some(settings) = WorldSettings::read(dir)? {
+        return Ok(settings.seed);
+    }
+    if dir.join("dimensions").is_dir() {
+        return Err(format!("{}: a world with no world_gen_settings.dat", dir.display()));
+    }
+    let settings = WorldSettings::new(seed());
+    settings.write(dir)?;
+    Ok(settings.seed)
+}
+
 fn seed() -> i64 {
     if let Some(seed) = std::env::var("IW4L_MINECRAFT_SEED")
         .ok()
@@ -329,13 +344,24 @@ fn update(
     for match_ in installed.read() {
         stop(&mut runtime, &mut view);
         if assets::minecraft_map::is_minecraft(&match_.zone) {
-            let seed = seed();
-            diag::info!(World, "Minecraft world: seed {seed}");
+            // "New World" is saved into a folder of its own, as Minecraft does.
+            let saved = assets::minecraft_map::world_dir(&match_.zone)
+                .or_else(assets::minecraft_map::new_world_dir);
             let (send, receive) = mpsc::channel();
             let _ = std::thread::Builder::new()
                 .name("minecraft-world-load".into())
                 .spawn(move || {
-                    let _ = send.send(load(seed));
+                    let _ = send.send(match saved {
+                        Some(dir) => saved_seed(&dir).and_then(|seed| {
+                            diag::info!(World, "Minecraft world {}: seed {seed}", dir.display());
+                            load(seed, Some(dir))
+                        }),
+                        None => {
+                            let seed = seed();
+                            diag::info!(World, "Minecraft world: seed {seed}");
+                            load(seed, None)
+                        }
+                    });
                 });
             runtime.loading = Some(receive);
             view.active = true;
