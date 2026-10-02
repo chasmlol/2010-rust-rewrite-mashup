@@ -11,7 +11,7 @@ game is bundled.
 Writes <folder>/assets on success; progress lines go to stdout.
 """
 from pathlib import Path
-import argparse, runpy, shutil, sys, tempfile, traceback
+import argparse, json, runpy, shutil, sys, tempfile, traceback
 
 ROOT = Path(getattr(sys, '_MEIPASS', Path(__file__).resolve().parent))
 sys.path.insert(0, str(ROOT))
@@ -65,6 +65,15 @@ def convert(xex, out):
         work = Path(work)
         converted = exports.core(game, stage, work, report, log)
         exports.character(game, stage, work, report, log, converted)
+
+    from tools.asset_pipeline import park_props
+
+    park_inventory = park_props.extract(game, assets=stage / 'assets', report=report)
+    if park_inventory['status'] == 'unavailable':
+        report(f"Create-a-Park assets unavailable: {park_inventory['reason']}")
+        availability = stage / 'assets/private/park-props/availability.json'
+        availability.parent.mkdir(parents=True, exist_ok=True)
+        availability.write_text(json.dumps(park_inventory, indent=2), encoding='utf-8')
 
     assets = stage / 'assets'
     for needed in ('private/skater.glb', 'private/game.json', 'private/stock/physics-skeletons.json',

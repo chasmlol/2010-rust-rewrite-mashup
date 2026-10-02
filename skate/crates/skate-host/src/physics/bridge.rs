@@ -28,6 +28,7 @@ pub struct Pose {
     pub velocity: Vec3,
     pub tick: u64,
     pub state: String,
+    pub marker: crate::SessionMarkerStatus,
 }
 impl Session {
     pub fn new(
@@ -183,6 +184,7 @@ impl Session {
             velocity: Vec3::new(v.x, v.y, v.z),
             tick: self.physics.ticks,
             state: format!("{:?}", self.skater.player_state.current()),
+            marker: self.markers.status(),
         }
     }
 }
@@ -209,6 +211,22 @@ impl CollisionBuilder {
             world: crate::skate_world::collision_world(&map, self.material)?,
             grind: std::sync::Arc::new(crate::grind_world::StaticProvider::new(Some(&map))?),
         })
+    }
+
+    /// Builds the map collision together with every placed prop's transformed
+    /// collision triangles. Prop geometry is validated before it reaches Skate.
+    pub fn build_with_props(
+        &self,
+        mut triangles: Vec<[[f32; 3]; 3]>,
+        rails: Vec<Vec<[f32; 3]>>,
+        catalog: &crate::object_dropper::PropCatalog,
+        placed: &[crate::object_dropper::PlacedProp],
+    ) -> Result<PreparedCollision, String> {
+        catalog.validate()?;
+        for prop in placed {
+            triangles.extend(prop.collision_triangles(catalog)?);
+        }
+        self.build(triangles, rails)
     }
 }
 

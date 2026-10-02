@@ -13,7 +13,9 @@ mod skate_world;
 mod animation;
 mod crash_context;
 mod tuning;
+pub mod object_dropper;
 
 pub use physics::bridge;
 
 mod session_marker;
+pub use session_marker::Status as SessionMarkerStatus;

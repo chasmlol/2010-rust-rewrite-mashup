@@ -29,10 +29,23 @@ pub(crate) struct SessionMarker {
     last_batch: u64,
 }
 
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Status {
+    pub placed: bool,
+    pub can_return: bool,
+    pub progress: f32,
+}
 
 pub(crate) struct Runtime { session: SessionMarker, validation: validation::Validation }
 impl Runtime {
     pub fn load(root: &std::path::Path) -> Result<Self,String> { Ok(Self{session:SessionMarker::default(),validation:validation::Validation::load(root)?}) }
+    pub fn status(&self) -> Status {
+        Status {
+            placed: self.session.marker.is_some(),
+            can_return: self.session.can_return,
+            progress: self.session.progress,
+        }
+    }
     pub fn suspend(&mut self) { self.session.hold.cancel(); self.session.blocked_until_release=true; self.session.ui_time=0.; }
     pub fn collect_time(&mut self,dt:f64) { self.session.ui_time+=dt; }
     pub fn advance(&mut self,input:&ControllerInput,physics:&GamePhysics,skater:&mut SkaterRuntime) {

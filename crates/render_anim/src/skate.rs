@@ -277,6 +277,9 @@ fn present(mode: &mut SkateMode, p: Pose, authority: &mut net::AuthorityWorld) {
     mode.names = p.names;
     mode.tick = p.tick;
     mode.status = p.state;
+    mode.marker_placed = p.marker.placed;
+    mode.marker_can_return = p.marker.can_return;
+    mode.marker_progress = p.marker.progress;
     mode.camera = p.camera.map(|(position, basis, fov)| {
         (
             Transform::from_translation(collision::from_skate(position)).looking_to(
@@ -303,6 +306,7 @@ fn update(
     mut mode: ResMut<SkateMode>,
     mut host: ResMut<Host>,
     (gamepads, active): (Query<&bevy::input::gamepad::Gamepad>, Option<Res<frame::ActivePad>>),
+    keyboard: Res<ButtonInput<KeyCode>>,
 ) {
     let Some(authority) = authority.as_deref_mut() else {
         return;
@@ -345,7 +349,22 @@ fn update(
     // kind it is, converted to the Xbox layout the skate input expects.
     let pad = active.and_then(|active| active.0).and_then(|entity| gamepads.get(entity).ok());
     host.pad_packet = host.pad_packet.wrapping_add(1);
-    let input = pad.map_or_else(InputFrame::neutral, |pad| pad_frame(pad, host.pad_packet));
+    let input = pad.map_or_else(InputFrame::neutral, |pad| {
+        let (marker_set, marker_return) = marker_keyboard_actions(
+            !mode.input_blocked,
+            keyboard.just_pressed(KeyCode::F6),
+            keyboard.pressed(KeyCode::F7),
+            keyboard.pressed(KeyCode::ShiftLeft),
+            keyboard.just_pressed(KeyCode::ArrowDown),
+            keyboard.pressed(KeyCode::ArrowUp),
+        );
+        pad_frame(
+            pad,
+            host.pad_packet,
+            marker_set,
+            marker_return,
+        )
+    });
     mode.controller = input.controller();
     host.previous_buttons = input.buttons();
 
@@ -465,7 +484,12 @@ fn update(
 }
 
 /// A controller's state in XInput's layout, for the skate input.
-fn pad_frame(pad: &bevy::input::gamepad::Gamepad, packet: u32) -> InputFrame {
+fn pad_frame(
+    pad: &bevy::input::gamepad::Gamepad,
+    packet: u32,
+    marker_set: bool,
+    marker_return: bool,
+) -> InputFrame {
     use bevy::input::gamepad::GamepadButton as B;
     const BITS: [(B, u16); 14] = [
         (B::DPadUp, 0x0001),
@@ -483,10 +507,11 @@ fn pad_frame(pad: &bevy::input::gamepad::Gamepad, packet: u32) -> InputFrame {
         (B::West, 0x4000),
         (B::North, 0x8000),
     ];
-    let buttons = BITS
+    let mut buttons = BITS
         .iter()
         .filter(|(button, _)| pad.pressed(*button))
         .fold(0, |bits, (_, bit)| bits | bit);
+    buttons = with_marker_buttons(buttons, marker_set, marker_return);
     // An analog trigger reports its travel; a digital one only pressed.
     let trigger = |button: B| {
         let value = pad
@@ -503,4 +528,60 @@ fn pad_frame(pad: &bevy::input::gamepad::Gamepad, packet: u32) -> InputFrame {
         [axis(right.x), axis(right.y)],
         packet,
     )
+}
+
+fn with_marker_buttons(buttons: u16, set: bool, return_to_marker: bool) -> u16 {
+    let set_buttons = if set { 0x0100 | 0x0002 } else { 0 };
+    let return_buttons = if return_to_marker {
+        0x0100 | 0x0001
+    } else {
+        0
+    };
+    buttons | set_buttons | return_buttons
+}
+
+fn marker_keyboard_actions(
+    enabled: bool,
+    f6_pressed: bool,
+    f7_held: bool,
+    shift_held: bool,
+    down_pressed: bool,
+    up_held: bool,
+) -> (bool, bool) {
+    if !enabled {
+        return (false, false);
+    }
+    (
+        f6_pressed || (shift_held && down_pressed),
+        f7_held || (shift_held && up_held),
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{marker_keyboard_actions, with_marker_buttons};
+
+    #[test]
+    fn marker_shortcuts_preserve_pad_input_and_synthesize_native_combos() {
+        assert_eq!(with_marker_buttons(0x4000, false, false), 0x4000);
+        assert_eq!(with_marker_buttons(0x4000, true, false), 0x4102);
+        assert_eq!(with_marker_buttons(0x4000, false, true), 0x4101);
+        assert_eq!(with_marker_buttons(0x4000, true, true), 0x4103);
+    }
+
+    #[test]
+    fn marker_keyboard_arrows_mimic_native_dpad_combos_and_respect_blocking() {
+        assert_eq!(
+            marker_keyboard_actions(true, false, false, true, true, false),
+            (true, false)
+        );
+        assert_eq!(
+            marker_keyboard_actions(true, false, false, true, false, true),
+            (false, true)
+        );
+        assert_eq!(
+            marker_keyboard_actions(false, true, true, true, true, true),
+            (false, false)
+        );
+    }
 }

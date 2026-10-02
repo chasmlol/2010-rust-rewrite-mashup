@@ -17,4 +17,7 @@ pub struct SkateMode {
     pub camera: Option<(Transform, f32)>,
     pub tick: u64,
     pub status: String,
+    pub marker_placed: bool,
+    pub marker_can_return: bool,
+    pub marker_progress: f32,
 }
