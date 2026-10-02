@@ -56,6 +56,16 @@ indexes runtime mesh and collision files; the accompanying `.npz` files are
 available for inspection. Older converted data without this runtime catalog
 format is detected and setup asks for `default.xex` again to refresh it.
 
+To extract or refresh only the props later, close IW4L and run
+`Extract Skate Props.bat` from the release folder. Enter the decompiled Skate 3
+folder that contains `data/content/parkassets.big`. The script uses the
+converter in `skate/` and installs the catalog into the `IW4L_SKATE_ASSETS`
+folder recorded in `.env` (normally `skate-data/assets`); it leaves the other
+converted Skate files alone. If the converter is an older release without
+`--props-only`, update/rebuild `skate/iw4l-skate-convert.exe` first; older
+converters cannot extract this prop catalog. The game reads the updated catalog
+next time it launches.
+
 Both folders are saved in `.env` next to `iw4l.exe`. Delete `.env` (and
 `skate-data/`) to run the setup again.
 
@@ -107,6 +117,7 @@ A release folder is:
 ```text
 IW4L-Skate/
 ├── iw4l.exe                     cargo build --release -p launcher
+├── Extract Skate Props.bat
 ├── skate/iw4l-skate-convert.exe skate/converter/build.ps1
 ├── skate/licenses/              Python, NumPy, Pillow, UTT, Custom Engine Layer
 └── LICENSE NOTICE OFL-Oxanium.txt COPYING-FreeFont.txt

@@ -473,6 +473,10 @@ pub fn bundles(root: &Path, env: &Env, profile: &str) -> Res<()> {
             &root.join("Minecraft World.bat"),
             &stage.join("Minecraft World.bat"),
         )?;
+        copy(
+            &root.join("Extract Skate Props.bat"),
+            &stage.join("Extract Skate Props.bat"),
+        )?;
         std::fs::write(
             stage.join(".env"),
             format!(
@@ -489,6 +493,7 @@ pub fn bundles(root: &Path, env: &Env, profile: &str) -> Res<()> {
         let mut names = vec![
             ".env",
             "Minecraft World.bat",
+            "Extract Skate Props.bat",
             "iw4l-ca.pem",
             "iw4launcher.exe",
             "iw4l.exe",

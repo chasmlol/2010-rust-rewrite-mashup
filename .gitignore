@@ -5,6 +5,7 @@
 /target/
 **/target/
 /dist/
+/skate/iw4l-skate-convert.exe
 
 # Runtime output next to the binary / cwd.
 iw4l-artifacts

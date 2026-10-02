@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 import numpy as np
 
+import iw4l_skate_convert
 from park_props import extract, prop_model_entries, selected_entries
 
 
@@ -127,6 +128,52 @@ class ParkPropsTests(unittest.TestCase):
             result = extract(Path(temporary), Path(temporary) / "assets", lambda _: None)
             self.assertEqual(result["status"], "unavailable")
             self.assertIn("parkassets.big", result["reason"])
+
+    def test_standalone_refresh_replaces_only_the_prop_folder(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            game = root / "game"
+            archive = game / "data/content/parkassets.big"
+            archive.parent.mkdir(parents=True)
+            archive.write_bytes(b"fixture")
+            assets = root / "skate-data/assets"
+            prop_root = assets / "private/park-props"
+            prop_root.mkdir(parents=True)
+            (prop_root / "old-catalog.json").write_text("old", encoding="utf-8")
+            (assets / "private").mkdir(exist_ok=True)
+            (assets / "private/skater.glb").write_bytes(b"keep")
+
+            def fake_extract(game_root, output_assets, report):
+                target = output_assets / "private/park-props"
+                target.mkdir(parents=True)
+                (target / "catalog.json").write_text("new", encoding="utf-8")
+                return {
+                    "status": "models-and-retail-collision",
+                    "props": [{"id": "ramp"}],
+                }
+
+            tools = types.ModuleType("tools")
+            tools.__path__ = []
+            pipeline = types.ModuleType("tools.asset_pipeline")
+            pipeline.__path__ = []
+            props = types.ModuleType("tools.asset_pipeline.park_props")
+            props.extract = fake_extract
+            with patch.dict(
+                sys.modules,
+                {
+                    "tools": tools,
+                    "tools.asset_pipeline": pipeline,
+                    "tools.asset_pipeline.park_props": props,
+                },
+            ):
+                iw4l_skate_convert.extract_props_only(game, assets)
+
+            self.assertEqual(
+                (prop_root / "catalog.json").read_text(encoding="utf-8"),
+                "new",
+            )
+            self.assertFalse((prop_root / "old-catalog.json").exists())
+            self.assertEqual((assets / "private/skater.glb").read_bytes(), b"keep")
 
 
 if __name__ == "__main__":

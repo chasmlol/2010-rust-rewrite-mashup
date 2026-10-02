@@ -85,15 +85,66 @@ def convert(xex, out):
     report('Skate 3 data ready')
 
 
+def extract_props_only(game_root, assets):
+    game_root = game_root.resolve()
+    if not game_root.is_dir():
+        raise RuntimeError(f'Select the decompiled Skate 3 folder, not {game_root}.')
+    archive = game_root / 'data/content/parkassets.big'
+    if not archive.is_file():
+        raise RuntimeError(
+            f'{archive} is missing. Select the game folder containing data\\content\\parkassets.big.'
+        )
+
+    assets = assets.resolve()
+    assets.parent.mkdir(parents=True, exist_ok=True)
+    from tools.asset_pipeline import park_props
+
+    def report(text):
+        print(text, flush=True)
+
+    backup = assets / 'private/park-props.previous'
+    with tempfile.TemporaryDirectory(prefix='iw4l-props-', dir=assets.parent) as temporary:
+        staged_assets = Path(temporary)
+        result = park_props.extract(game_root, staged_assets, report)
+        if result['status'] != 'models-and-retail-collision' or not result.get('props'):
+            raise RuntimeError('No usable Create-a-Park props with collision were extracted.')
+        staged_props = staged_assets / 'private/park-props'
+        target_props = assets / 'private/park-props'
+        target_props.parent.mkdir(parents=True, exist_ok=True)
+        shutil.rmtree(backup, ignore_errors=True)
+        if target_props.exists():
+            target_props.replace(backup)
+        try:
+            staged_props.replace(target_props)
+        except Exception:
+            if backup.exists() and not target_props.exists():
+                backup.replace(target_props)
+            raise
+        shutil.rmtree(backup, ignore_errors=True)
+    report(f"Installed {len(result['props'])} props in {assets / 'private/park-props'}")
+
+
 def main():
     if len(sys.argv) > 2 and sys.argv[1] == '--task':
         return run_task(sys.argv[2], sys.argv[3:])
     parser = argparse.ArgumentParser()
-    parser.add_argument('--xex', type=Path, required=True)
-    parser.add_argument('--out', type=Path, required=True)
+    parser.add_argument('--xex', type=Path)
+    parser.add_argument('--props-only', action='store_true',
+                        help='extract only the local Create-a-Park model and collision catalog')
+    parser.add_argument('--game-root', type=Path,
+                        help='decompiled game folder containing data/content/parkassets.big')
+    parser.add_argument('--out', type=Path, required=True,
+                        help='conversion folder, or assets folder with --props-only')
     args = parser.parse_args()
     try:
-        convert(args.xex, args.out)
+        if args.props_only:
+            if args.game_root is None:
+                parser.error('--game-root is required with --props-only')
+            extract_props_only(args.game_root, args.out)
+        else:
+            if args.xex is None:
+                parser.error('--xex is required unless --props-only is used')
+            convert(args.xex, args.out)
     except Exception as error:
         traceback.print_exc()
         print(f'ERROR: {error}', flush=True)

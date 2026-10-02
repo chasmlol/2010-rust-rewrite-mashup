@@ -27,7 +27,7 @@ $tools = Join-Path $SkateEngine 'tools'
 foreach ($source in Get-ChildItem -LiteralPath $tools -File -Recurse) {
     if ($source.FullName -match '[\\/]__pycache__[\\/]') { continue }
     if ($source.Extension -notin '.py','.json','.txt','.md','.toml' -and $source.Name -ne 'LICENSE') { continue }
-    $relative = [IO.Path]::GetRelativePath($tools, $source.FullName).Replace('\', '/')
+    $relative = $source.FullName.Substring($tools.Length).TrimStart('\', '/').Replace('\', '/')
     if ($relative -like 'mixamo_to_skate/*.json' -or $relative -match '(^|/)test_[^/]*\.py$' -or
         $relative -match '(^|/)blender[^/]*(/|$)') { continue }
     $destination = Join-Path "$work/tools" $relative
