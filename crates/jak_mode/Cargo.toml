@@ -1,0 +1,12 @@
+[package]
+name = "jak_mode"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "Jak 3's on-foot, JET-Board and Blaster gameplay, rebuilt natively: control loop, sphere collision, states, projectiles."
+
+[dependencies]
+glam.workspace = true
+
+[lints]
+workspace = true

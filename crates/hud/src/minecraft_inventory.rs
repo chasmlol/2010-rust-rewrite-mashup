@@ -270,7 +270,7 @@ fn stack_name(
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn update_minecraft_hud(
     surface: Res<crate::surface::Hud2dSurface>,
-    catalog: Option<Res<MenuCatalog>>,
+    (catalog, jak): (Option<Res<MenuCatalog>>, Option<Res<frame::JakMode>>),
     ui: Option<ResMut<MinecraftUi>>,
     (weapons, strings): (Option<Res<PreparedWeapons>>, Option<Res<PreparedLocalizedStrings>>),
     (keys, buttons, mut wheel): (Res<ButtonInput<KeyCode>>, Res<ButtonInput<MouseButton>>, MessageReader<MouseWheel>),
@@ -300,7 +300,9 @@ pub(crate) fn update_minecraft_hud(
 
     // Opening and closing, and the hotbar's keys.
     let open_before = ui.inventory_open;
-    if keys.just_pressed(KeyCode::KeyE) || (ui.inventory_open && keys.just_pressed(KeyCode::Escape)) {
+    // Jak Mode plays on these keys.
+    let jak = jak.is_some_and(|mode| mode.active);
+    if (keys.just_pressed(KeyCode::KeyE) && !jak) || (ui.inventory_open && keys.just_pressed(KeyCode::Escape)) {
         ui.inventory_open = !ui.inventory_open && !keys.just_pressed(KeyCode::Escape);
     }
     if open_before && !ui.inventory_open {
@@ -347,7 +349,7 @@ pub(crate) fn update_minecraft_hud(
         if let Some(digit) = digit {
             ui.select = Some(digit);
         }
-        if keys.just_pressed(KeyCode::KeyQ) {
+        if keys.just_pressed(KeyCode::KeyQ) && !jak {
             ui.drop_selected = Some(ctrl);
         }
         canvas.k = 1.15;

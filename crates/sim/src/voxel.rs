@@ -205,7 +205,9 @@ pub fn mob_targets() -> Vec<(u64, [f32; 3], [f32; 3])> {
         .collect()
 }
 
-pub(crate) fn push_mob_shot(key: u64, damage: f32, from: [f32; 3]) {
+/// A strike on the mob with this key from map point `from`, with the damage
+/// it does.
+pub fn push_mob_shot(key: u64, damage: f32, from: [f32; 3]) {
     let Ok(world) = WORLD.read() else {
         return;
     };
@@ -315,6 +317,35 @@ pub fn collision_triangles(centre: [f32; 3], radius: i32, depth: i32) -> Vec<[[f
     let Some(world) = world.as_ref() else {
         return Vec::new();
     };
+    let c = to_block(world.origin, centre);
+    let (cx, cy, cz) = (c[0].floor() as i32, c[1].floor() as i32, c[2].floor() as i32);
+    let mut out = Vec::new();
+    block_triangles(world, [cx - radius, cy - depth, cz - radius], [cx + radius, cy + depth, cz + radius], &mut out);
+    out
+}
+
+/// [`collision_triangles`] for the blocks the map-space box `min..max`
+/// touches.
+pub fn collision_triangles_in(min: [f32; 3], max: [f32; 3], out: &mut Vec<[[f32; 3]; 3]>) {
+    let Ok(world) = WORLD.read() else {
+        return;
+    };
+    let Some(world) = world.as_ref() else {
+        return;
+    };
+    let a = to_block(world.origin, min);
+    let b = to_block(world.origin, max);
+    let lo: [i32; 3] = std::array::from_fn(|k| a[k].min(b[k]).floor() as i32);
+    let hi: [i32; 3] = std::array::from_fn(|k| a[k].max(b[k]).floor() as i32);
+    if (0..3).map(|k| i64::from(hi[k] - lo[k] + 1)).product::<i64>() > 32 * 32 * 32 {
+        return;
+    }
+    block_triangles(world, lo, hi, out);
+}
+
+/// The block-box faces of the blocks from `lo` to `hi` inclusive, in map
+/// units, wound counterclockwise seen from outside.
+fn block_triangles(world: &VoxelWorld, lo: [i32; 3], hi: [i32; 3], out: &mut Vec<[[f32; 3]; 3]>) {
     let full: Vec<bool> = world.shapes.iter().map(|b| b.len() == 1 && b[0] == [0.0, 0.0, 0.0, 1.0, 1.0, 1.0]).collect();
     let is_full = |x: i32, y: i32, z: i32| -> bool {
         let Some(chunk) = world.chunks.get(&(x >> 4, z >> 4)) else {
@@ -327,12 +358,9 @@ pub fn collision_triangles(centre: [f32; 3], radius: i32, depth: i32) -> Vec<[[f
         let id = chunk.shapes[((ly * 16 + (z & 15)) * 16 + (x & 15)) as usize];
         full.get(usize::from(id)).copied().unwrap_or(false)
     };
-    let c = to_block(world.origin, centre);
-    let (cx, cy, cz) = (c[0].floor() as i32, c[1].floor() as i32, c[2].floor() as i32);
-    let mut out = Vec::new();
-    for x in cx - radius..=cx + radius {
-        for z in cz - radius..=cz + radius {
-            for y in cy - depth..=cy + depth {
+    for x in lo[0]..=hi[0] {
+        for z in lo[2]..=hi[2] {
+            for y in lo[1]..=hi[1] {
                 let boxes = world.shape_at(x, y, z);
                 if boxes.is_empty() {
                     continue;
@@ -376,7 +404,6 @@ pub fn collision_triangles(centre: [f32; 3], radius: i32, depth: i32) -> Vec<[[f
             }
         }
     }
-    out
 }
 
 /// Whether traces against `brushes` go to the block world.

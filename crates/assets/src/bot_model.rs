@@ -18,7 +18,7 @@ pub struct BotModel {
     pub lighting_gain: f32,
     pub joints: Vec<BotJoint>,
     pub surfaces: Vec<BotSurface>,
-    textures: Vec<BotTexture>,
+    pub(crate) textures: Vec<BotTexture>,
 }
 fn default_lighting_gain() -> f32 {
     1.0
@@ -47,10 +47,10 @@ pub struct BotVertex {
     pub weights: [f32; 4],
 }
 #[derive(Deserialize)]
-struct BotTexture {
-    width: u16,
-    height: u16,
-    rgba: Vec<u8>,
+pub(crate) struct BotTexture {
+    pub(crate) width: u16,
+    pub(crate) height: u16,
+    pub(crate) rgba: Vec<u8>,
 }
 
 pub fn local_bot_model() -> Option<&'static BotModel> {
@@ -116,6 +116,7 @@ pub(crate) fn install_local_bot_materials(catalog: &mut MaterialCatalog) {
     for model in [local_bot_model(), local_skate_board()]
         .into_iter()
         .flatten()
+        .chain(crate::jak_model::local_jak().into_iter().flat_map(|jak| jak.meshes()))
     {
         install_materials(catalog, model);
     }

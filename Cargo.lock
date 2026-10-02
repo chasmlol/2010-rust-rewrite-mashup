@@ -202,6 +202,7 @@ name = "approved_tests"
 version = "0.1.0"
 dependencies = [
  "asset_transport",
+ "jak_mode",
  "serde_json",
 ]
 
@@ -3565,6 +3566,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "jak_mode"
+version = "0.1.0"
+dependencies = [
+ "glam 0.32.1",
+]
+
+[[package]]
 name = "jni"
 version = "0.21.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5247,8 +5255,10 @@ dependencies = [
  "fx_iw4",
  "gamemode_iw4",
  "glam 0.29.3",
+ "half",
  "hud_iw4",
  "image",
+ "jak_mode",
  "lighting_iw4",
  "math_iw4",
  "minecraft_terrain",

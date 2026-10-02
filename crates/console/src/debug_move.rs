@@ -15,8 +15,14 @@ use crate::{
 pub(crate) struct ShowposHud;
 #[derive(Component)]
 pub(crate) struct SkateHud;
+#[derive(Component)]
+pub(crate) struct JakHud;
 
 pub(crate) fn spawn_showpos_hud(commands: &mut Commands, font: Handle<Font>) {
+    commands.spawn((JakHud, UiLayer::Overlay, Visibility::Hidden,
+        Node { position_type: PositionType::Absolute, bottom:px(24), left:px(24),padding:UiRect::all(px(8)), ..default() },
+        BackgroundColor(Color::srgba(0.02,0.03,0.04,0.7)),GlobalZIndex(19000),Text::new(""),
+        TextFont{font:font.clone().into(),font_size:FontSize::Px(18.),..default()},TextColor(Color::srgb(0.98,0.88,0.35))));
     commands.spawn((SkateHud, UiLayer::Overlay, Visibility::Hidden,
         Node { position_type: PositionType::Absolute, bottom:px(24), left:px(24),padding:UiRect::all(px(8)), ..default() },
         BackgroundColor(Color::srgba(0.02,0.03,0.04,0.7)),GlobalZIndex(19000),Text::new(""),
@@ -67,6 +73,10 @@ pub(crate) fn register_debug_move_commands(registry: &mut ConsoleRegistry) {
                 "kill — ForceDeath the local player (needs cheats; invented, not COMMANDS)",
             ));
     }
+    registry.register(
+        crate::CommandSpec::new("jak")
+            .usage("jak [on|off|status] - Jak Mode: Jak 3's JET-Board and Blaster (K toggles)"),
+    );
     if registry.resolve("force_spawn").is_none() {
         registry.register(crate::CommandSpec::new("force_spawn").usage(
             "force_spawn [random <seed> | at <x> <y> <z> [yaw]] — respawn from any state through spawn resolution (needs cheats)",
@@ -104,7 +114,7 @@ pub(crate) fn register_debug_move_commands(registry: &mut ConsoleRegistry) {
 }
 
 pub(crate) fn route_debug_move_commands(
-    mut skate: ResMut<frame::SkateMode>,
+    (mut skate, mut jak): (ResMut<frame::SkateMode>, ResMut<frame::JakMode>),
     mut events: MessageReader<ConsoleCommand>,
     mut console: ResMut<ConsoleState>,
     settings: Res<ConsoleSettings>,
@@ -136,6 +146,27 @@ pub(crate) fn route_debug_move_commands(
                     _ => { echo("usage: skate [on|off|status]".into(), &mut console, &mut line); continue; }
                 }
                 echo(format!("skate active={} ready={} controller={:?} tick={} {}",skate.active,skate.preloaded,skate.controller,skate.tick,skate.status),&mut console,&mut line);
+            }
+
+            "jak" => {
+                match cmd.args.first().map(String::as_str) {
+                    Some("status") => {}
+                    Some("on") => jak.toggle_requested = !jak.active,
+                    Some("off") => jak.toggle_requested = jak.active,
+                    None => jak.toggle_requested = true,
+                    _ => {
+                        echo("usage: jak [on|off|status]".into(), &mut console, &mut line);
+                        continue;
+                    }
+                }
+                echo(
+                    format!(
+                        "jak active={} state={} speed={:.1}m/s {}",
+                        jak.active, jak.state, jak.speed, jak.status
+                    ),
+                    &mut console,
+                    &mut line,
+                );
             }
 
             "showpos" | "debug_pos" => match cmd.args.first().map(String::as_str) {
@@ -820,5 +851,29 @@ pub(crate) fn update_skate_overlay(mode:Res<frame::SkateMode>,mut hud:Query<(&mu
         else if mode.entering && !mode.preloaded {"Skate is finishing map preparation... | J: cancel".into()}
         else if mode.controller.is_none() {"SKATE | Connect an Xbox / XInput controller | J: return to MW2".into()}
         else {"SKATE | Original controller controls | Start: pause | J: return to MW2".into()};
+    }
+}
+
+pub(crate) fn update_jak_overlay(
+    mode: Res<frame::JakMode>,
+    mut hud: Query<(&mut Text, &mut Visibility), With<JakHud>>,
+) {
+    for (mut text, mut visibility) in &mut hud {
+        *visibility = if mode.active || !mode.status.is_empty() {
+            Visibility::Visible
+        } else {
+            Visibility::Hidden
+        };
+        **text = if !mode.active {
+            format!("Jak Mode: {}", mode.status)
+        } else {
+            let ammo = mode
+                .ammo
+                .map_or("endless".to_owned(), |a| format!("{a:.0}"));
+            format!(
+                "JAK | {} | {:.1} m/s | Blaster ammo {ammo}\nWASD/stick move  Space/A jump  F/RMB/RT board  LMB/RB fire, on the board flip  Ctrl/LB duck, charge jump  Ctrl or Shift/LT + direction trick  E/B zap  mouse/right stick camera | K: return to MW2",
+                mode.state, mode.speed
+            )
+        };
     }
 }

@@ -80,15 +80,17 @@ pub(crate) fn update_reticle(
         Res<ViewSubject>,
         Option<Res<frame::SkateMode>>,
         Option<Res<frame::MinecraftUi>>,
+        Option<Res<frame::JakMode>>,
     ),
 ) {
-    let (mut started, view, skate, minecraft) = life;
+    let (mut started, view, skate, minecraft, jak) = life;
     for ev in started.read() {
         if ev.client == local.0.0 {
             *ads_latch = ReticleAdsLatch::default();
         }
     }
     if skate.is_some_and(|mode| mode.active)
+        || jak.is_some_and(|mode| mode.active)
         || minecraft.is_some_and(|ui| ui.active && ui.inventory_open)
     {
         hide_all(&mut quads);

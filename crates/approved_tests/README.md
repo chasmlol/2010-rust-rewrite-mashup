@@ -29,6 +29,16 @@ boundary after the scenario's pending screenshots finish writing. Interactive
 `quit` intentionally has only a short write grace period and can leave a
 scenario-owned PNG incomplete under load.
 
+## Approved unit tests
+
+| name | what it checks |
+| --- | --- |
+| `jak_parity` | Jak Mode against Jak 3's own numbers: the board's thrust curve and cruise, board and on-foot jump heights, the board hop's timing, the Blaster's draw and fire delay, the shot's speed, timeout and impact, sphere sweeps, turn limits, glancing off a wall |
+
+The owner asked for parity tests with the Jak Mode rewrite (2026-10-01). They
+are in `src/jak_parity.rs`; `cargo test -p approved_tests jak_parity` runs
+them in seconds, with no game process.
+
 ## Running
 
 ```sh

@@ -42,6 +42,7 @@ members = [
     "crates/hud_iw4",
     "crates/killcam_iw4",
     "crates/input_iw4",
+    "crates/jak_mode",
     "crates/launcher",
     "crates/minecraft_terrain",
     "crates/lighting_iw4",
@@ -143,6 +144,7 @@ hud = { path = "crates/hud" }
 hud_iw4 = { path = "crates/hud_iw4" }
 killcam_iw4 = { path = "crates/killcam_iw4" }
 input_iw4 = { path = "crates/input_iw4" }
+jak_mode = { path = "crates/jak_mode" }
 launcher = { path = "crates/launcher" }
 lighting_iw4 = { path = "crates/lighting_iw4" }
 marks_iw4 = { path = "crates/marks_iw4" }

@@ -10,5 +10,8 @@ description = "The owner-approved end-to-end scenarios, run against a real iw4l 
 asset_transport.workspace = true
 serde_json.workspace = true
 
+[dev-dependencies]
+jak_mode.workspace = true
+
 [lints]
 workspace = true

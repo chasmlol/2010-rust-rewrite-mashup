@@ -37,6 +37,9 @@ pub use occupancy::{
 };
 pub use plugin::RenderAnimPlugin;
 
+pub mod clip_triangles;
+pub mod jak;
+mod jak_pose;
 mod minecraft_entities;
 mod minecraft_hand;
 mod minecraft_inventory;

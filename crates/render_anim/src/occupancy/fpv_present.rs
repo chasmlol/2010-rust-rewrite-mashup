@@ -396,7 +396,7 @@ fn fpv_occupy_submission(
 }
 
 pub fn occupy_fpv_scene(
-    skate: Res<frame::SkateMode>,
+    (skate, jak): (Res<frame::SkateMode>, Res<frame::JakMode>),
     puppet: Option<Res<frame::InventoryPuppet>>,
     minecraft: Option<Res<frame::MinecraftUi>>,
     mut submissions: MessageWriter<AnimDObjSceneSubmission>,
@@ -410,6 +410,7 @@ pub fn occupy_fpv_scene(
     fpv_meshes: Option<Res<PreparedFpvMeshes>>,
 ) {
     if (skate.active && !skate.bones.is_empty())
+        || jak.active
         || puppet.as_ref().is_some_and(|p| p.active)
         || minecraft.as_ref().is_some_and(|ui| ui.active && ui.holding_item && !ui.empty_hand)
         || presented.viewweapon_player(local.0).is_none()

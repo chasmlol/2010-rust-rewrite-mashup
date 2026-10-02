@@ -762,7 +762,11 @@ fn apply_weapon_switch_requests(
 }
 
 pub fn sample_client_input(
-    (skate, mut minecraft): (Option<Res<frame::SkateMode>>, Option<ResMut<frame::MinecraftUi>>),
+    (skate, mut minecraft, jak): (
+        Option<Res<frame::SkateMode>>,
+        Option<ResMut<frame::MinecraftUi>>,
+        Option<Res<frame::JakMode>>,
+    ),
     time: Res<Time>,
     mut actions: ResMut<ClientActionInput>,
     mut look: ResMut<LookState>,
@@ -1168,7 +1172,7 @@ pub fn sample_client_input(
         cmd.melee_charge_yaw = yaw;
         cmd.melee_charge_dist = dist;
     }
-    if skate.as_ref().is_some_and(|s| s.active) {
+    if skate.as_ref().is_some_and(|s| s.active) || jak.as_ref().is_some_and(|j| j.active) {
         cmd.forwardmove = 0; cmd.rightmove = 0; cmd.buttons = 0;
     }
     template.cmd = cmd;

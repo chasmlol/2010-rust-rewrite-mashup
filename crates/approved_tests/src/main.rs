@@ -1,5 +1,7 @@
 //! The owner-approved end-to-end scenarios; see README.md.
 
+#[cfg(test)]
+mod jak_parity;
 mod report;
 mod runner;
 mod scenario;

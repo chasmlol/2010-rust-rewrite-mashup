@@ -542,6 +542,7 @@ fn generate_fx_transaction(
     xanims: Option<Res<assets::PreparedXAnims>>,
     fpv_bolts: Res<crate::adapters::anim::fpv_present::FpvBoltTargets>,
     remotes: Query<&crate::adapters::anim::remote_body::RemoteFxBolts>,
+    (jak, tracer_defs): (Option<Res<frame::JakMode>>, Option<Res<PreparedTracers>>),
 ) -> FxFrameTransaction {
     let present_span = perf::Span::HostFxPresentCpuMs.enter();
     let Some(catalog) = catalog else {
@@ -598,6 +599,9 @@ fn generate_fx_transaction(
     host.0.vis_blocker_write = vis_write;
     host.0.vis_blocker_read = vis_read;
     tick_tracer_beams(&mut tracers, FxMsec(host.0.msec_now));
+    if let Some(jak) = jak.as_deref().filter(|jak| jak.active) {
+        queue_jak_shots(&mut tracers, jak, tracer_defs.as_deref());
+    }
 
     FxFrameTransaction {
         outcome: FxFrameOutcome::Generated(FxGeneratedFrame {
@@ -617,6 +621,44 @@ fn generate_fx_transaction(
             world_present: fx_world.scene().is_some_and(|scene| scene.spawned),
         }),
         _present_span: present_span,
+    }
+}
+
+/// Jak's shots in flight, each drawn as a beam from its tail to its head with
+/// the first bound tracer material, brightening toward the head.
+fn queue_jak_shots(
+    tracers: &mut TracerWorld,
+    jak: &frame::JakMode,
+    defs: Option<&PreparedTracers>,
+) {
+    let Some(def) = defs.and_then(|defs| {
+        defs.0
+            .defs()
+            .find(|def| def.material.bound_index().is_some())
+    }) else {
+        return;
+    };
+    let head = [1.0, 0.9, 0.35, 1.0];
+    let colors = std::array::from_fn(|i| {
+        let a = i as f32 / 4.0;
+        [head[0], head[1] * (0.6 + 0.4 * a), head[2] * a, a]
+    });
+    for &(front, tail) in &jak.shots {
+        if front.distance(tail) <= f32::EPSILON || tracers.queued.len() >= fx_iw4::FX_BEAM_ADD_CAP {
+            continue;
+        }
+        tracers.queued.push(render_fx::QueuedBeam {
+            tess: fx_iw4::FxBeamTess {
+                begin: tail.to_array(),
+                end: front.to_array(),
+                begin_radius: def.beam_width,
+                end_radius: def.beam_width,
+                colors,
+                segment_count: 1,
+                wiggle_dist: 0.0,
+            },
+            material: def.material.bound_index(),
+        });
     }
 }
 

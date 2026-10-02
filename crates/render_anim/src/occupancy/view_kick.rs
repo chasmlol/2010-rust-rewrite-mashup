@@ -236,7 +236,7 @@ pub fn tick_session_view_kick(
 }
 
 pub fn sync_camera_from_presented(
-    skate: Res<frame::SkateMode>,
+    (skate, jak): (Res<frame::SkateMode>, Res<frame::JakMode>),
     mut killcam: Local<super::killcam::KillcamCamera>,
     clock: Res<FrameClock>,
     presented: Res<PresentedSnapshot>,
@@ -266,9 +266,12 @@ pub fn sync_camera_from_presented(
     let Some(ps) = presented.player(local.0) else {
         return;
     };
-    if skate.active
-        && let Some((eye, fov)) = skate.camera
-    {
+    let third_person = if skate.active { skate.camera } else { None }.or(if jak.active {
+        jak.camera
+    } else {
+        None
+    });
+    if let Some((eye, fov)) = third_person {
         for mut transform in &mut q {
             *transform = eye;
         }

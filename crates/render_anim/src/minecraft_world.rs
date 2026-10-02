@@ -314,8 +314,9 @@ fn update(
     ),
     mut view: ResMut<MinecraftWorldView>,
     mut runtime: NonSendMut<Runtime>,
-    (skate, cameras, gamepads, active_pad): (
+    (skate, jak, cameras, gamepads, active_pad): (
         Res<frame::SkateMode>,
+        Res<frame::JakMode>,
         Query<&Transform, With<render_scene::FlyCamera>>,
         Query<&bevy::input::gamepad::Gamepad>,
         Option<Res<frame::ActivePad>>,
@@ -581,6 +582,7 @@ fn update(
     if let Some(entities) = entities.as_mut()
         && ui.holding_item
         && !ui.inventory_open
+        && !jak.active
     {
         let mut player = minecraftoss_player::Player::new(glam::DVec3::from_array(feet));
         player.yaw = f64::from(mc_yaw);
@@ -745,14 +747,18 @@ fn update(
         .unwrap_or(16.0 / 9.0);
     // Culled from the camera that draws: the player's eye, or while
     // skating the Skate camera (a frame behind, so with room to spare).
-    let skate_camera = cameras.iter().next().filter(|_| skate.active).map(|t| {
-        let at = sim::voxel::to_block(origin, t.translation.to_array());
-        let ahead = t.rotation * Vec3::NEG_Z;
-        (
-            glam::DVec3::new(at[0], at[1], at[2]),
-            glam::Vec3::new(ahead.x, ahead.z, -ahead.y).normalize_or(forward),
-        )
-    });
+    let skate_camera = cameras
+        .iter()
+        .next()
+        .filter(|_| skate.active || jak.active)
+        .map(|t| {
+            let at = sim::voxel::to_block(origin, t.translation.to_array());
+            let ahead = t.rotation * Vec3::NEG_Z;
+            (
+                glam::DVec3::new(at[0], at[1], at[2]),
+                glam::Vec3::new(ahead.x, ahead.z, -ahead.y).normalize_or(forward),
+            )
+        });
     let (cull_at, cull_forward) = skate_camera.unwrap_or((glam::DVec3::new(eye[0], eye[1], eye[2]), forward));
     let camera = CullCamera {
         position: cull_at,

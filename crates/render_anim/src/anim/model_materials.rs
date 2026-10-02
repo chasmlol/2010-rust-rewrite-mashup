@@ -199,7 +199,11 @@ pub fn prepare_model_materials(
     ]
     .into_iter()
     .flatten()
-    {
+    .chain(
+        assets::jak_model::local_jak()
+            .into_iter()
+            .flat_map(|jak| jak.meshes()),
+    ) {
         admit_names(
             model.surfaces.iter().map(|s| s.material.as_str()),
             &atlas,

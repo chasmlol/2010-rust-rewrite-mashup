@@ -38,7 +38,9 @@ weapon_iw4.workspace = true
 xmodel_runtime.workspace = true
 bevy.workspace = true
 bytemuck = { version = "1", features = ["derive"] }
+half = "2.7.1"
 
+jak_mode.workspace = true
 skate-host = { path = "../../skate/crates/skate-host" }
 minecraft_terrain = { path = "../minecraft_terrain" }
 minecraftoss-core = { path = "../../third_party/minecraftoss/core" }

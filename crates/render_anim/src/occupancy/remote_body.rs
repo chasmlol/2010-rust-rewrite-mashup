@@ -165,7 +165,7 @@ fn finish_body_draw_plan(mut plan: ResMut<RemoteBodyDrawPlan>) {
 fn begin_remote_body_tess() {}
 
 fn occupy_remote_scene_ents(
-    skate: Res<frame::SkateMode>,
+    (skate, jak): (Res<frame::SkateMode>, Res<frame::JakMode>),
     puppet: Option<Res<frame::InventoryPuppet>>,
     mut scene_skels: ResMut<AnimDObjSceneSkels>,
     mut scene_submissions: MessageWriter<AnimDObjSceneSubmission>,
@@ -218,6 +218,7 @@ fn occupy_remote_scene_ents(
             .map(|ps| ps.other_flags)
             .unwrap_or(0),
         rendering_third_person: (skate.active && !skate.bones.is_empty())
+            || jak.active
             || puppet.as_ref().is_some_and(|p| p.active)
             || crate::occupancy::third_person::presented_is_third_person(
                 &presented, local.0, in_killcam,
@@ -304,7 +305,7 @@ fn occupy_remote_scene_ents(
 }
 
 fn sync_remote_bodies(
-    skate: Res<frame::SkateMode>,
+    (skate, jak): (Res<frame::SkateMode>, Res<frame::JakMode>),
     puppet: Option<Res<frame::InventoryPuppet>>,
     mut commands: Commands,
     local: Res<LocalPresentClient>,
@@ -336,6 +337,7 @@ fn sync_remote_bodies(
             .map(|ps| ps.other_flags)
             .unwrap_or(0),
         rendering_third_person: (skate.active && !skate.bones.is_empty())
+            || jak.active
             || puppet.as_ref().is_some_and(|p| p.active)
             || crate::occupancy::third_person::presented_is_third_person(
                 &presented, local.0, in_killcam,
@@ -400,6 +402,9 @@ fn sync_remote_bodies(
         if skate.active && !skate.bones.is_empty() && client.0 == skate.client {
             pose = Transform::from_matrix(skate.root);
         }
+        if jak.active && client.0 == jak.client {
+            pose = Transform::from_matrix(jak.root);
+        }
         if let Some(puppet) = puppet.as_ref().filter(|p| p.active && client.0 == p.client) {
             pose = Transform::from_matrix(puppet.root);
         }
@@ -421,6 +426,8 @@ fn sync_remote_bodies(
 
 struct PendingBodySkin<'a> {
     skate: Option<&'a frame::SkateMode>,
+    jak_board: Option<Mat4>,
+    jak_skins: Option<std::sync::Arc<frame::JakSkins>>,
     is_bot: bool,
     persist_key: u32,
     transform: Transform,
@@ -448,6 +455,7 @@ enum RemoteSkinAction<'a> {
 
 struct RemotePoseFrame<'a> {
     skate: &'a frame::SkateMode,
+    jak: &'a frame::JakMode,
     puppet: Option<&'a frame::InventoryPuppet>,
     script: &'a asset_anim::ParsedPlayerAnimScript,
     tree: &'a asset_anim::CompiledAnimTreeDefinition,
@@ -497,7 +505,7 @@ fn remote_body_scene_slot(
 }
 
 fn pose_remote_bodies(
-    skate: Res<frame::SkateMode>,
+    (skate, jak): (Res<frame::SkateMode>, Res<frame::JakMode>),
     puppet: Option<Res<frame::InventoryPuppet>>,
     time: Res<Time>,
     gaps: Res<RenderPresentationGaps>,
@@ -621,6 +629,7 @@ fn pose_remote_bodies(
     let last_cache_hits = pose_hashes.take_last_cache_hits();
     let mut pose_frame = RemotePoseFrame {
         skate: &skate,
+        jak: &jak,
         puppet: puppet.as_deref(),
         script,
         tree,
@@ -901,6 +910,12 @@ impl<'a> RemotePoseFrame<'a> {
                         job.gun = None;
                         job.attachments.clear();
                     }
+                    if self.jak.active && persist_key == self.jak.client {
+                        job.jak_board = self.jak.board;
+                        job.jak_skins = self.jak.skins.clone();
+                        job.gun = None;
+                        job.attachments.clear();
+                    }
                     job.dest = take_unique_geom(pose_hashes, persist_key);
                     pending.push(job);
                 }
@@ -931,6 +946,8 @@ fn remote_skin_action<'a>(
         SkinAfterPose::ReuseCache => RemoteSkinAction::ReuseCache,
         SkinAfterPose::Blend => RemoteSkinAction::Blend(PendingBodySkin {
             skate: None,
+            jak_board: None,
+            jak_skins: None,
             is_bot: false,
             persist_key,
             transform: *transform,
@@ -1166,6 +1183,8 @@ fn assemble_meshes(job: PendingBodySkin<'_>) -> Result<AssembledMeshes, String> 
     let mut geom = job.dest;
     if let Some(model) = assets::bot_model::local_bot_model().filter(|_| job.is_bot) {
         super::bot_model::skin(model, &job.body.skel, &job.matrices, &mut geom)?;
+    } else if let Some(skins) = &job.jak_skins {
+        crate::jak_pose::skin(skins, &mut geom);
     } else {
         skin_slot_into(
             &job.body.skel,
@@ -1233,6 +1252,9 @@ fn assemble_meshes(job: PendingBodySkin<'_>) -> Result<AssembledMeshes, String> 
     }
     if let Some(skate) = job.skate {
         crate::skate::rig::board(skate, &mut geom)?;
+    }
+    if let Some(board) = job.jak_board.filter(|_| job.jak_skins.is_none()) {
+        crate::jak::board_mesh(board, &mut geom);
     }
     let (radii, radius_parents) = radii(
         job.body,

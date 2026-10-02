@@ -8,7 +8,7 @@ https://github.com/vladtrc/iw4L
 IW4L is licensed under the Apache License, Version 2.0; see LICENSE.
 
 2010 Rust Rewrite Mashup is a fork of IW4L by chasmlol that adds Skate 3's
-skating and a Minecraft world to it.
+skating, Jak 3's JET-Board and a Minecraft world to it.
 https://github.com/chasmlol/2010-rust-rewrite-mashup
 
 --------------------------------------------------------------------------------
@@ -81,6 +81,13 @@ KisakCOD — https://github.com/SwagSoftware/KisakCOD
   engine structure, and by the fork for controller aim assist's defaults. IW4L targets IW4, so this is a neighbouring generation of
   the same engine family, not the same codebase.
 
+OpenGOAL — https://github.com/open-goal/jak-project
+  A decompilation and port of the Jak and Daxter games. Its Jak 3 sources, at
+  revision efb21c3e8c5a40a74f2e86510f915da55eaeba34, were read to rebuild Jak
+  3's movement, JET-Board and Blaster in crates/jak_mode. The Rust there is
+  written for this project; no OpenGOAL code, data or tooling is included,
+  linked or run. Licensed under the ISC License.
+
 Ghidra — https://github.com/NationalSecurityAgency/ghidra
   The software reverse engineering framework the original game binaries were
   read with. A development tool: none of it, and none of its output, is
@@ -90,7 +97,7 @@ Ghidra — https://github.com/NationalSecurityAgency/ghidra
 Game content
 --------------------------------------------------------------------------------
 
-No Call of Duty or Skate game data, and no Minecraft code or assets, are
+No Call of Duty, Skate or Jak game data, and no Minecraft code or assets, are
 contained in this repository or in any release archive. IW4L reads game data from a copy of the game the user already
 owns and has installed. Call of Duty, Modern Warfare, Black Ops, related
 trademarks and all original game assets belong to their respective owners.

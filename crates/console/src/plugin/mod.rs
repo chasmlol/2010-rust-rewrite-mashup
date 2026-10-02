@@ -79,7 +79,11 @@ pub struct ConsolePlugin;
 
 impl Plugin for ConsolePlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Update, crate::debug_move::update_skate_overlay.in_set(ClientSet::Ui));
+        app.init_resource::<frame::JakMode>();
+        app.add_systems(
+            Update,
+            (crate::debug_move::update_skate_overlay, crate::debug_move::update_jak_overlay).in_set(ClientSet::Ui),
+        );
         crate::startup::install_stdin(app);
         app.init_resource::<ConsoleSettings>()
             .init_resource::<ConsoleState>()
@@ -267,7 +271,7 @@ fn isolate_gameplay_input(
 }
 
 fn publish_client_action_input(
-    mut skate: ResMut<frame::SkateMode>,
+    (mut skate, mut jak): (ResMut<frame::SkateMode>, ResMut<frame::JakMode>),
     time: Res<Time>,
     keys: Res<ButtonInput<KeyCode>>,
     mouse_buttons: Res<ButtonInput<MouseButton>>,
@@ -315,6 +319,11 @@ fn publish_client_action_input(
     }
     let script_menu = script_menus.is_some_and(|m| m.captures_input());
     skate.input_blocked = console.open || script_menu;
+    jak.input_blocked = skate.input_blocked;
+    // K toggles Jak Mode.
+    if !jak.input_blocked && keys.just_pressed(KeyCode::KeyK) {
+        jak.toggle_requested = true;
+    }
     // J, or clicking both sticks in together, toggles skating.
     let sticks_clicked = pad.is_some_and(|pad| {
         use bevy::input::gamepad::GamepadButton::{LeftThumb, RightThumb};
