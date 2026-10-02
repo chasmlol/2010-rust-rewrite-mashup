@@ -111,6 +111,8 @@ Both folders are saved in `.env` next to `iw4l.exe`. Delete `.env` (and
 
 Build IW4L as usual ([`BUILD.md`](BUILD.md), [`WINDOWS.md`](WINDOWS.md)). The
 skate crates are plain path dependencies.
+On Windows, `Build IW4L.bat` builds the launcher and packages a playable folder;
+the first-run setup then asks where your MW2 and optional Skate 3 files are.
 
 A release folder is:
 

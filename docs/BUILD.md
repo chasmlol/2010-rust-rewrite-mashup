@@ -41,3 +41,18 @@ Game data: the Windows depot of a Steam copy, `steamcmd
 Then follow `README.md` (Build and run): copy `.env.example`, set
 `IW4L_GAMES`, `make map mp_boneyard`. Portable Windows is
 [`WINDOWS.md`](WINDOWS.md).
+
+## Build a playable Windows folder
+
+On Windows, install Rust with rustup and the Visual Studio C++ build tools,
+then double-click `Build IW4L.bat` in the repository. It runs
+`cargo build --locked --profile play -p launcher`; Cargo compiles the launcher
+and its transitive crate dependencies in the required order. Building each
+`Cargo.toml` separately is not necessary.
+
+The script asks where to put the playable folder and for the current
+`skate/iw4l-skate-convert.exe` if it is not already beside the repository's
+Skate files. That converter must support `--props-only`. It copies the
+launcher, converter, helper scripts, and license files into the output folder.
+It does not copy game data. Double-click the resulting `iw4l.exe`; its first-run
+setup asks you to locate MW2 and optionally Skate 3 `default.xex`.
