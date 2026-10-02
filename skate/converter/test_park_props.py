@@ -1,30 +1,43 @@
+import sys
 import tempfile
+import types
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
-from park_props import extract, selected_entries
+import numpy as np
+
+from park_props import extract, prop_model_entries, selected_entries
 
 
 class ParkPropsTests(unittest.TestCase):
-    def test_selection_includes_models_textures_and_recipe_data_only(self):
+    def test_selection_keeps_source_files_and_targets_dynamic_dropper_models(self):
         entries = [
-            SimpleNamespace(path="data/content/dynamic/model/dynamic/dmo_rails/ramp.rx2"),
+            SimpleNamespace(
+                path="data/content/dynamic/model/dynamic/dmo_rails/ramp.rx2"
+            ),
+            SimpleNamespace(path="data/content/static/model/static/plaza/bench.rx2"),
+            SimpleNamespace(path="data/content/dynamic/texture/rail.rx2"),
             SimpleNamespace(path="data/content/static/texture/wood.rx2"),
-            SimpleNamespace(path="data/content/recipe/dynamic/dynamic_db.xml"),
+            SimpleNamespace(path="data/content/recipe/dynamic/objects.xml"),
+            SimpleNamespace(path="data/content/recipe/static/world.xml"),
             SimpleNamespace(path="data/content/worlddmo.big"),
             SimpleNamespace(path="data/audio/sound.big"),
         ]
 
         self.assertEqual(
             [entry.path for entry in selected_entries(entries)],
-            [entry.path for entry in entries[:3]],
+            [entries[0].path, entries[2].path, entries[4].path],
         )
+        self.assertEqual(prop_model_entries(entries), [entries[0]])
 
-    def test_extract_writes_local_inventory_and_hashes_without_game_data_mutation(self):
+    def test_extract_writes_render_mesh_and_retail_collision_catalog(self):
         class Archive:
             entries = [
-                SimpleNamespace(path="data/content/dynamic/model/dynamic/dmo_rails/ramp.rx2"),
+                SimpleNamespace(
+                    path="data/content/dynamic/model/dynamic/dmo_rails/ramp.rx2"
+                ),
                 SimpleNamespace(path="data/content/recipe/dynamic/objects.xml"),
             ]
 
@@ -37,21 +50,66 @@ class ParkPropsTests(unittest.TestCase):
                     target.parent.mkdir(parents=True, exist_ok=True)
                     target.write_bytes(entry.path.encode("utf-8"))
 
+            def read(self, entry):
+                return b"rx2 fixture"
+
+        mesh = SimpleNamespace(
+            name="Ramp",
+            material_name="concrete",
+            vertices=np.asarray([[0, 0, 0], [1, 0, 0], [0, 0, 1]], dtype=np.float32),
+            faces=np.asarray([[0, 1, 2]], dtype=np.uint32),
+            uvs=np.asarray([[0, 0], [1, 0], [0, 1]], dtype=np.float32),
+            normals=np.asarray([[0, 1, 0]] * 3, dtype=np.float32),
+        )
+        parsed = SimpleNamespace(meshes=[mesh], materials=[])
+        collision_triangle = SimpleNamespace(
+            a=(0.0, 0.0, 0.0),
+            b=(1.0, 0.0, 0.0),
+            c=(0.0, 0.0, 1.0),
+        )
+        fake_mdl = types.ModuleType("mdl_parser")
+        fake_mdl.parse_rx2 = lambda raw: parsed
+        fake_collision = types.ModuleType("retail_collision_mesh")
+        fake_collision.decode_rx2_clustered_meshes = lambda raw: [
+            SimpleNamespace(triangles=[collision_triangle])
+        ]
+
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             game = root / "game"
             (game / "data/content").mkdir(parents=True)
-            (game / "data/content/parkassets.big").write_bytes(b"fixture")
+            archive_path = game / "data/content/parkassets.big"
+            archive_path.write_bytes(b"fixture archive")
             assets = root / "assets"
-            result = extract(game, assets, lambda _: None, archive_factory=Archive)
+            with patch.dict(
+                sys.modules,
+                {
+                    "mdl_parser": fake_mdl,
+                    "retail_collision_mesh": fake_collision,
+                },
+            ):
+                result = extract(
+                    game, assets, lambda _: None, archive_factory=Archive
+                )
 
-            self.assertEqual(result["status"], "source-assets-only")
-            self.assertEqual(len(result["assets"]), 2)
-            self.assertEqual(result["assets"][0]["kind"], "model")
-            self.assertTrue((assets / "private/park-props/source-manifest.json").is_file())
+            self.assertEqual(result["status"], "models-and-retail-collision")
+            self.assertEqual(len(result["assets"]), 1)
+            prop = result["assets"][0]
+            self.assertEqual(prop["collision_triangles"], 1)
+            self.assertEqual(prop["collision_source"], "retail RX2 RenderWare ClusteredMesh")
+            with np.load(assets / prop["model"], allow_pickle=False) as model:
+                np.testing.assert_array_equal(model["faces_0"], [[0, 1, 2]])
+            with np.load(assets / prop["collision"], allow_pickle=False) as collision:
+                np.testing.assert_array_equal(
+                    collision["triangles"],
+                    [[[0, 0, 0], [1, 0, 0], [0, 0, 1]]],
+                )
+            self.assertTrue(
+                (assets / "private/park-props/catalog.json").is_file()
+            )
             self.assertEqual(
-                (game / "data/content/parkassets.big").read_bytes(),
-                b"fixture",
+                archive_path.read_bytes(),
+                b"fixture archive",
             )
 
     def test_missing_archive_is_reported_as_unavailable(self):

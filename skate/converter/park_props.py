@@ -8,11 +8,10 @@ from pathlib import Path
 ARCHIVE = Path("data/content/parkassets.big")
 ROOTS = (
     "data/content/dynamic/model/",
-    "data/content/static/model/",
     "data/content/dynamic/texture/",
-    "data/content/static/texture/",
-    "data/content/recipe/",
+    "data/content/recipe/dynamic/",
 )
+PROP_MODEL_ROOT = "data/content/dynamic/model/dynamic/"
 
 
 def selected_entries(entries):
@@ -37,6 +36,82 @@ def asset_kind(path):
     return "recipe_metadata"
 
 
+def prop_model_entries(entries):
+    return [
+        entry
+        for entry in entries
+        if entry.path.replace("\\", "/").lower().startswith(PROP_MODEL_ROOT)
+        and "/dmo_" in entry.path.replace("\\", "/").lower()
+        and entry.path.lower().endswith(".rx2")
+    ]
+
+
+def _write_model_archive(output, model):
+    import numpy as np
+
+    arrays = {}
+    meshes = []
+    for index, mesh in enumerate(model.meshes):
+        vertices = np.asarray(mesh.vertices, dtype=np.float32)
+        faces = np.asarray(mesh.faces, dtype=np.uint32)
+        if vertices.ndim != 2 or vertices.shape[1] != 3:
+            raise ValueError(f"mesh {index} has invalid vertex dimensions")
+        if faces.ndim != 2 or faces.shape[1] != 3:
+            raise ValueError(f"mesh {index} has invalid face dimensions")
+        if not len(vertices) or not len(faces) or int(faces.max()) >= len(vertices):
+            raise ValueError(f"mesh {index} has empty or out-of-range geometry")
+        if not np.isfinite(vertices).all():
+            raise ValueError(f"mesh {index} contains non-finite vertices")
+
+        arrays[f"vertices_{index}"] = vertices
+        arrays[f"faces_{index}"] = faces
+        if mesh.uvs is not None:
+            uvs = np.asarray(mesh.uvs, dtype=np.float32)
+            if uvs.shape != (len(vertices), 2) or not np.isfinite(uvs).all():
+                raise ValueError(f"mesh {index} has invalid UVs")
+            arrays[f"uvs_{index}"] = uvs
+        if mesh.normals is not None:
+            normals = np.asarray(mesh.normals, dtype=np.float32)
+            if normals.shape != (len(vertices), 3) or not np.isfinite(normals).all():
+                raise ValueError(f"mesh {index} has invalid normals")
+            arrays[f"normals_{index}"] = normals
+
+        minimum = vertices.min(axis=0)
+        maximum = vertices.max(axis=0)
+        meshes.append({
+            "index": index,
+            "name": mesh.name,
+            "material": mesh.material_name,
+            "vertices": len(vertices),
+            "triangles": len(faces),
+            "bounds": {
+                "minimum": minimum.tolist(),
+                "maximum": maximum.tolist(),
+            },
+        })
+    if not meshes:
+        raise ValueError("model contains no render meshes")
+    np.savez_compressed(output, **arrays)
+    return meshes
+
+
+def _write_collision_archive(output, clustered_meshes):
+    import numpy as np
+
+    triangles = [
+        [triangle.a, triangle.b, triangle.c]
+        for mesh in clustered_meshes
+        for triangle in mesh.triangles
+    ]
+    if not triangles:
+        return 0
+    values = np.asarray(triangles, dtype=np.float32)
+    if values.ndim != 3 or values.shape[1:] != (3, 3) or not np.isfinite(values).all():
+        raise ValueError("decoded collision has invalid triangle geometry")
+    np.savez_compressed(output, triangles=values)
+    return len(values)
+
+
 def extract(game_root, assets, report, archive_factory=None):
     archive_path = Path(game_root) / ARCHIVE
     if not archive_path.is_file():
@@ -53,46 +128,98 @@ def extract(game_root, assets, report, archive_factory=None):
         archive_factory = BigArchive
     archive = archive_factory(archive_path)
     entries = selected_entries(archive.entries)
-    models = [entry for entry in entries if asset_kind(entry.path) == "model"]
+    models = prop_model_entries(entries)
     if not models:
-        raise ValueError(f"{ARCHIVE.as_posix()} contains no Create-a-Park model assets")
+        raise ValueError(
+            f"{ARCHIVE.as_posix()} contains no Create-a-Park dynamic prop models"
+        )
 
-    output = Path(assets) / "private" / "park-props" / "source"
-    archive.extract_entries(entries, output)
+    import sys
+
+    converter_root = Path(__file__).resolve().parents[1]
+    vendor = converter_root / "vendor"
+    sys.path.insert(0, str(vendor / "utt"))
+    sys.path.insert(
+        0, str(vendor / "university/tools/vanilla_map_extraction/tools")
+    )
+    import mdl_parser
+    from retail_collision_mesh import decode_rx2_clustered_meshes
+
+    root = Path(assets) / "private" / "park-props"
+    source_root = root / "source"
+    archive.extract_entries(entries, source_root)
     manifest = []
-    for entry in entries:
+    unsupported = []
+    for number, entry in enumerate(models):
         source_path = entry.path.replace("\\", "/")
-        extracted = output.joinpath(*source_path.split("/"))
-        digest = hashlib.sha256(extracted.read_bytes()).hexdigest()
+        raw = archive.read(entry)
+        identity = hashlib.sha256(source_path.lower().encode("utf-8")).hexdigest()[:16]
         stem = Path(source_path).stem
         category = next(
-            (
-                part.removeprefix("dmo_")
-                for part in Path(source_path).parts
-                if part.lower().startswith("dmo_")
-            ),
-            "static" if "/static/" in source_path.lower() else "uncategorized",
+            part.removeprefix("dmo_")
+            for part in Path(source_path).parts
+            if part.lower().startswith("dmo_")
         )
+        model_path = root / "models" / f"{identity}.npz"
+        collision_path = root / "collision" / f"{identity}.npz"
+        model_path.parent.mkdir(parents=True, exist_ok=True)
+        collision_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            parsed = mdl_parser.parse_rx2(raw)
+            mesh_manifest = _write_model_archive(model_path, parsed)
+            clustered = decode_rx2_clustered_meshes(raw)
+            collision_count = _write_collision_archive(collision_path, clustered)
+        except (ValueError, IndexError, KeyError, OSError) as error:
+            unsupported.append({"source": source_path, "error": str(error)})
+            model_path.unlink(missing_ok=True)
+            collision_path.unlink(missing_ok=True)
+            continue
+        extracted = source_root.joinpath(*source_path.split("/"))
+        extracted = source_root.joinpath(*source_path.split("/"))
         manifest.append({
-            "id": hashlib.sha256(source_path.lower().encode("utf-8")).hexdigest()[:16],
+            "id": identity,
             "name": f"{category} {stem}",
-            "kind": asset_kind(source_path),
+            "kind": "dynamic_prop",
             "source": source_path,
             "file": extracted.relative_to(Path(assets)).as_posix(),
             "bytes": extracted.stat().st_size,
-            "sha256": digest,
+            "sha256": hashlib.sha256(raw).hexdigest(),
+            "model": model_path.relative_to(Path(assets)).as_posix(),
+            "meshes": mesh_manifest,
+            "collision": (
+                collision_path.relative_to(Path(assets)).as_posix()
+                if collision_count
+                else None
+            ),
+            "collision_triangles": collision_count,
+            "collision_source": "retail RX2 RenderWare ClusteredMesh",
+            "units": "retail model units",
+            "materials": [
+                {"kind": material.kind, "value": material.value}
+                for material in parsed.materials
+            ],
         })
+        if (number + 1) % 25 == 0:
+            report(f"Decoded {number + 1}/{len(models)} Create-a-Park prop models")
 
     result = {
-        "version": 1,
-        "status": "source-assets-only",
+        "version": 2,
+        "status": "models-and-retail-collision",
         "source_archive": ARCHIVE.as_posix(),
         "assets": manifest,
+        "unsupported": unsupported,
     }
-    manifest_path = Path(assets) / "private" / "park-props" / "source-manifest.json"
+    if not manifest:
+        detail = unsupported[0]["error"] if unsupported else "no supported model geometry"
+        raise RuntimeError(f"Could not decode any Create-a-Park props: {detail}")
+    manifest_path = root / "catalog.json"
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
     temporary = manifest_path.with_suffix(".json.new")
     temporary.write_text(json.dumps(result, indent=2), encoding="utf-8")
     temporary.replace(manifest_path)
-    report(f"Extracted {len(models)} Create-a-Park model assets and {len(entries) - len(models)} supporting files")
+    report(
+        f"Decoded {len(manifest)} Create-a-Park prop models; "
+        f"{sum(item['collision_triangles'] > 0 for item in manifest)} have retail collision, "
+        f"{len(unsupported)} were unsupported"
+    )
     return result

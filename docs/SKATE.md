@@ -46,10 +46,15 @@ Skate 3/
 3. It looks for MW2 in your Steam libraries and asks you to confirm. If it
    can't find it, or you say no, select the MW2 folder yourself (the one
    with `iw4mp.exe` and `zone`).
-4. Select your Skate 3 `default.xex`. In a few seconds it copies out only what
-   skating needs into `skate-data/`: the skater model, animation banks, state
-   graphs, input and physics settings. Your game folders are never modified.
+4. Select your Skate 3 `default.xex`. Setup extracts the skater/gameplay files
+   and decodes the Create-a-Park dynamic prop meshes and embedded retail
+   collision into `skate-data/`. Your game folders are never modified.
 5. The menu opens. Every later double-click goes straight to the menu.
+
+The prop files are under `skate-data/assets/private/park-props`: `catalog.json`
+indexes per-model `.npz` geometry and per-prop retail collision files. Older
+converted data without a catalog is detected and setup asks for `default.xex`
+again to refresh it.
 
 Both folders are saved in `.env` next to `iw4l.exe`. Delete `.env` (and
 `skate-data/`) to run the setup again.
@@ -61,6 +66,7 @@ Both folders are saved in `.env` next to `iw4l.exe`. Delete `.env` (and
 | **J** | get on / off the board |
 | **F6** or **Shift + Down** / **LB + D-pad down** | set the session marker |
 | **Hold F7** or **hold Shift + Up** / **hold LB + D-pad up** | return to the session marker |
+| **Tab** / **Back (Select)** while skating | open or close the object dropper |
 | controller | skate (Skate 3 flick-it controls) |
 | `~` | console: `skate on`, `skate off`, `skate status` |
 
@@ -70,12 +76,11 @@ Both folders are saved in `.env` next to `iw4l.exe`. Delete `.env` (and
 - The skateboard is invisible on some maps.
 - The object dropper is not usable in-game yet. `skate-host` has experimental
   catalog validation, session-only placement/input state, and a collision
-  builder entry point, but gameplay does not load a prop catalog or call that
-  entry point, and no prop geometry is rendered. The converter extracts the
-  player's local `parkassets.big` model, texture, locator, and recipe files into
-  `assets/private/park-props/source` and writes a hashed source inventory.
-  Those are raw source assets, not yet a renderable prop catalog or verified
-  collision geometry.
+  builder entry point. Tab / Back opens a status panel and pauses Skate input.
+  First-run conversion now decodes Create-a-Park dynamic model meshes and
+  embedded retail RenderWare collision triangles into local
+  `skate-data/assets/private/park-props`. The game does not yet load/render
+  those extracted models or install their collision for placed props.
 
 ## How it works
 
@@ -87,7 +92,7 @@ Both folders are saved in `.env` next to `iw4l.exe`. Delete `.env` (and
 | retarget | [`crates/render_anim/src/skate/rig.rs`](../crates/render_anim/src/skate/rig.rs) | maps Skate 3 bones onto the MW2 soldier skeleton |
 | board | [`crates/assets/src/skate_board.rs`](../crates/assets/src/skate_board.rs) | derives `board.json` and `rig.json` from the converted skater model on first run |
 | setup | [`crates/launcher/src/first_run.rs`](../crates/launcher/src/first_run.rs) | the double-click flow: find MW2, pick `default.xex`, run the converter, write `.env` |
-| converter | [`skate/converter`](../skate/converter) | `iw4l-skate-convert.exe`: converts the player's own `default.xex`, skater assets, and local Create-a-Park source inventory |
+| converter | [`skate/converter`](../skate/converter) | `iw4l-skate-convert.exe`: converts the player's own `default.xex`, skater assets, and local Create-a-Park model/collision catalog |
 
 ## Building
 

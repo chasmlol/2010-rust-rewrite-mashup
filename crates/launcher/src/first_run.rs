@@ -143,6 +143,12 @@ fn skate_ready(assets: &Path) -> bool {
     ]
     .iter()
     .all(|file| assets.join(file).is_file())
+        && (assets
+            .join("private/park-props/catalog.json")
+            .is_file()
+            || assets
+                .join("private/park-props/availability.json")
+                .is_file())
 }
 
 /// The converted Skate 3 data, or none when the player plays without it.

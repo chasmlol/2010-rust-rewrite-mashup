@@ -20,4 +20,6 @@ pub struct SkateMode {
     pub marker_placed: bool,
     pub marker_can_return: bool,
     pub marker_progress: f32,
+    pub dropper_open: bool,
+    pub dropper_status: String,
 }

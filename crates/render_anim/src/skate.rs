@@ -79,11 +79,15 @@ const BLOCK_DEPTH: i32 = 20;
 const BLOCK_RECENTRE: f32 = 14.0;
 
 /// A Minecraft world's collision around map point `centre`, for Skate.
-fn block_collision(builder: &CollisionBuilder, centre: Vec3) -> Result<(PreparedCollision, usize), String> {
-    let triangles: Vec<[[f32; 3]; 3]> = sim::voxel::collision_triangles(centre.to_array(), BLOCK_RADIUS, BLOCK_DEPTH)
-        .into_iter()
-        .map(|t| t.map(|p| collision::to_skate(Vec3::from_array(p)).to_array()))
-        .collect();
+fn block_collision(
+    builder: &CollisionBuilder,
+    centre: Vec3,
+) -> Result<(PreparedCollision, usize), String> {
+    let triangles: Vec<[[f32; 3]; 3]> =
+        sim::voxel::collision_triangles(centre.to_array(), BLOCK_RADIUS, BLOCK_DEPTH)
+            .into_iter()
+            .map(|t| t.map(|p| collision::to_skate(Vec3::from_array(p)).to_array()))
+            .collect();
     if triangles.is_empty() {
         return Err("no blocks around the skater yet".into());
     }
@@ -128,7 +132,8 @@ fn preload_map(host: &mut Host, clip: Arc<asset_world::ClipCollision>) -> Result
                 // the blocks change.
                 let builder = session.collision_builder();
                 let (build_send, build_jobs) = mpsc::channel::<Vec3>();
-                let (built_send, built) = mpsc::channel::<(u64, Vec3, Result<(PreparedCollision, usize), String>)>();
+                let (built_send, built) =
+                    mpsc::channel::<(u64, Vec3, Result<(PreparedCollision, usize), String>)>();
                 std::thread::Builder::new()
                     .name("iw4l-skate-blocks".into())
                     .spawn(move || {
@@ -163,7 +168,10 @@ fn preload_map(host: &mut Host, clip: Arc<asset_world::ClipCollision>) -> Result
                                     Ok((prepared, n)) => {
                                         session.install_collision(prepared)?;
                                         blocks = Some((revision, spawn));
-                                        diag::info!(World, "Skate: {n} block collision triangles around the spawn");
+                                        diag::info!(
+                                            World,
+                                            "Skate: {n} block collision triangles around the spawn"
+                                        );
                                     }
                                     Err(e) => diag::warn!(World, "Skate block collision: {e}"),
                                 }
@@ -204,10 +212,12 @@ fn preload_map(host: &mut Host, clip: Arc<asset_world::ClipCollision>) -> Result
                             {
                                 let far = blocks.is_none_or(|(_, centre)| {
                                     let d = (at - centre) / sim::voxel::BLOCK;
-                                    d.truncate().length() > BLOCK_RECENTRE || d.z.abs() > BLOCK_DEPTH as f32 * 0.5
+                                    d.truncate().length() > BLOCK_RECENTRE
+                                        || d.z.abs() > BLOCK_DEPTH as f32 * 0.5
                                 });
-                                let changed = blocks.is_some_and(|(revision, _)| revision != sim::voxel::revision())
-                                    && requested.elapsed().as_secs_f32() > 0.25;
+                                let changed = blocks.is_some_and(|(revision, _)| {
+                                    revision != sim::voxel::revision()
+                                }) && requested.elapsed().as_secs_f32() > 0.25;
                                 if (far || changed) && build_send.send(at).is_ok() {
                                     building = true;
                                     requested = std::time::Instant::now();
@@ -305,7 +315,10 @@ fn update(
     mut authority: Option<ResMut<net::AuthorityWorld>>,
     mut mode: ResMut<SkateMode>,
     mut host: ResMut<Host>,
-    (gamepads, active): (Query<&bevy::input::gamepad::Gamepad>, Option<Res<frame::ActivePad>>),
+    (gamepads, active): (
+        Query<&bevy::input::gamepad::Gamepad>,
+        Option<Res<frame::ActivePad>>,
+    ),
     keyboard: Res<ButtonInput<KeyCode>>,
 ) {
     let Some(authority) = authority.as_deref_mut() else {
@@ -347,26 +360,33 @@ fn update(
     }
     // Skating reads the same controller as the rest of the game, whatever
     // kind it is, converted to the Xbox layout the skate input expects.
-    let pad = active.and_then(|active| active.0).and_then(|entity| gamepads.get(entity).ok());
+    let pad = active
+        .and_then(|active| active.0)
+        .and_then(|entity| gamepads.get(entity).ok());
     host.pad_packet = host.pad_packet.wrapping_add(1);
     let input = pad.map_or_else(InputFrame::neutral, |pad| {
         let (marker_set, marker_return) = marker_keyboard_actions(
-            !mode.input_blocked,
+            !mode.input_blocked && !mode.dropper_open,
             keyboard.just_pressed(KeyCode::F6),
             keyboard.pressed(KeyCode::F7),
             keyboard.pressed(KeyCode::ShiftLeft),
             keyboard.just_pressed(KeyCode::ArrowDown),
             keyboard.pressed(KeyCode::ArrowUp),
         );
-        pad_frame(
-            pad,
-            host.pad_packet,
-            marker_set,
-            marker_return,
-        )
+        pad_frame(pad, host.pad_packet, marker_set, marker_return)
     });
     mode.controller = input.controller();
+    let previous_buttons = host.previous_buttons;
     host.previous_buttons = input.buttons();
+    if mode.active
+        && (keyboard.just_pressed(KeyCode::Tab)
+            || just_pressed(input.buttons(), previous_buttons, 0x0020))
+    {
+        mode.dropper_open = !mode.dropper_open;
+        if mode.dropper_open {
+            mode.dropper_status = dropper_catalog_status();
+        }
+    }
 
     let mut replies = Vec::new();
     if let Some(receiver) = &host.receive {
@@ -458,7 +478,7 @@ fn update(
     if !mode.active {
         return;
     }
-    if mode.input_blocked {
+    if mode.input_blocked || mode.dropper_open {
         if !host.input_suspended {
             if let Some(send) = &host.send {
                 let _ = send.send(Job::Suspend);
@@ -480,6 +500,22 @@ fn update(
         {
             stop(&mut host, &mut mode, authority);
         }
+    }
+}
+
+fn just_pressed(buttons: u16, previous: u16, button: u16) -> bool {
+    buttons & button != 0 && previous & button == 0
+}
+
+fn dropper_catalog_status() -> String {
+    let Some(root) = std::env::var_os("IW4L_SKATE_ASSETS") else {
+        return "Skate assets are not configured.".into();
+    };
+    let catalog = std::path::Path::new(&root).join("private/park-props/catalog.json");
+    if catalog.is_file() {
+        "Prop catalog found; in-game model rendering and placement are not wired yet.".into()
+    } else {
+        "No playable prop catalog. The converter currently extracts source files only.".into()
     }
 }
 
@@ -532,11 +568,7 @@ fn pad_frame(
 
 fn with_marker_buttons(buttons: u16, set: bool, return_to_marker: bool) -> u16 {
     let set_buttons = if set { 0x0100 | 0x0002 } else { 0 };
-    let return_buttons = if return_to_marker {
-        0x0100 | 0x0001
-    } else {
-        0
-    };
+    let return_buttons = if return_to_marker { 0x0100 | 0x0001 } else { 0 };
     buttons | set_buttons | return_buttons
 }
 
@@ -559,7 +591,7 @@ fn marker_keyboard_actions(
 
 #[cfg(test)]
 mod tests {
-    use super::{marker_keyboard_actions, with_marker_buttons};
+    use super::{just_pressed, marker_keyboard_actions, with_marker_buttons};
 
     #[test]
     fn marker_shortcuts_preserve_pad_input_and_synthesize_native_combos() {
@@ -583,5 +615,12 @@ mod tests {
             marker_keyboard_actions(false, true, true, true, true, true),
             (false, false)
         );
+    }
+
+    #[test]
+    fn dropper_back_button_toggles_only_on_the_press_edge() {
+        assert!(just_pressed(0x0020, 0, 0x0020));
+        assert!(!just_pressed(0x0020, 0x0020, 0x0020));
+        assert!(!just_pressed(0, 0x0020, 0x0020));
     }
 }
