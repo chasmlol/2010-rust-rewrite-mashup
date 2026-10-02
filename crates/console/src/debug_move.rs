@@ -869,7 +869,7 @@ pub(crate) fn update_skate_overlay(
             "Skate is finishing map preparation... | J: cancel".into()
         } else if mode.dropper_open {
             format!(
-                "OBJECT DROPPER | {} | Arrows/D-pad: browse/rotate | Enter/A: place | Backspace/X: delete | Tab/Esc/Back: close",
+                "OBJECT DROPPER | {} | WASD/mouse: free cam | Space/Ctrl: up/down | wheel: preview distance | Arrows/D-pad: browse/rotate | Enter/A: place | Backspace/X: delete | Tab/Esc/Back: close",
                 mode.dropper_status
             )
         } else if mode.controller.is_none() {

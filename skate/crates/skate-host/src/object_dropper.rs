@@ -18,6 +18,7 @@ const MAX_INDICES_PER_MESH: usize = 3_000_000;
 const MAX_PLACED_PROPS: usize = 128;
 const MAX_MODEL_BYTES: u64 = 256 * 1024 * 1024;
 const MAX_COLLISION_BYTES: u64 = 128 * 1024 * 1024;
+pub const RETAIL_MODEL_UNIT_METERS: f32 = 0.0254;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct PropCatalog {
@@ -198,7 +199,7 @@ impl PlacedProp {
             .map(|triangle| {
                 triangle.map(|p| {
                     transform
-                        .transform_point3(Vec3::from_array(p) * 0.0254)
+                        .transform_point3(Vec3::from_array(p) * RETAIL_MODEL_UNIT_METERS)
                         .to_array()
                 })
             })

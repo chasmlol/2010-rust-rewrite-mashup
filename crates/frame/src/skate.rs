@@ -22,4 +22,6 @@ pub struct SkateMode {
     pub marker_progress: f32,
     pub dropper_open: bool,
     pub dropper_status: String,
+    pub dropper_camera: Option<Transform>,
+    pub dropper_placement_distance: f32,
 }

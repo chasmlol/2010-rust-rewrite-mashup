@@ -267,7 +267,13 @@ pub fn sync_camera_from_presented(
         return;
     };
     if skate.active
-        && let Some((eye, fov)) = skate.camera
+        && let Some((eye, fov)) = skate
+            .dropper_camera
+            .as_ref()
+            .filter(|_| skate.dropper_open)
+            .cloned()
+            .map(|eye| (eye, skate.camera.map_or(65.0, |(_, fov)| fov)))
+            .or(skate.camera)
     {
         for mut transform in &mut q {
             *transform = eye;

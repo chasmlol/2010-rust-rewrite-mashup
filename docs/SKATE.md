@@ -77,6 +77,9 @@ Both folders are saved in `.env` next to `iw4l.exe`. Delete `.env` (and
 | **F6** or **Shift + Down** / **LB + D-pad down** | set the session marker |
 | **Hold F7** or **hold Shift + Up** / **hold LB + D-pad up** | return to the session marker |
 | **Tab** / **Back (Select)** while skating | open or close the object dropper |
+| **WASD** + mouse while the dropper is open | fly and aim the free camera |
+| **Space / Ctrl** while the dropper is open | move the free camera up / down |
+| mouse wheel while the dropper is open | move the placement preview nearer or farther |
 | **Up / Down** or **D-pad up / down** in the dropper | browse props |
 | **Left / Right** or **D-pad left / right** in the dropper | rotate the selected prop |
 | **Enter / A** in the dropper | place the prop in front of the skater |

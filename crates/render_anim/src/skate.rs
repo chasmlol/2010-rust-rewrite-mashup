@@ -2,6 +2,7 @@
 pub mod collision;
 pub mod rails;
 pub mod rig;
+use bevy::input::mouse::{MouseMotion, MouseWheel};
 use bevy::prelude::*;
 use frame::{AppScreen, SkateMode};
 use skate_host::{
@@ -74,6 +75,55 @@ pub fn register(app: &mut App) {
                 .before(render_scene::GfxSceneAdd)
                 .in_set(frame::ClientSet::Present),
         );
+}
+
+const DROPPER_CAMERA_SPEED: f32 = 320.0;
+const DROPPER_CAMERA_SENSITIVITY: f32 = 0.0025;
+const DROPPER_PREVIEW_DISTANCE: f32 = 128.0;
+
+fn move_dropper_camera(
+    camera: &mut Transform,
+    dt: f32,
+    keys: &ButtonInput<KeyCode>,
+    mouse_delta: Vec2,
+    sensitivity: f32,
+) {
+    let forward = *camera.forward();
+    let right = *camera.right();
+    let mut movement = Vec3::ZERO;
+    let axis = |positive, negative| {
+        if positive {
+            1.0
+        } else if negative {
+            -1.0
+        } else {
+            0.0
+        }
+    };
+    movement += forward * axis(keys.pressed(KeyCode::KeyW), keys.pressed(KeyCode::KeyS));
+    movement += right * axis(keys.pressed(KeyCode::KeyD), keys.pressed(KeyCode::KeyA));
+    movement += Vec3::Z
+        * axis(
+            keys.pressed(KeyCode::Space),
+            keys.pressed(KeyCode::ControlLeft),
+        );
+    if movement.length_squared() > 0.0 {
+        camera.translation += movement.normalize() * DROPPER_CAMERA_SPEED * dt.max(0.0);
+    }
+
+    let look_scale = DROPPER_CAMERA_SENSITIVITY * sensitivity.clamp(0.1, 30.0) / 5.0;
+    if mouse_delta.length_squared() > 0.0 {
+        let forward = *camera.forward();
+        let yaw = forward.y.atan2(forward.x) - mouse_delta.x * look_scale;
+        let pitch =
+            (forward.z.clamp(-1.0, 1.0).asin() - mouse_delta.y * look_scale).clamp(-1.5533, 1.5533);
+        let direction = Vec3::new(
+            pitch.cos() * yaw.cos(),
+            pitch.cos() * yaw.sin(),
+            pitch.sin(),
+        );
+        *camera = Transform::from_translation(camera.translation).looking_to(direction, Vec3::Z);
+    }
 }
 
 fn preload_assets(mut mode: ResMut<SkateMode>) {
@@ -461,6 +511,7 @@ fn stop(host: &mut Host, mode: &mut SkateMode, authority: &mut net::AuthorityWor
     mode.active = false;
     mode.entering = false;
     mode.dropper_open = false;
+    mode.dropper_camera = None;
     mode.camera = None;
     mode.bones.clear();
     mode.status.clear();
@@ -510,6 +561,9 @@ fn update(
         Option<Res<frame::ActivePad>>,
     ),
     keyboard: Res<ButtonInput<KeyCode>>,
+    settings: Res<frame::GameSettings>,
+    mut mouse_motion: MessageReader<MouseMotion>,
+    mut mouse_wheel: MessageReader<MouseWheel>,
 ) {
     let Some(authority) = authority.as_deref_mut() else {
         return;
@@ -568,6 +622,10 @@ fn update(
     mode.controller = input.controller();
     let previous_buttons = host.previous_buttons;
     host.previous_buttons = input.buttons();
+    let mouse_delta = mouse_motion
+        .read()
+        .fold(Vec2::ZERO, |delta, event| delta + event.delta);
+    let wheel_delta = mouse_wheel.read().map(|event| event.y).sum::<f32>();
     let mut opened_dropper = false;
     if mode.active
         && (keyboard.just_pressed(KeyCode::Tab)
@@ -576,9 +634,19 @@ fn update(
         mode.dropper_open = !mode.dropper_open;
         opened_dropper = mode.dropper_open;
         if mode.dropper_open {
+            mode.dropper_camera = Some(
+                mode.camera
+                    .as_ref()
+                    .map(|(camera, _)| *camera)
+                    .unwrap_or_else(|| {
+                        Transform::from_translation(mode.root.w_axis.truncate() + Vec3::Z * 32.)
+                            .looking_to(Vec3::X, Vec3::Z)
+                    }),
+            );
+            mode.dropper_placement_distance = DROPPER_PREVIEW_DISTANCE;
             mode.dropper_status = if let Some(catalog) = &host.prop_catalog {
                 format!(
-                    "{} props loaded. Enter/A places; arrows/D-pad choose and rotate; X deletes.",
+                    "{} props loaded. WASD/mouse: free cam; Space/Ctrl: up/down; wheel: preview distance; arrows/D-pad: choose/rotate; Enter/A: place; X: delete.",
                     catalog.props.len()
                 )
             } else {
@@ -588,16 +656,33 @@ fn update(
                 .prop_catalog
                 .clone()
                 .and_then(|catalog| DropperState::new(catalog).ok());
+        } else {
+            mode.dropper_camera = None;
         }
+    }
+
+    if mode.active
+        && mode.dropper_open
+        && let Some(camera) = &mut mode.dropper_camera
+    {
+        move_dropper_camera(
+            camera,
+            time.delta_secs(),
+            &keyboard,
+            mouse_delta,
+            settings.sensitivity,
+        );
+        mode.dropper_placement_distance =
+            (mode.dropper_placement_distance - wheel_delta * 32.0).clamp(48.0, 1024.0);
     }
 
     if mode.active && mode.dropper_open && !opened_dropper {
         let prop_send = host.send.clone();
         if let Some(dropper) = &mut host.dropper {
-            let place_position = ps.map_or(mode.root.w_axis.truncate(), |player| {
-                let yaw = player.viewangles[1].to_radians();
-                Vec3::from_array(player.origin) + Vec3::new(yaw.cos(), yaw.sin(), 0.) * 128.
-            });
+            let place_position = mode.dropper_camera.as_ref().map_or_else(
+                || mode.root.w_axis.truncate(),
+                |camera| camera.translation + *camera.forward() * mode.dropper_placement_distance,
+            );
             let menu_input = MenuInput {
                 dpad_up: just_pressed(input.buttons(), previous_buttons, 0x0001),
                 dpad_down: just_pressed(input.buttons(), previous_buttons, 0x0002),
@@ -633,7 +718,7 @@ fn update(
             }
             if mode.dropper_open && !menu_error {
                 mode.dropper_status = format!(
-                    "{} | {}/{} placed",
+                    "{} | {}/{} placed | WASD/mouse: free cam | Space/Ctrl: up/down | wheel: preview distance",
                     dropper.selected().name,
                     dropper.placed().len(),
                     128
@@ -647,6 +732,7 @@ fn update(
         }
     } else if !mode.dropper_open {
         prop_draw.preview = None;
+        mode.dropper_camera = None;
     }
     prop_draw.catalog = host.prop_catalog.clone();
     prop_draw.placed = host
@@ -873,7 +959,8 @@ fn marker_keyboard_actions(
 
 #[cfg(test)]
 mod tests {
-    use super::{just_pressed, marker_keyboard_actions, with_marker_buttons};
+    use super::{just_pressed, marker_keyboard_actions, move_dropper_camera, with_marker_buttons};
+    use bevy::prelude::*;
 
     #[test]
     fn marker_shortcuts_preserve_pad_input_and_synthesize_native_combos() {
@@ -904,5 +991,23 @@ mod tests {
         assert!(just_pressed(0x0020, 0, 0x0020));
         assert!(!just_pressed(0x0020, 0x0020, 0x0020));
         assert!(!just_pressed(0, 0x0020, 0x0020));
+    }
+
+    #[test]
+    fn dropper_free_camera_moves_and_aims_from_mouse_input() {
+        let mut camera = Transform::from_translation(Vec3::ZERO).looking_to(Vec3::X, Vec3::Z);
+        let mut keys = ButtonInput::default();
+        keys.press(KeyCode::KeyW);
+        move_dropper_camera(&mut camera, 0.5, &keys, Vec2::ZERO, 5.0);
+        assert!(camera.translation.distance(Vec3::X * 160.0) < 1e-4);
+
+        move_dropper_camera(
+            &mut camera,
+            0.0,
+            &ButtonInput::default(),
+            Vec2::new(100.0, 0.0),
+            5.0,
+        );
+        assert!(camera.forward().y < -0.2);
     }
 }

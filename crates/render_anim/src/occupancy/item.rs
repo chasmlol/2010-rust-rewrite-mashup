@@ -589,11 +589,19 @@ fn append_item_draws(
 }
 
 fn dropper_pass_material(tess: &TessMaterials) -> Option<SmodelPassMaterial> {
-    let ordinal = (0..tess.catalog.materials.len() as u32).find(|&ordinal| {
-        tess.catalog
-            .material_for_sorted_ordinal(ordinal)
-            .is_some_and(|material| material.unlit && material.baked_draw_surf.is_some())
-    })?;
+    let ordinal = (0..tess.catalog.materials.len() as u32)
+        .find(|&ordinal| {
+            tess.catalog
+                .material_for_sorted_ordinal(ordinal)
+                .is_some_and(|material| material.unlit && material.baked_draw_surf.is_some())
+        })
+        .or_else(|| {
+            (0..tess.catalog.materials.len() as u32).find(|&ordinal| {
+                tess.catalog
+                    .material_for_sorted_ordinal(ordinal)
+                    .is_some_and(|material| material.baked_draw_surf.is_some())
+            })
+        })?;
     let runtime = tess.catalog.material_for_sorted_ordinal(ordinal)?;
     Some(SmodelPassMaterial {
         model_lighting_required: false,
@@ -659,8 +667,14 @@ fn append_dropper_draws(
                         PrimitiveTopology::TriangleList,
                         RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
                     );
-                    let positions: Vec<[f32; 3]> =
-                        mesh.positions.iter().map(|p| [p[0], -p[2], p[1]]).collect();
+                    let positions: Vec<[f32; 3]> = mesh
+                        .positions
+                        .iter()
+                        .map(|p| {
+                            let scale = skate_host::object_dropper::RETAIL_MODEL_UNIT_METERS;
+                            [p[0] * scale, -p[2] * scale, p[1] * scale]
+                        })
+                        .collect();
                     let normals: Vec<[f32; 3]> = mesh
                         .normals
                         .iter()
@@ -774,7 +788,11 @@ mod dropper_tests {
                 position: Vec3::ZERO,
                 yaw: std::f32::consts::FRAC_PI_2,
             }],
-            preview: None,
+            preview: Some(skate_host::object_dropper::PlacedProp {
+                definition: 0,
+                position: Vec3::new(2.0, 0.0, 0.0),
+                yaw: 0.0,
+            }),
         };
         let mut plan = ItemDrawPlan::default();
         let mut draws = Vec::new();
@@ -803,14 +821,25 @@ mod dropper_tests {
             &mut owners,
         );
 
-        assert_eq!(plan.assets.len(), 1);
-        assert_eq!(plan.vertices.len(), 3);
+        assert_eq!(plan.assets.len(), 2);
+        assert_eq!(plan.vertices.len(), 6);
         assert_eq!(plan.materials[0].material_sorted_index, Some(0));
-        assert_eq!(draws.len(), 1);
+        assert_eq!(draws.len(), 2);
         assert_eq!(owners[0].model, "Test ramp");
         let transformed = draws[0]
             .world_from_local
             .transform_point3(Vec3::from_array(plan.vertices[1].position));
-        assert!(transformed.distance(Vec3::Y) < 1e-5);
+        assert!(
+            transformed.distance(Vec3::Y * skate_host::object_dropper::RETAIL_MODEL_UNIT_METERS)
+                < 1e-5
+        );
+        let preview = draws[1]
+            .world_from_local
+            .transform_point3(Vec3::from_array(plan.vertices[3].position));
+        assert!(
+            preview.distance(crate::skate::collision::from_skate(Vec3::new(2.0, 0.0, 0.0)))
+                < 1e-5
+        );
+        assert_eq!(plan.vertices[3].color, [0.2, 0.9, 0.3, 1.0]);
     }
 }
