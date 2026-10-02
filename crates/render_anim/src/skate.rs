@@ -217,14 +217,14 @@ fn preload_map(host: &mut Host, clip: Arc<asset_world::ClipCollision>) -> Result
                 )?;
                 let worker_catalog = if prop_catalog_path.is_file() {
                     match PropCatalog::load(&prop_catalog_path) {
-                        Ok(catalog) => Some(Arc::new(catalog)),
+                        Ok(catalog) => Some(Arc::new(catalog.with_basic_park_objects())),
                         Err(error) => {
                             diag::warn!(World, "Skate prop catalog: {error}");
-                            None
+                            Some(Arc::new(PropCatalog::basic_park_objects()))
                         }
                     }
                 } else {
-                    None
+                    Some(Arc::new(PropCatalog::basic_park_objects()))
                 };
                 diag::info!(
                     World,

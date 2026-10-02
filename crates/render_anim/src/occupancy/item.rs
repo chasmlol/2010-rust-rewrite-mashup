@@ -696,8 +696,14 @@ fn append_dropper_draws(
                         let shade = 0.62 + (index % 4) as f32 * 0.06;
                         [shade, shade, shade, 1.0]
                     };
-                    render_mesh
-                        .insert_attribute(Mesh::ATTRIBUTE_COLOR, vec![tint; mesh.positions.len()]);
+                    let colors = if preview {
+                        vec![tint; mesh.positions.len()]
+                    } else if mesh.colors.len() == mesh.positions.len() {
+                        mesh.colors.clone()
+                    } else {
+                        vec![tint; mesh.positions.len()]
+                    };
+                    render_mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, colors);
                     render_mesh.insert_indices(Indices::U32(mesh.indices.clone()));
                     PosedModelSurface {
                         surface_index: index,
@@ -777,8 +783,10 @@ mod dropper_tests {
                     normals: vec![[0., 0., 1.]; 3],
                     uvs: vec![[0., 0.]; 3],
                     indices: vec![0, 1, 2],
+                    colors: vec![],
                 }],
                 triangles: vec![[[0., 0., 0.], [1., 0., 0.], [0., 1., 0.]]],
+                grind_rails: vec![],
             }],
         };
         let state = crate::skate::SkatePropDrawState {

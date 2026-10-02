@@ -1,8 +1,6 @@
 //! Session-only prop geometry and placement primitives.
 //!
-//! The catalog format deliberately contains only local geometry. The game-data
-//! converter must provide this data from the user's extracted game before it
-//! can be presented as an in-game prop catalog.
+//! The catalog contains extracted local geometry and host-authored park pieces.
 use bevy::prelude::{Mat4, Quat, Vec3};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -33,6 +31,8 @@ pub struct PropDefinition {
     #[serde(default)]
     pub meshes: Vec<PropMesh>,
     pub triangles: Vec<[[f32; 3]; 3]>,
+    #[serde(default)]
+    pub grind_rails: Vec<[[f32; 3]; 2]>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -41,6 +41,8 @@ pub struct PropMesh {
     pub normals: Vec<[f32; 3]>,
     pub uvs: Vec<[f32; 2]>,
     pub indices: Vec<u32>,
+    #[serde(default)]
+    pub colors: Vec<[f32; 4]>,
 }
 
 impl PropCatalog {
@@ -67,11 +69,84 @@ impl PropCatalog {
                 name: entry.name,
                 meshes: read_runtime_model(&model_path)?,
                 triangles: read_runtime_collision(&collision_path)?,
+                grind_rails: entry.grind_rails,
             });
         }
+
         let catalog = Self { schema: 1, props };
         catalog.validate()?;
         Ok(catalog)
+    }
+
+    pub fn with_basic_park_objects(mut self) -> Self {
+        let ids: HashSet<_> = self.props.iter().map(|prop| prop.id.clone()).collect();
+        self.props.extend(
+            Self::basic_park_objects()
+                .props
+                .into_iter()
+                .filter(|prop| !ids.contains(&prop.id)),
+        );
+        self
+    }
+
+    pub fn basic_park_objects() -> Self {
+        let mut props = Vec::with_capacity(15);
+        for (id, name, length, height, width, style) in [
+            ("kicker_micro", "Micro kicker", 0.55, 0.18, 0.9, 0),
+            ("kicker_small", "Small kicker", 0.8, 0.28, 1.15, 0),
+            ("kicker_steep", "Steep kicker", 0.72, 0.42, 1.1, 0),
+            ("kicker_wide", "Wide kicker", 1.0, 0.3, 1.8, 1),
+            ("bank_low", "Low bank ramp", 1.25, 0.4, 1.5, 1),
+            ("bank_high", "High bank ramp", 1.4, 0.62, 1.5, 1),
+            ("spine_ramp", "Spine ramp", 1.0, 0.42, 1.35, 2),
+            ("quarter_micro", "Micro quarter pipe", 0.95, 0.42, 1.25, 3),
+            ("quarter_mini", "Mini quarter pipe", 1.35, 0.72, 1.5, 3),
+            ("quarter_vert", "Vert quarter pipe", 1.8, 1.15, 1.8, 3),
+        ] {
+            props.push(make_ramp(id, name, length, height, width, style));
+        }
+        for (id, name, length, height, width, slope) in [
+            (
+                "rail_flat_short",
+                "Low short grind rail",
+                1.2,
+                0.22,
+                0.08,
+                0.0,
+            ),
+            (
+                "rail_flat_medium",
+                "Medium grind rail",
+                2.0,
+                0.38,
+                0.08,
+                0.0,
+            ),
+            ("rail_flat_long", "Long grind rail", 3.0, 0.48, 0.08, 0.0),
+            (
+                "rail_hand_low",
+                "Low sloped handrail",
+                2.0,
+                0.62,
+                0.08,
+                0.24,
+            ),
+            (
+                "rail_hand_high",
+                "High sloped handrail",
+                2.6,
+                0.92,
+                0.08,
+                0.36,
+            ),
+        ] {
+            props.push(make_rail(id, name, length, height, width, slope));
+        }
+        let catalog = Self { schema: 1, props };
+        catalog
+            .validate()
+            .expect("built-in park props must be valid");
+        catalog
     }
 
     pub fn validate(&self) -> Result<(), String> {
@@ -120,6 +195,7 @@ impl PropCatalog {
                     || mesh.indices.len() % 3 != 0
                     || mesh.normals.len() != mesh.positions.len()
                     || mesh.uvs.len() != mesh.positions.len()
+                    || (!mesh.colors.is_empty() && mesh.colors.len() != mesh.positions.len())
                     || mesh
                         .indices
                         .iter()
@@ -136,6 +212,7 @@ impl PropCatalog {
                     .flatten()
                     .chain(mesh.normals.iter().flatten())
                     .chain(mesh.uvs.iter().flatten())
+                    .chain(mesh.colors.iter().flatten())
                     .any(|v| !v.is_finite())
                 {
                     return Err(format!(
@@ -143,6 +220,16 @@ impl PropCatalog {
                         prop.id
                     ));
                 }
+            }
+            if prop.grind_rails.iter().any(|rail| {
+                rail.iter().flatten().any(|value| !value.is_finite())
+                    || (Vec3::from_array(rail[1]) - Vec3::from_array(rail[0])).length_squared()
+                        <= 1.0e-8
+            }) {
+                return Err(format!(
+                    "prop {:?} contains invalid grind rail geometry",
+                    prop.id
+                ));
             }
             if prop
                 .triangles
@@ -212,6 +299,263 @@ impl PlacedProp {
         }
         Ok(triangles)
     }
+
+    pub fn grind_rails(&self, catalog: &PropCatalog) -> Result<Vec<Vec<[f32; 3]>>, String> {
+        let prop = catalog
+            .props
+            .get(self.definition)
+            .ok_or("placed prop references an unknown catalog entry")?;
+        if !self.position.is_finite() || !self.yaw.is_finite() {
+            return Err(format!(
+                "placed prop {:?} has a non-finite transform",
+                prop.id
+            ));
+        }
+        let rotation = Quat::from_rotation_y(self.yaw);
+        Ok(prop
+            .grind_rails
+            .iter()
+            .map(|rail| {
+                rail.map(|point| {
+                    (rotation * (Vec3::from_array(point) * RETAIL_MODEL_UNIT_METERS)
+                        + self.position)
+                        .to_array()
+                })
+                .to_vec()
+            })
+            .collect())
+    }
+}
+
+struct ParkMeshBuilder {
+    mesh: PropMesh,
+    triangles: Vec<[[f32; 3]; 3]>,
+}
+
+impl ParkMeshBuilder {
+    fn new() -> Self {
+        Self {
+            mesh: PropMesh {
+                positions: Vec::new(),
+                normals: Vec::new(),
+                uvs: Vec::new(),
+                indices: Vec::new(),
+                colors: Vec::new(),
+            },
+            triangles: Vec::new(),
+        }
+    }
+
+    fn triangle(&mut self, points: [[f32; 3]; 3], color: [f32; 4]) {
+        let a = Vec3::from_array(points[0]);
+        let b = Vec3::from_array(points[1]);
+        let c = Vec3::from_array(points[2]);
+        let normal = (b - a).cross(c - a);
+        if normal.length_squared() <= 1.0e-10 {
+            return;
+        }
+        let normal = normal.normalize().to_array();
+        let start = self.mesh.positions.len() as u32;
+        for point in points {
+            self.mesh
+                .positions
+                .push((Vec3::from_array(point) / RETAIL_MODEL_UNIT_METERS).to_array());
+            self.mesh.normals.push(normal);
+            self.mesh.uvs.push([point[0], point[1]]);
+            self.mesh.colors.push(color);
+        }
+        self.mesh.indices.extend([start, start + 1, start + 2]);
+        self.triangles.push(
+            points.map(|point| (Vec3::from_array(point) / RETAIL_MODEL_UNIT_METERS).to_array()),
+        );
+    }
+
+    fn quad(&mut self, points: [[f32; 3]; 4], color: [f32; 4]) {
+        self.triangle([points[0], points[1], points[2]], color);
+        self.triangle([points[0], points[2], points[3]], color);
+    }
+
+    fn box_mesh(&mut self, min: Vec3, max: Vec3, color: [f32; 4]) {
+        let [x0, y0, z0] = min.to_array();
+        let [x1, y1, z1] = max.to_array();
+        for face in [
+            [[x0, y0, z0], [x0, y1, z0], [x1, y1, z0], [x1, y0, z0]],
+            [[x0, y0, z1], [x1, y0, z1], [x1, y1, z1], [x0, y1, z1]],
+            [[x0, y0, z0], [x1, y0, z0], [x1, y0, z1], [x0, y0, z1]],
+            [[x0, y1, z0], [x0, y1, z1], [x1, y1, z1], [x1, y1, z0]],
+            [[x0, y0, z0], [x0, y0, z1], [x0, y1, z1], [x0, y1, z0]],
+            [[x1, y0, z0], [x1, y1, z0], [x1, y1, z1], [x1, y0, z1]],
+        ] {
+            self.quad(face, color);
+        }
+    }
+
+    fn cylinder(&mut self, start: Vec3, end: Vec3, radius: f32, color: [f32; 4]) {
+        let axis = end - start;
+        if axis.length_squared() <= 1.0e-8 {
+            return;
+        }
+        let axis = axis.normalize();
+        let u = axis.any_orthonormal_vector();
+        let v = axis.cross(u).normalize();
+        let segments = 10;
+        for i in 0..segments {
+            let angle_a = std::f32::consts::TAU * i as f32 / segments as f32;
+            let angle_b = std::f32::consts::TAU * (i + 1) as f32 / segments as f32;
+            let offset = |angle: f32| (u * angle.cos() + v * angle.sin()) * radius;
+            let a = start + offset(angle_a);
+            let b = start + offset(angle_b);
+            let c = end + offset(angle_b);
+            let d = end + offset(angle_a);
+            self.quad(
+                [a.to_array(), b.to_array(), c.to_array(), d.to_array()],
+                color,
+            );
+        }
+    }
+
+    fn finish(self, id: &str, name: &str, grind_rails: Vec<[[f32; 3]; 2]>) -> PropDefinition {
+        PropDefinition {
+            id: format!("iw4l_{id}"),
+            name: name.into(),
+            meshes: vec![self.mesh],
+            triangles: self.triangles,
+            grind_rails: grind_rails
+                .into_iter()
+                .map(|rail| {
+                    rail.map(|point| {
+                        (Vec3::from_array(point) / RETAIL_MODEL_UNIT_METERS).to_array()
+                    })
+                })
+                .collect(),
+        }
+    }
+}
+
+fn make_ramp(
+    id: &str,
+    name: &str,
+    length: f32,
+    height: f32,
+    width: f32,
+    style: u8,
+) -> PropDefinition {
+    let mut builder = ParkMeshBuilder::new();
+    let depth = 0.12_f32.min(height * 0.4);
+    let (mut profile, ride_segments) = if style == 3 {
+        let radius = length;
+        let segments = 10;
+        let arc = (0..=segments)
+            .map(|i| {
+                let angle = std::f32::consts::FRAC_PI_2 * i as f32 / segments as f32;
+                [radius * angle.sin(), height * (1.0 - angle.cos())]
+            })
+            .collect::<Vec<_>>();
+        (arc, segments)
+    } else if style == 2 {
+        (
+            vec![[-length * 0.5, 0.0], [0.0, height], [length * 0.5, 0.0]],
+            2,
+        )
+    } else {
+        (vec![[0.0, 0.0], [length, height]], 1)
+    };
+    profile.push([profile.last().unwrap()[0], -depth]);
+    profile.push([profile[0][0], -depth]);
+    let half = width * 0.5;
+    let deck = match style {
+        1 => [0.42, 0.31, 0.20, 1.0],
+        3 => [0.34, 0.37, 0.40, 1.0],
+        _ => [0.50, 0.52, 0.54, 1.0],
+    };
+    let dark = [0.24, 0.26, 0.28, 1.0];
+    for edge in 0..profile.len() {
+        let [x0, y0] = profile[edge];
+        let [x1, y1] = profile[(edge + 1) % profile.len()];
+        if edge < ride_segments {
+            let panels = (width / 0.22).ceil().clamp(3.0, 12.0) as usize;
+            for panel in 0..panels {
+                let z0 = -half + width * panel as f32 / panels as f32;
+                let z1 = -half + width * (panel + 1) as f32 / panels as f32;
+                let shade = if (panel + edge) % 2 == 0 { 1.0 } else { 0.9 };
+                let color = [deck[0] * shade, deck[1] * shade, deck[2] * shade, 1.0];
+                builder.quad(
+                    [[x0, y0, z0], [x1, y1, z0], [x1, y1, z1], [x0, y0, z1]],
+                    color,
+                );
+            }
+        } else {
+            builder.quad(
+                [
+                    [x0, y0, -half],
+                    [x1, y1, -half],
+                    [x1, y1, half],
+                    [x0, y0, half],
+                ],
+                dark,
+            );
+        }
+    }
+    for side in [-half, half] {
+        let points: Vec<_> = profile.iter().map(|[x, y]| [*x, *y, side]).collect();
+        for i in 1..points.len() - 1 {
+            builder.triangle([points[0], points[i], points[i + 1]], dark);
+        }
+    }
+
+    let lip = profile[if style == 2 { 1 } else { ride_segments }];
+    let coping_radius = 0.025_f32;
+    builder.cylinder(
+        Vec3::new(lip[0], lip[1], -half),
+        Vec3::new(lip[0], lip[1], half),
+        coping_radius,
+        [0.68, 0.70, 0.72, 1.0],
+    );
+    let grind_rails = vec![[
+        [lip[0], lip[1] + coping_radius, -half],
+        [lip[0], lip[1] + coping_radius, half],
+    ]];
+    builder.finish(id, name, grind_rails)
+}
+
+fn make_rail(
+    id: &str,
+    name: &str,
+    length: f32,
+    height: f32,
+    thickness: f32,
+    slope: f32,
+) -> PropDefinition {
+    let mut builder = ParkMeshBuilder::new();
+    let start = Vec3::new(-length * 0.5, height, 0.0);
+    let end = Vec3::new(length * 0.5, height + slope, 0.0);
+    let radius = thickness * 0.5;
+    let steel = [0.60, 0.64, 0.68, 1.0];
+    let dark_steel = [0.31, 0.34, 0.37, 1.0];
+    builder.cylinder(start, end, radius, steel);
+    let support_count = (length / 0.8).ceil() as usize + 1;
+    for i in 0..support_count {
+        let t = i as f32 / (support_count - 1).max(1) as f32;
+        let point = start.lerp(end, t);
+        builder.box_mesh(
+            Vec3::new(point.x - 0.045, 0.0, -0.045),
+            Vec3::new(point.x + 0.045, point.y - radius, 0.045),
+            dark_steel,
+        );
+        builder.box_mesh(
+            Vec3::new(point.x - 0.11, 0.0, -0.12),
+            Vec3::new(point.x + 0.11, 0.035, 0.12),
+            [0.43, 0.45, 0.47, 1.0],
+        );
+    }
+    builder.finish(
+        id,
+        name,
+        vec![[
+            [start.x, start.y + radius, start.z],
+            [end.x, end.y + radius, end.z],
+        ]],
+    )
 }
 
 #[derive(Deserialize)]
@@ -226,6 +570,8 @@ struct DiskProp {
     name: String,
     model: PathBuf,
     collision: PathBuf,
+    #[serde(default)]
+    grind_rails: Vec<[[f32; 3]; 2]>,
 }
 
 fn safe_asset_path(root: &Path, relative: &Path) -> Result<PathBuf, String> {
@@ -277,6 +623,7 @@ fn read_runtime_model(path: &Path) -> Result<Vec<PropMesh>, String> {
             normals,
             uvs,
             indices,
+            colors: Vec::new(),
         });
     }
     cursor.finish()?;
@@ -518,8 +865,10 @@ mod tests {
                     normals: vec![[0., 1., 0.]; 3],
                     uvs: vec![[0., 0.]; 3],
                     indices: vec![0, 1, 2],
+                    colors: vec![],
                 }],
                 triangles: vec![[[0., 0., 0.], [1., 0., 0.], [0., 0., 1.]]],
+                grind_rails: vec![],
             }],
         }
     }
@@ -610,6 +959,7 @@ mod tests {
             name: "Ramp".into(),
             meshes: catalog.props[0].meshes.clone(),
             triangles: catalog.props[0].triangles.clone(),
+            grind_rails: vec![],
         });
         let mut dropper = DropperState::new(catalog).unwrap();
         dropper

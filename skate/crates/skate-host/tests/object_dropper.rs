@@ -16,8 +16,10 @@ fn catalog() -> PropCatalog {
                     normals: vec![[0., 1., 0.]; 3],
                     uvs: vec![[0., 0.]; 3],
                     indices: vec![0, 1, 2],
+                    colors: vec![],
                 }],
                 triangles: vec![[[0., 0., 0.], [1., 0., 0.], [0., 0., 1.]]],
+                grind_rails: vec![],
             },
             PropDefinition {
                 id: "ramp".into(),
@@ -27,11 +29,54 @@ fn catalog() -> PropCatalog {
                     normals: vec![[0., 1., 0.]; 3],
                     uvs: vec![[0., 0.]; 3],
                     indices: vec![0, 1, 2],
+                    colors: vec![],
                 }],
                 triangles: vec![[[0., 0., 0.], [1., 0., 0.], [0., 0., 1.]]],
+                grind_rails: vec![],
             },
         ],
     }
+}
+
+#[test]
+fn built_in_park_catalog_contains_ramps_rails_and_colored_surfaces() {
+    let catalog = PropCatalog::basic_park_objects();
+    catalog.validate().unwrap();
+    assert_eq!(catalog.props.len(), 15);
+    assert_eq!(
+        catalog
+            .props
+            .iter()
+            .filter(|prop| prop.id.contains("rail_"))
+            .count(),
+        5
+    );
+    assert!(
+        catalog
+            .props
+            .iter()
+            .all(|prop| !prop.meshes[0].colors.is_empty())
+    );
+    assert!(
+        catalog
+            .props
+            .iter()
+            .filter(|prop| prop.id.contains("rail_"))
+            .all(|prop| prop.grind_rails.len() == 1)
+    );
+}
+
+#[test]
+fn placed_grind_rail_is_transformed_into_skate_world_space() {
+    let catalog = PropCatalog::basic_park_objects();
+    let placed = PlacedProp {
+        definition: 10,
+        position: Vec3::new(3.0, 4.0, 5.0),
+        yaw: std::f32::consts::FRAC_PI_2,
+    };
+    let rails = placed.grind_rails(&catalog).unwrap();
+    assert_eq!(rails.len(), 1);
+    assert!(Vec3::from_array(rails[0][0]).distance(Vec3::new(3.0, 4.26, 5.6)) < 1.0e-4);
 }
 
 #[test]

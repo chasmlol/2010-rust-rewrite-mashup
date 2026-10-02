@@ -218,13 +218,14 @@ impl CollisionBuilder {
     pub fn build_with_props(
         &self,
         mut triangles: Vec<[[f32; 3]; 3]>,
-        rails: Vec<Vec<[f32; 3]>>,
+        mut rails: Vec<Vec<[f32; 3]>>,
         catalog: &crate::object_dropper::PropCatalog,
         placed: &[crate::object_dropper::PlacedProp],
     ) -> Result<PreparedCollision, String> {
         catalog.validate()?;
         for prop in placed {
             triangles.extend(prop.collision_triangles(catalog)?);
+            rails.extend(prop.grind_rails(catalog)?);
         }
         self.build(triangles, rails)
     }

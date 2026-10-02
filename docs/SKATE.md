@@ -88,6 +88,13 @@ Both folders are saved in `.env` next to `iw4l.exe`. Delete `.env` (and
 | controller | skate (Skate 3 flick-it controls) |
 | `~` | console: `skate on`, `skate off`, `skate status` |
 
+The dropper includes 15 host-authored park pieces even without extracted
+Create-a-Park assets: ten ramps (kickers, banks, a spine, and quarter pipes)
+and five steel grind rails in varied lengths and heights. Ramps use concrete-
+and wood-style panel finishes with metal coping; rails have metal supports.
+Their visible meshes and collision are generated together, and each rail and
+ramp coping is added to Skate's grind paths when placed.
+
 ## Known issues
 
 - Dying while in skate mode leaves bodies piled up.
