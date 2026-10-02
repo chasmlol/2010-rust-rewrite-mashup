@@ -34,6 +34,8 @@ foreach ($source in Get-ChildItem -LiteralPath $tools -File -Recurse) {
     New-Item -ItemType Directory -Force (Split-Path -Parent $destination) | Out-Null
     Copy-Item -LiteralPath $source.FullName -Destination $destination
 }
+Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'park_props.py') `
+    -Destination (Join-Path $work 'tools/asset_pipeline/park_props.py')
 
 & python -m PyInstaller --noconfirm --clean --onefile --console --name iw4l-skate-convert `
     --paths $SkateEngine `

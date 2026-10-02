@@ -28,7 +28,7 @@ pub fn prepare() -> Result<(), String> {
         env.write(&env_path)?;
     }
 
-    if env.get(SKATE_SWITCH) == Some("off") {
+    if std::env::var(SKATE_SWITCH).as_deref() == Ok("off") || env.get(SKATE_SWITCH) == Some("off") {
         return Ok(());
     }
     let assets = match env
@@ -65,7 +65,8 @@ pub fn fail(message: &str) -> ! {
 
 fn mw2_ready(path: &Path) -> bool {
     path.is_dir()
-        && assets::find_zone_file(&asset_transport::GamesRoot(path.to_owned()), "iw4:mp_rust").is_ok()
+        && assets::find_zone_file(&asset_transport::GamesRoot(path.to_owned()), "iw4:mp_rust")
+            .is_ok()
 }
 
 fn locate_mw2() -> Result<PathBuf, String> {

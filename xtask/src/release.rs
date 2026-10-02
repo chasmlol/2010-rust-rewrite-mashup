@@ -469,6 +469,10 @@ pub fn bundles(root: &Path, env: &Env, profile: &str) -> Res<()> {
         for (from, to) in LEGAL_FILES {
             copy(&root.join(from), &stage.join(to))?;
         }
+        copy(
+            &root.join("Minecraft World.bat"),
+            &stage.join("Minecraft World.bat"),
+        )?;
         std::fs::write(
             stage.join(".env"),
             format!(
@@ -482,7 +486,13 @@ pub fn bundles(root: &Path, env: &Env, profile: &str) -> Res<()> {
         )
         .map_err(|error| format!("writing {}/.env: {error}", stage.display()))?;
         let archive = out.join(format!("iw4l-windows-{channel}.zip"));
-        let mut names = vec![".env", "iw4l-ca.pem", "iw4launcher.exe", "iw4l.exe"];
+        let mut names = vec![
+            ".env",
+            "Minecraft World.bat",
+            "iw4l-ca.pem",
+            "iw4launcher.exe",
+            "iw4l.exe",
+        ];
         names.extend(LEGAL_FILES.iter().map(|(_, to)| *to));
         let files = names
             .into_iter()

@@ -59,6 +59,8 @@ Both folders are saved in `.env` next to `iw4l.exe`. Delete `.env` (and
 | | |
 |---|---|
 | **J** | get on / off the board |
+| **F6** or **Shift + Down** / **LB + D-pad down** | set the session marker |
+| **Hold F7** or **hold Shift + Up** / **hold LB + D-pad up** | return to the session marker |
 | controller | skate (Skate 3 flick-it controls) |
 | `~` | console: `skate on`, `skate off`, `skate status` |
 
@@ -66,6 +68,14 @@ Both folders are saved in `.env` next to `iw4l.exe`. Delete `.env` (and
 
 - Dying while in skate mode leaves bodies piled up.
 - The skateboard is invisible on some maps.
+- The object dropper is not usable in-game yet. `skate-host` has experimental
+  catalog validation, session-only placement/input state, and a collision
+  builder entry point, but gameplay does not load a prop catalog or call that
+  entry point, and no prop geometry is rendered. The converter extracts the
+  player's local `parkassets.big` model, texture, locator, and recipe files into
+  `assets/private/park-props/source` and writes a hashed source inventory.
+  Those are raw source assets, not yet a renderable prop catalog or verified
+  collision geometry.
 
 ## How it works
 
@@ -77,7 +87,7 @@ Both folders are saved in `.env` next to `iw4l.exe`. Delete `.env` (and
 | retarget | [`crates/render_anim/src/skate/rig.rs`](../crates/render_anim/src/skate/rig.rs) | maps Skate 3 bones onto the MW2 soldier skeleton |
 | board | [`crates/assets/src/skate_board.rs`](../crates/assets/src/skate_board.rs) | derives `board.json` and `rig.json` from the converted skater model on first run |
 | setup | [`crates/launcher/src/first_run.rs`](../crates/launcher/src/first_run.rs) | the double-click flow: find MW2, pick `default.xex`, run the converter, write `.env` |
-| converter | [`skate/converter`](../skate/converter) | `iw4l-skate-convert.exe`: runs only the skate engine's core and skater exports on the player's own `default.xex` |
+| converter | [`skate/converter`](../skate/converter) | `iw4l-skate-convert.exe`: converts the player's own `default.xex`, skater assets, and local Create-a-Park source inventory |
 
 ## Building
 

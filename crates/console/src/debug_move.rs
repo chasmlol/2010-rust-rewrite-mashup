@@ -819,6 +819,21 @@ pub(crate) fn update_skate_overlay(mode:Res<frame::SkateMode>,mut hud:Query<(&mu
         **text=if failed {format!("Skate unavailable: {}", mode.status)}
         else if mode.entering && !mode.preloaded {"Skate is finishing map preparation... | J: cancel".into()}
         else if mode.controller.is_none() {"SKATE | Connect an Xbox / XInput controller | J: return to MW2".into()}
-        else {"SKATE | Original controller controls | Start: pause | J: return to MW2".into()};
+        else {
+            let marker = if mode.marker_placed {
+                if mode.marker_can_return && mode.marker_progress > 0. {
+                    format!(" | Returning: {:>3.0}%", mode.marker_progress * 100.)
+                } else if mode.marker_can_return {
+                    " | Marker set".into()
+                } else {
+                    " | Marker unavailable".into()
+                }
+            } else {
+                " | No marker".into()
+            };
+            format!(
+                "SKATE | F6 / Shift+Down: set marker | Hold F7 / Shift+Up: return{marker} | Start: pause | J: return to MW2"
+            )
+        };
     }
 }
