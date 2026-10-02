@@ -1,5 +1,3 @@
-use bevy::prelude::*;
-
 use crate::anim::scene_submission::{AnimDObjSceneSkels, AnimDObjSceneSubmission, AnimSceneSubmit};
 use crate::anim::xmodel_pose::PosedModelSurface;
 use crate::occupancy::script_model::pose_script_dobj_with_materials;
@@ -8,6 +6,9 @@ use crate::{
     lighting_box_half, stamp_plan_geometry, topology_fingerprint,
 };
 use anim_iw4::DOBJ_RADIUS_PARENT_ROOT;
+use bevy::asset::RenderAssetUsages;
+use bevy::mesh::{Indices, PrimitiveTopology};
+use bevy::prelude::*;
 use entity_iw4::{ET_ITEM, Trajectory, evaluate_trajectory};
 use render_scene::{
     HostGfxScene, ModelLightingOwner, ModelLightingRequest, ModelLightingRequests,
@@ -434,15 +435,18 @@ fn append_item_draws(
     atpoint: Res<render_scene::DynAtPointLookup>,
     tess: Option<Res<TessMaterials>>,
     facts: Res<WorldPresentFacts>,
+    skate_mode: Res<frame::SkateMode>,
     mut plan: ResMut<ItemDrawPlan>,
     mut lighting_requests: ResMut<ModelLightingRequests>,
     model_materials: Res<crate::anim::model_materials::PreparedModelMaterials>,
+    dropper: Res<crate::skate::SkatePropDrawState>,
     mut last_material_generation: Local<Option<render_material::MaterialGenerationId>>,
     mut draws: Local<Vec<XModelSurfaceDraw>>,
     mut owners: Local<Vec<ItemOwnerDraw>>,
 ) {
     draws.clear();
     owners.clear();
+    let dropper_material = tess.as_deref().and_then(dropper_pass_material);
     let catalog = world_weapons
         .as_ref()
         .map(|prepared| &prepared.0)
@@ -453,7 +457,15 @@ fn append_item_draws(
         *plan = ItemDrawPlan::default();
         plan.revision = revision;
         plan.generation = generation;
-        plan.publish_no_rows();
+        append_dropper_draws(
+            skate_mode.active,
+            &dropper,
+            dropper_material.as_ref(),
+            &mut plan,
+            &mut draws,
+            &mut owners,
+        );
+        plan.publish_frame_rows(&mut draws, &mut owners);
         *last_material_generation = None;
         return;
     }
@@ -559,6 +571,14 @@ fn append_item_draws(
         }
         perf::item(entity_iw4::ET_ITEM, None, None, Some("posed"));
     }
+    append_dropper_draws(
+        skate_mode.active,
+        &dropper,
+        dropper_material.as_ref(),
+        &mut plan,
+        &mut draws,
+        &mut owners,
+    );
     if !draws.is_empty() {
         let topology =
             topology_fingerprint(&plan.indices, &plan.surface_ranges, plan.vertices.len());
@@ -566,6 +586,153 @@ fn append_item_draws(
         plan.revision = stamp_plan_geometry(&mut plan.revisions, rev, topology);
     }
     plan.publish_frame_rows(&mut draws, &mut owners);
+}
+
+fn dropper_pass_material(tess: &TessMaterials) -> Option<SmodelPassMaterial> {
+    let ordinal = (0..tess.catalog.materials.len() as u32).find(|&ordinal| {
+        tess.catalog
+            .material_for_sorted_ordinal(ordinal)
+            .is_some_and(|material| material.unlit && material.baked_draw_surf.is_some())
+    })?;
+    let runtime = tess.catalog.material_for_sorted_ordinal(ordinal)?;
+    Some(SmodelPassMaterial {
+        model_lighting_required: false,
+        color: None,
+        specular: None,
+        probe: None,
+        atlas: None,
+        alpha_mode: AlphaMode::Opaque,
+        draw_mode: None,
+        cull_mode: None,
+        env_map_parms: [0.0; 4],
+        lighting_lookup_scale: [0.0; 4],
+        atlas_lookup: [0.0; 4],
+        sort_key: runtime.sort_key,
+        material_sorted_index: Some(ordinal),
+    })
+}
+
+const XMODEL_OBJECT_ID_DROP_BASE: u16 = 0x700;
+
+fn append_dropper_draws(
+    active: bool,
+    state: &crate::skate::SkatePropDrawState,
+    material: Option<&SmodelPassMaterial>,
+    plan: &mut ItemDrawPlan,
+    draws: &mut Vec<XModelSurfaceDraw>,
+    owners: &mut Vec<ItemOwnerDraw>,
+) {
+    if !active {
+        return;
+    }
+    let Some(material) = material else {
+        return;
+    };
+    let Some(catalog) = state.catalog.as_deref() else {
+        return;
+    };
+    let mut instances: Vec<(&skate_host::object_dropper::PlacedProp, bool)> =
+        state.placed.iter().map(|prop| (prop, false)).collect();
+    if let Some(preview) = state.preview.as_ref() {
+        instances.push((preview, true));
+    }
+    for (instance_index, (placed, preview)) in instances.into_iter().enumerate() {
+        let Some(definition) = catalog.props.get(placed.definition) else {
+            continue;
+        };
+        let key = format!(
+            "park-prop:{}{}",
+            if preview { "preview:" } else { "" },
+            definition.id
+        );
+        let asset_index = if let Some(index) =
+            plan.assets.iter().position(|asset| asset.model == key)
+        {
+            index
+        } else {
+            let surfaces: Vec<_> = definition
+                .meshes
+                .iter()
+                .enumerate()
+                .map(|(index, mesh)| {
+                    let mut render_mesh = Mesh::new(
+                        PrimitiveTopology::TriangleList,
+                        RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
+                    );
+                    let positions: Vec<[f32; 3]> =
+                        mesh.positions.iter().map(|p| [p[0], -p[2], p[1]]).collect();
+                    let normals: Vec<[f32; 3]> = mesh
+                        .normals
+                        .iter()
+                        .map(|n| {
+                            let mapped = Vec3::new(n[0], -n[2], n[1]);
+                            if mapped.length_squared() > 1.0e-8 {
+                                mapped.normalize().to_array()
+                            } else {
+                                [0.0, 0.0, 1.0]
+                            }
+                        })
+                        .collect();
+                    render_mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
+                    render_mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
+                    render_mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, mesh.uvs.clone());
+                    let tint = if preview {
+                        [0.2, 0.9, 0.3, 1.0]
+                    } else {
+                        let shade = 0.62 + (index % 4) as f32 * 0.06;
+                        [shade, shade, shade, 1.0]
+                    };
+                    render_mesh
+                        .insert_attribute(Mesh::ATTRIBUTE_COLOR, vec![tint; mesh.positions.len()]);
+                    render_mesh.insert_indices(Indices::U32(mesh.indices.clone()));
+                    PosedModelSurface {
+                        surface_index: index,
+                        mesh: render_mesh,
+                        material: None,
+                        packed_vertices: Vec::new(),
+                        owner: crate::anim::xmodel_pose::FpvSurfOwner::Gun,
+                        model: 0,
+                    }
+                })
+                .collect();
+            let material_rows = vec![Some(material.clone()); surfaces.len()];
+            let asset_surfaces = append_item_surfaces(plan, &surfaces, &material_rows);
+            if asset_surfaces.is_empty() {
+                continue;
+            }
+            let index = plan.assets.len();
+            plan.assets.push(ItemAssetDraw {
+                model: key.clone(),
+                surfaces: asset_surfaces,
+            });
+            index
+        };
+        let object_id = XMODEL_OBJECT_ID_DROP_BASE.saturating_add(instance_index as u16);
+        owners.push(ItemOwnerDraw {
+            object_id,
+            model: definition.name.clone(),
+        });
+        let position = crate::skate::collision::from_skate(placed.position);
+        let world_from_local =
+            Mat4::from_rotation_translation(Quat::from_rotation_z(placed.yaw), position);
+        for &(surface, material) in &plan.assets[asset_index].surfaces {
+            draws.push(XModelSurfaceDraw {
+                surface,
+                material,
+                world_from_local,
+                lighting_handle: 0,
+                pending_lighting: None,
+                colour_refusal: None,
+                object_id,
+                scene_light_index: 0,
+                reflection_probe_index: 0,
+                packed_lighting: None,
+                is_scope: false,
+                scene_entnum: None,
+                caster_bound: None,
+            });
+        }
+    }
 }
 
 fn evaluate_origin(es: &entity_iw4::EntityState, at_time: i32) -> [f32; 3] {
@@ -577,4 +744,73 @@ fn evaluate_origin(es: &entity_iw4::EntityState, at_time: i32) -> [f32; 3] {
         tr_base: es.tr_base,
     };
     evaluate_trajectory(&traj, at_time)
+}
+
+#[cfg(test)]
+mod dropper_tests {
+    use super::*;
+    use skate_host::object_dropper::{PropDefinition, PropMesh};
+
+    #[test]
+    fn prop_geometry_enters_the_retained_item_draw_plan_with_matching_transform() {
+        let catalog = skate_host::object_dropper::PropCatalog {
+            schema: 1,
+            props: vec![PropDefinition {
+                id: "test-ramp".into(),
+                name: "Test ramp".into(),
+                meshes: vec![PropMesh {
+                    positions: vec![[0., 0., 0.], [1., 0., 0.], [0., 1., 0.]],
+                    normals: vec![[0., 0., 1.]; 3],
+                    uvs: vec![[0., 0.]; 3],
+                    indices: vec![0, 1, 2],
+                }],
+                triangles: vec![[[0., 0., 0.], [1., 0., 0.], [0., 1., 0.]]],
+            }],
+        };
+        let state = crate::skate::SkatePropDrawState {
+            catalog: Some(std::sync::Arc::new(catalog)),
+            placed: vec![skate_host::object_dropper::PlacedProp {
+                definition: 0,
+                position: Vec3::ZERO,
+                yaw: std::f32::consts::FRAC_PI_2,
+            }],
+            preview: None,
+        };
+        let mut plan = ItemDrawPlan::default();
+        let mut draws = Vec::new();
+        let mut owners = Vec::new();
+        let material = SmodelPassMaterial {
+            model_lighting_required: false,
+            color: None,
+            specular: None,
+            probe: None,
+            atlas: None,
+            alpha_mode: AlphaMode::Opaque,
+            draw_mode: None,
+            cull_mode: None,
+            env_map_parms: [0.0; 4],
+            lighting_lookup_scale: [0.0; 4],
+            atlas_lookup: [0.0; 4],
+            sort_key: 0,
+            material_sorted_index: Some(0),
+        };
+        append_dropper_draws(
+            true,
+            &state,
+            Some(&material),
+            &mut plan,
+            &mut draws,
+            &mut owners,
+        );
+
+        assert_eq!(plan.assets.len(), 1);
+        assert_eq!(plan.vertices.len(), 3);
+        assert_eq!(plan.materials[0].material_sorted_index, Some(0));
+        assert_eq!(draws.len(), 1);
+        assert_eq!(owners[0].model, "Test ramp");
+        let transformed = draws[0]
+            .world_from_local
+            .transform_point3(Vec3::from_array(plan.vertices[1].position));
+        assert!(transformed.distance(Vec3::Y) < 1e-5);
+    }
 }

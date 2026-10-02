@@ -52,9 +52,9 @@ Skate 3/
 5. The menu opens. Every later double-click goes straight to the menu.
 
 The prop files are under `skate-data/assets/private/park-props`: `catalog.json`
-indexes per-model `.npz` geometry and per-prop retail collision files. Older
-converted data without a catalog is detected and setup asks for `default.xex`
-again to refresh it.
+indexes runtime mesh and collision files; the accompanying `.npz` files are
+available for inspection. Older converted data without this runtime catalog
+format is detected and setup asks for `default.xex` again to refresh it.
 
 Both folders are saved in `.env` next to `iw4l.exe`. Delete `.env` (and
 `skate-data/`) to run the setup again.
@@ -67,6 +67,11 @@ Both folders are saved in `.env` next to `iw4l.exe`. Delete `.env` (and
 | **F6** or **Shift + Down** / **LB + D-pad down** | set the session marker |
 | **Hold F7** or **hold Shift + Up** / **hold LB + D-pad up** | return to the session marker |
 | **Tab** / **Back (Select)** while skating | open or close the object dropper |
+| **Up / Down** or **D-pad up / down** in the dropper | browse props |
+| **Left / Right** or **D-pad left / right** in the dropper | rotate the selected prop |
+| **Enter / A** in the dropper | place the prop in front of the skater |
+| **Backspace / X** in the dropper | delete the last placed prop |
+| **Escape / Back (Select)** in the dropper | close the dropper |
 | controller | skate (Skate 3 flick-it controls) |
 | `~` | console: `skate on`, `skate off`, `skate status` |
 
@@ -74,13 +79,11 @@ Both folders are saved in `.env` next to `iw4l.exe`. Delete `.env` (and
 
 - Dying while in skate mode leaves bodies piled up.
 - The skateboard is invisible on some maps.
-- The object dropper is not usable in-game yet. `skate-host` has experimental
-  catalog validation, session-only placement/input state, and a collision
-  builder entry point. Tab / Back opens a status panel and pauses Skate input.
-  First-run conversion now decodes Create-a-Park dynamic model meshes and
-  embedded retail RenderWare collision triangles into local
-  `skate-data/assets/private/park-props`. The game does not yet load/render
-  those extracted models or install their collision for placed props.
+- Dropper placements are session-only and disappear when leaving Skate mode.
+  Prop meshes currently use simple flat colors; extracted material textures
+  are not yet applied.
+- Props spawn a fixed distance in front of the skater; placement does not yet
+  raycast against the map to snap to the ground or other surfaces.
 
 ## How it works
 

@@ -18,6 +18,7 @@ diag.workspace = true
 asset_transport.workspace = true
 assets.workspace = true
 bootstrap = { path = "../bootstrap" }
+serde_json.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 rfd = { version = "0.15", default-features = false }

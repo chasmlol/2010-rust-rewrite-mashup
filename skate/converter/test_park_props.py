@@ -93,6 +93,7 @@ class ParkPropsTests(unittest.TestCase):
                 )
 
             self.assertEqual(result["status"], "models-and-retail-collision")
+            self.assertEqual(result["schema"], 3)
             self.assertEqual(len(result["assets"]), 1)
             prop = result["assets"][0]
             self.assertEqual(prop["collision_triangles"], 1)
@@ -104,6 +105,15 @@ class ParkPropsTests(unittest.TestCase):
                     collision["triangles"],
                     [[[0, 0, 0], [1, 0, 0], [0, 0, 1]]],
                 )
+            runtime_model = assets / "private/park-props" / prop["runtime_model"]
+            self.assertEqual(runtime_model.read_bytes()[:8], b"IW4LPM01")
+            self.assertEqual(runtime_model.stat().st_size, 128)
+            runtime_collision = assets / "private/park-props" / prop["runtime_collision"]
+            self.assertEqual(runtime_collision.read_bytes()[:8], b"IW4LPC01")
+            self.assertEqual(runtime_collision.stat().st_size, 48)
+            self.assertEqual(len(result["props"]), 1)
+            self.assertEqual(result["props"][0]["model"], prop["runtime_model"])
+            self.assertEqual(result["props"][0]["collision"], prop["runtime_collision"])
             self.assertTrue(
                 (assets / "private/park-props/catalog.json").is_file()
             )

@@ -3672,6 +3672,7 @@ dependencies = [
  "bootstrap",
  "diag",
  "rfd",
+ "serde_json",
 ]
 
 [[package]]

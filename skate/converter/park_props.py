@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import struct
 from pathlib import Path
 
 
@@ -112,6 +113,64 @@ def _write_collision_archive(output, clustered_meshes):
     return len(values)
 
 
+def _write_runtime_model(output, model):
+    import numpy as np
+
+    with output.open("wb") as stream:
+        stream.write(b"IW4LPM01")
+        stream.write(struct.pack("<I", len(model.meshes)))
+        for index, mesh in enumerate(model.meshes):
+            vertices = np.asarray(mesh.vertices, dtype="<f4")
+            faces = np.asarray(mesh.faces, dtype="<u4")
+            if vertices.ndim != 2 or vertices.shape[1] != 3:
+                raise ValueError(f"mesh {index} has invalid vertex dimensions")
+            if faces.ndim != 2 or faces.shape[1] != 3:
+                raise ValueError(f"mesh {index} has invalid face dimensions")
+            if not len(vertices) or not len(faces) or int(faces.max()) >= len(vertices):
+                raise ValueError(f"mesh {index} has empty or out-of-range geometry")
+            if not np.isfinite(vertices).all():
+                raise ValueError(f"mesh {index} contains non-finite vertices")
+            normals = (
+                np.asarray(mesh.normals, dtype="<f4")
+                if mesh.normals is not None
+                else np.zeros_like(vertices)
+            )
+            uvs = (
+                np.asarray(mesh.uvs, dtype="<f4")
+                if mesh.uvs is not None
+                else np.zeros((len(vertices), 2), dtype="<f4")
+            )
+            if normals.shape != vertices.shape or not np.isfinite(normals).all():
+                raise ValueError(f"mesh {index} has invalid normals")
+            if uvs.shape != (len(vertices), 2) or not np.isfinite(uvs).all():
+                raise ValueError(f"mesh {index} has invalid UVs")
+            stream.write(struct.pack("<II", len(vertices), faces.size))
+            for position, normal, uv in zip(vertices, normals, uvs):
+                stream.write(struct.pack("<8f", *position, *normal, *uv))
+            stream.write(faces.tobytes(order="C"))
+    return output.stat().st_size
+
+
+def _write_runtime_collision(output, clustered_meshes):
+    import numpy as np
+
+    triangles = [
+        [triangle.a, triangle.b, triangle.c]
+        for mesh in clustered_meshes
+        for triangle in mesh.triangles
+    ]
+    if not triangles:
+        return 0
+    values = np.asarray(triangles, dtype="<f4")
+    if values.ndim != 3 or values.shape[1:] != (3, 3) or not np.isfinite(values).all():
+        raise ValueError("decoded collision has invalid triangle geometry")
+    with output.open("wb") as stream:
+        stream.write(b"IW4LPC01")
+        stream.write(struct.pack("<I", len(values)))
+        stream.write(values.tobytes(order="C"))
+    return len(values)
+
+
 def extract(game_root, assets, report, archive_factory=None):
     archive_path = Path(game_root) / ARCHIVE
     if not archive_path.is_file():
@@ -162,6 +221,8 @@ def extract(game_root, assets, report, archive_factory=None):
         )
         model_path = root / "models" / f"{identity}.npz"
         collision_path = root / "collision" / f"{identity}.npz"
+        runtime_model_path = root / "models" / f"{identity}.iw4lmesh"
+        runtime_collision_path = root / "collision" / f"{identity}.iw4lcollision"
         model_path.parent.mkdir(parents=True, exist_ok=True)
         collision_path.parent.mkdir(parents=True, exist_ok=True)
         try:
@@ -169,12 +230,16 @@ def extract(game_root, assets, report, archive_factory=None):
             mesh_manifest = _write_model_archive(model_path, parsed)
             clustered = decode_rx2_clustered_meshes(raw)
             collision_count = _write_collision_archive(collision_path, clustered)
+            _write_runtime_model(runtime_model_path, parsed)
+            if collision_count:
+                _write_runtime_collision(runtime_collision_path, clustered)
         except (ValueError, IndexError, KeyError, OSError) as error:
             unsupported.append({"source": source_path, "error": str(error)})
             model_path.unlink(missing_ok=True)
             collision_path.unlink(missing_ok=True)
+            runtime_model_path.unlink(missing_ok=True)
+            runtime_collision_path.unlink(missing_ok=True)
             continue
-        extracted = source_root.joinpath(*source_path.split("/"))
         extracted = source_root.joinpath(*source_path.split("/"))
         manifest.append({
             "id": identity,
@@ -185,9 +250,15 @@ def extract(game_root, assets, report, archive_factory=None):
             "bytes": extracted.stat().st_size,
             "sha256": hashlib.sha256(raw).hexdigest(),
             "model": model_path.relative_to(Path(assets)).as_posix(),
+            "runtime_model": runtime_model_path.relative_to(root).as_posix(),
             "meshes": mesh_manifest,
             "collision": (
                 collision_path.relative_to(Path(assets)).as_posix()
+                if collision_count
+                else None
+            ),
+            "runtime_collision": (
+                runtime_collision_path.relative_to(root).as_posix()
                 if collision_count
                 else None
             ),
@@ -204,14 +275,29 @@ def extract(game_root, assets, report, archive_factory=None):
 
     result = {
         "version": 2,
+        "schema": 3,
         "status": "models-and-retail-collision",
         "source_archive": ARCHIVE.as_posix(),
+        "props": [
+            {
+                "id": item["id"],
+                "name": item["name"],
+                "model": item["runtime_model"],
+                "collision": item["runtime_collision"],
+            }
+            for item in manifest
+            if item["runtime_collision"]
+        ],
         "assets": manifest,
         "unsupported": unsupported,
     }
     if not manifest:
         detail = unsupported[0]["error"] if unsupported else "no supported model geometry"
         raise RuntimeError(f"Could not decode any Create-a-Park props: {detail}")
+    if not result["props"]:
+        raise RuntimeError(
+            "Create-a-Park models were decoded, but none had usable retail collision geometry"
+        )
     manifest_path = root / "catalog.json"
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
     temporary = manifest_path.with_suffix(".json.new")

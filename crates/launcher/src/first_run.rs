@@ -143,12 +143,66 @@ fn skate_ready(assets: &Path) -> bool {
     ]
     .iter()
     .all(|file| assets.join(file).is_file())
-        && (assets
-            .join("private/park-props/catalog.json")
-            .is_file()
-            || assets
-                .join("private/park-props/availability.json")
-                .is_file())
+        && {
+            let catalog = assets.join("private/park-props/catalog.json");
+            park_prop_catalog_ready(&catalog)
+                || (!catalog.exists()
+                    && assets
+                        .join("private/park-props/availability.json")
+                        .is_file())
+        }
+}
+
+fn park_prop_catalog_ready(path: &Path) -> bool {
+    std::fs::read(path)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+        .and_then(|catalog| {
+            if catalog.get("schema")?.as_u64() != Some(3) {
+                return None;
+            }
+            let props = catalog.get("props")?.as_array()?;
+            Some(props.iter().any(|prop| {
+                prop.get("model")
+                    .and_then(serde_json::Value::as_str)
+                    .is_some()
+                    && prop
+                        .get("collision")
+                        .and_then(serde_json::Value::as_str)
+                        .is_some()
+            }))
+        })
+        .unwrap_or(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::park_prop_catalog_ready;
+
+    #[test]
+    fn requires_the_runtime_catalog_schema() {
+        let path = std::env::temp_dir().join(format!(
+            "iw4l-prop-readiness-{}-{}.json",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::write(
+            &path,
+            br#"{"schema":2,"props":[{"model":"model.npz","collision":"collision.npz"}]}"#,
+        )
+        .unwrap();
+        assert!(!park_prop_catalog_ready(&path));
+        std::fs::write(
+            &path,
+            br#"{"schema":3,"props":[{"model":"model.bin","collision":"collision.bin"}]}"#,
+        )
+        .unwrap();
+        assert!(park_prop_catalog_ready(&path));
+        let _ = std::fs::remove_file(path);
+    }
 }
 
 /// The converted Skate 3 data, or none when the player plays without it.
