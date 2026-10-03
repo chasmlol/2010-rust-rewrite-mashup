@@ -383,6 +383,7 @@ fn serialize_settings(settings: &frame::GameSettings, binds: &KeyBinds) -> Strin
 }
 
 fn parse_settings(source: &str, settings: &mut frame::GameSettings, binds: &mut KeyBinds) {
+    let version = source.lines().next().map(str::trim);
     let mut bind_script = String::new();
     for raw in source.lines() {
         let line = raw.trim();
@@ -485,13 +486,11 @@ fn parse_settings(source: &str, settings: &mut frame::GameSettings, binds: &mut 
             warn!("settings bind: {warning}");
         }
     }
-    if !binds.has_pad_binds() {
+    // v2 saves controller bindings explicitly, including an intentionally empty map.
+    if version != Some("// IW4L user settings v2") && !binds.has_pad_binds() {
         binds.apply_pad_layout(usize::from(settings.pad_layout.min(4)));
     }
-    if source
-        .lines()
-        .next()
-        .is_some_and(|line| line.trim() == "// IW4L user settings v1")
+    if version == Some("// IW4L user settings v1")
         && binds.get(BindButton::Key(KeyCode::Digit4)).is_none()
         && !binds.iter().any(|(_, id)| id == 21)
     {

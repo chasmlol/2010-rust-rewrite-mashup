@@ -122,15 +122,6 @@ impl GameSettings {
         } else {
             0.0
         };
-        self.master_volume = self.master_volume.clamp(0.0, 1.0);
-        self.sensitivity = self.sensitivity.clamp(0.1, 30.0);
-        if self.pad_layout != Self::PAD_LAYOUT_CUSTOM {
-            self.pad_layout = self.pad_layout.min(4);
-        }
-        self.pad_stick_layout = self.pad_stick_layout.min(3);
-        self.pad_curve = self.pad_curve.min(2);
-        self.pad_aim_assist = 0;
-        self.pad_prompts = self.pad_prompts.min(3);
         let finite = |v: f32, lo: f32, hi: f32, default: f32| {
             if v.is_finite() {
                 v.clamp(lo, hi)
@@ -138,6 +129,15 @@ impl GameSettings {
                 default
             }
         };
+        self.master_volume = finite(self.master_volume, 0.0, 1.0, 1.0);
+        self.sensitivity = finite(self.sensitivity, 0.1, 30.0, 5.0);
+        if self.pad_layout != Self::PAD_LAYOUT_CUSTOM {
+            self.pad_layout = self.pad_layout.min(4);
+        }
+        self.pad_stick_layout = self.pad_stick_layout.min(3);
+        self.pad_curve = self.pad_curve.min(2);
+        self.pad_aim_assist = 0;
+        self.pad_prompts = self.pad_prompts.min(3);
         self.pad_sensitivity_preset = self.pad_sensitivity_preset.min(10);
         self.pad_custom_sensitivity = finite(self.pad_custom_sensitivity, 0.1, 5.0, 1.0);
         self.pad_ads_sensitivity = finite(self.pad_ads_sensitivity, 0.5, 1.5, 1.0);
