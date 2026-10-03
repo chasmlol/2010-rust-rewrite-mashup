@@ -435,7 +435,7 @@ fn publish_client_action_input(
     } else {
         out.pad_sensitivity = settings.pad_look_sensitivity();
         out.pad_ads_sensitivity = settings.pad_ads_sensitivity;
-        out.pad_acceleration = settings.pad_acceleration;
+        out.pad_acceleration = settings.pad_acceleration && settings.pad_curve != 1;
         if let Some(pad) = pad {
             let sticks = crate::gamepad::sticks(pad, &settings);
             physical.movement_ready |= sticks.movement == Vec2::ZERO;
