@@ -9,6 +9,7 @@ pub struct AcceptanceLaunch {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum LaunchMode {
+    Help,
     Menu,
     Map(String),
     Serve(String),
@@ -73,11 +74,11 @@ fn parse_acceptance_flag(
     Ok((out, acceptance))
 }
 
-const USAGE: &str = "usage: iw4l [--cmds '<script>'] map <zone> | serve <zone> | menu | play <demo>\n       iw4l export-gltf <zone>\n       iw4l --help";
+pub const USAGE: &str = "usage: iw4l [--cmds '<script>'] map <zone> | serve <zone> | menu | play <demo>\n       iw4l export-gltf <zone>\n       iw4l --help";
 
 pub fn parse_launch_args(mut args: impl Iterator<Item = String>) -> Result<LaunchMode, String> {
     match args.next().as_deref() {
-        Some("--help") | Some("-h") => Err(USAGE.into()),
+        Some("--help") | Some("-h") => Ok(LaunchMode::Help),
         Some("map") => {
             let Some(zone) = args.next().filter(|z| !z.is_empty()) else {
                 return Err("usage: iw4l map <zone> [--cmds '<script>']".into());

@@ -9,26 +9,35 @@ mod first_run;
 static PROCESS_ALLOCATOR: diag::ProcessCountingAllocator = diag::ProcessCountingAllocator;
 
 fn main() {
+    let (mode, acceptance) = bootstrap::parse_cli(std::env::args().skip(1))
+        .unwrap_or_else(|e| diag::exit_launch_error(&e));
+    if mode == bootstrap::LaunchMode::Help {
+        println!("{}", bootstrap::args::USAGE);
+        return;
+    }
     bootstrap::bench::arm();
     prepare_process_root().unwrap_or_else(|e| {
         diag::exit_launch_error(&e);
     });
-    #[cfg_attr(not(windows), allow(unused_mut))]
-    let mut args: Vec<String> = std::env::args().skip(1).collect();
     #[cfg(windows)]
-    {
-        // Also for a shortcut that names a map, so it works on first launch.
-        first_run::prepare().unwrap_or_else(|e| first_run::fail(&e));
-        if args.is_empty() {
-            args.push("menu".into());
-        }
-    }
+    first_run::prepare().unwrap_or_else(|e| first_run::fail(&e));
     let artifacts = ensure_artifacts_dir().unwrap_or_else(|e| diag::exit_launch_error(&e));
     announce_log(diag::init_log(&artifacts));
-    let (mode, acceptance) =
-        bootstrap::parse_cli(args.into_iter()).unwrap_or_else(|e| diag::exit_launch_error(&e));
     let games = games_root_from_env().unwrap_or_else(|e| diag::exit_launch_error(&e));
+    prepare_skate_assets();
     bootstrap::launch(games, artifacts, mode, acceptance);
+}
+
+fn prepare_skate_assets() {
+    if std::env::var("IW4L_SKATE").is_ok_and(|value| value == "off") {
+        return;
+    }
+    let Some(assets) = std::env::var_os("IW4L_SKATE_ASSETS") else {
+        return;
+    };
+    if let Err(error) = assets::skate_board::ensure(std::path::Path::new(&assets)) {
+        diag::warn!(Launch, "Could not prepare the skateboard: {error}");
+    }
 }
 
 fn prepare_process_root() -> Result<(), String> {

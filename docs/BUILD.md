@@ -31,13 +31,20 @@ make setup-windows           # rustup target + cargo-xwin, once
 
 macOS needs only the Xcode command line tools (`xcode-select --install`)
 and rustup: winit, wgpu (Metal), CoreAudio and gilrs link system frameworks,
-and the `x11` / `wayland` features compile to nothing. Menu and
-`make map mp_boneyard` run on Apple silicon (M2 Max, Metal). Pipelined
-rendering is off by default there (`bootstrap/src/plugins.rs` says why).
-Game data: the Windows depot of a Steam copy, `steamcmd
-+@sSteamCmdForcePlatformType windows +force_install_dir ~/Games/MW2 +login
-<user> +app_update 10190 +quit`, then `IW4L_GAMES=~/Games`.
+and the `x11` / `wayland` features compile to nothing. Pipelined rendering
+defaults to on, requesting a maximum frame latency of two on macOS.
 
-Then follow `README.md` (Build and run): copy `.env.example`, set
-`IW4L_GAMES`, `make map mp_boneyard`. Portable Windows is
-[`WINDOWS.md`](WINDOWS.md).
+For native macOS or Linux play, use your own MW2 (2009) Windows multiplayer
+files: a folder containing `iw4mp.exe`, `zone` and `main`, copied from your
+installation, or downloaded with SteamCMD's Windows platform override:
+`steamcmd +@sSteamCmdForcePlatformType windows +force_install_dir ~/Games/MW2 +login <user> +app_update 10190 +quit`. The game uses those files; it does
+not run the Windows executable. Then, from this checkout:
+
+```bash
+IW4L_GAMES="/absolute/path/to/MW2" cargo run --profile play -p launcher -- menu
+```
+
+For repeated runs, copy `.env.example` to `.env`, set `IW4L_GAMES` to the
+absolute path, then use `make menu` or `make map mp_boneyard`. Skate 3 is optional:
+set `IW4L_SKATE_ASSETS` to your converted `skate-data/assets` folder
+to generate missing `rig.json` and `board.json` on launch. Windows: [`SKATE.md`](SKATE.md), [`WINDOWS.md`](WINDOWS.md).

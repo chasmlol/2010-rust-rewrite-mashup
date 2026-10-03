@@ -32,6 +32,9 @@ You don't need Minecraft installed. The first time the game starts, it downloads
 
 ## How to play
 
+The steps below use the Windows release. macOS and Linux users can build and
+run from source with [docs/BUILD.md](docs/BUILD.md).
+
 1. Grab the zip from [Releases](../../releases/latest) and extract it somewhere you can write to (not Program Files), or build it yourself (see [docs/BUILD.md](docs/BUILD.md)).
 2. Double-click `iw4l.exe` and confirm your MW2 folder. It then asks whether you have Skate 3: choose **Yes** and select your `default.xex`, or **No** to play without skating.
 3. To play the Minecraft world, go to **Create Game** and pick the **Minecraft** tab in the map list. The map is called **overworld**.

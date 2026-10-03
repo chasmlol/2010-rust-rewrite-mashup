@@ -146,13 +146,6 @@ fn skate_ready(assets: &Path) -> bool {
 
 /// The converted Skate 3 data, or none when the player plays without it.
 fn convert_skate(root: &Path) -> Result<Option<PathBuf>, String> {
-    let converter = root.join("skate").join("iw4l-skate-convert.exe");
-    if !converter.is_file() {
-        return Err(format!(
-            "{} is missing.\nRe-extract the release zip.",
-            converter.display()
-        ));
-    }
     let answer = MessageDialog::new()
         .set_title(TITLE)
         .set_description(
@@ -166,6 +159,13 @@ fn convert_skate(root: &Path) -> Result<Option<PathBuf>, String> {
         .show();
     if answer != MessageDialogResult::Yes {
         return Ok(None);
+    }
+    let converter = root.join("skate").join("iw4l-skate-convert.exe");
+    if !converter.is_file() {
+        return Err(format!(
+            "{} is missing.\nRe-extract the release zip.",
+            converter.display()
+        ));
     }
     let out = root.join("skate-data");
     loop {

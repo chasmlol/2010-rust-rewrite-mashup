@@ -140,6 +140,7 @@ pub fn launch(
         );
     }
     match mode {
+        LaunchMode::Help => diag::announce_stdout(crate::args::USAGE),
         LaunchMode::Menu => {
             if acceptance.is_some() {
                 fatal(&format!(
