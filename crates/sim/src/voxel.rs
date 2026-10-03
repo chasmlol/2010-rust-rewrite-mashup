@@ -540,7 +540,7 @@ impl VoxelWorld {
                             }
                             let (t0, t1) = ((bmin[k] - a[k]) / delta[k], (bmax[k] - a[k]) / delta[k]);
                             let (near, far) = (t0.min(t1), t0.max(t1));
-                            if near > t_in {
+                            if near > t_in || (near == t_in && axis.is_none()) {
                                 t_in = near;
                                 axis = Some(k);
                             }
@@ -634,6 +634,8 @@ pub(crate) fn trace(
             startsolid: 1,
             allsolid: u8::from(end_solid),
             contents: SOLID,
+            hit_type: trace_iw4::HITTYPE_ENTITY,
+            hit_id: trace_iw4::ENTITYNUM_WORLD,
             surface_flags: STONE_SURFACE,
             ..trace_iw4::Trace::default()
         };
@@ -654,6 +656,8 @@ pub(crate) fn trace(
         endpos,
         normal: [n[0] as f32, -(n[2] as f32), n[1] as f32],
         contents: SOLID,
+        hit_type: trace_iw4::HITTYPE_ENTITY,
+        hit_id: trace_iw4::ENTITYNUM_WORLD,
         surface_flags: STONE_SURFACE,
         walkable: u8::from(n[1] > 0.7),
         ..trace_iw4::Trace::default()
