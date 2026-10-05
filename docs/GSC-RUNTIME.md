@@ -197,7 +197,7 @@ loaded, with the existing movement fallback otherwise.
 `SwitchToWeaponImmediate(weapon)` arms an owned weapon immediately, cancels its
 pending switch/reload state and preserves the player's ammo inventory.
 
-`MoveX/Y/Z(distance, seconds, accelSeconds = 0, decelSeconds = 0)` move an
+`MoveX/Y/Z(distance, seconds, accelSeconds = 0, decelSeconds = 0)` move a
 non-player entity by a relative distance along the corresponding world axis,
 with the same ramp and `movedone` behavior as `MoveTo`. `IsLinked()` reads the active
 entity or player link. `LocalToWorldCoords(vector)` rotates a local vector by
