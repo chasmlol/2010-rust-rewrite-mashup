@@ -35,7 +35,7 @@ pub struct FxElemMotionQuery<'a> {
     pub dt_sec: f32,
     pub base_vel: [f32; 3],
 
-    pub elem_random_seed: u32,
+    pub elem_random_seed: u64,
 
     pub origin: [f32; 3],
     pub prev_msec: i32,
@@ -60,7 +60,7 @@ pub struct PendingCollide {
     life_ms: f32,
     dt_sec: f32,
     base_vel: [f32; 3],
-    elem_random_seed: u32,
+    elem_random_seed: u64,
     origin: [f32; 3],
     prev_msec: i32,
     msec_now: i32,
@@ -149,7 +149,7 @@ pub struct FxEmitQuery<'a> {
     pub msec_update_begin: i32,
     pub msec_update_end: i32,
     pub emit_residual: u8,
-    pub elem_random_seed: u32,
+    pub elem_random_seed: u64,
     pub flags: i32,
 }
 
@@ -160,7 +160,7 @@ pub struct FxSparkFillQuery<'a> {
     pub def_index: u8,
     pub age_msec: i32,
     pub life_msec: i32,
-    pub elem_random_seed: u32,
+    pub elem_random_seed: u64,
     pub norm_time: f32,
 }
 

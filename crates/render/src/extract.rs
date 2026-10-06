@@ -191,7 +191,7 @@ pub fn seal_render_frame(
         insert_empty_colour(&mut commands);
         return;
     };
-    let generation = runtime.catalog.generation_id;
+    let generation = runtime.catalog.generation_id();
     let world_generation = world_generation
         .as_ref()
         .map(|generation| **generation)
@@ -328,6 +328,12 @@ pub fn seal_render_frame(
             },
             None => empty_smodel(),
         }
+    };
+    let smodel_vertex_lighting = match smodel.as_ref() {
+        Some(plan) if !skip_world_smodel && smodel_vertex_refusal.is_none() => {
+            take_published(plan.vertex_lighting_share.as_ref()).0
+        }
+        _ => Arc::new(Vec::new()),
     };
     let mut smc_vb_patches = Vec::new();
     let mut smc_ib_patches = Vec::new();
@@ -557,6 +563,7 @@ pub fn seal_render_frame(
             smodel_vertex_refusal,
             smodel_cached_vertices,
             smodel_surface_verts,
+            smodel_vertex_lighting,
         }),
         smc_index_baked: Arc::new(smc_index_baked),
         smodel_pretess_indices,
@@ -719,6 +726,7 @@ pub fn extract_postfx(
     film: Extract<Res<render_frontend::assemble::drawsurf::FilmVisionView>>,
     glow_dvars: Extract<Res<render_frontend::assemble::drawsurf::dof::GlowDvars>>,
     draw_method: Extract<Res<render_frontend::assemble::drawsurf::ColourDrawMethod>>,
+    scene: Extract<Option<Res<render_frontend::prepare::scene::world::WorldScene>>>,
     minecraft: Extract<Option<Res<render_anim::minecraft_world::MinecraftWorldView>>>,
     mut extracted: ResMut<render_gpu::ExtractedPostFx>,
 ) {
@@ -737,6 +745,7 @@ pub fn extract_postfx(
                 .map(|film| render_gpu::ExtractedFilm {
                     name: film.name,
                     generation: film.generation,
+                    catalog: std::sync::Arc::clone(&runtime.as_ref().expect("film owner").catalog),
                     port: render_gpu::AdmittedExactPort {
                         id: film.port.id(),
                         abi: film.port.abi().clone(),
@@ -757,6 +766,7 @@ pub fn extract_postfx(
             film: render_gpu::ExtractedFilm {
                 name: blood.film.name,
                 generation: blood.film.generation,
+                catalog: std::sync::Arc::clone(&runtime.as_ref().expect("blood owner").catalog),
                 port: render_gpu::AdmittedExactPort {
                     id: blood.film.port.id(),
                     abi: blood.film.port.abi().clone(),
@@ -776,6 +786,7 @@ pub fn extract_postfx(
     } else {
         film.current
     };
+    extracted.t6_film_grade = scene.as_ref().and_then(|scene| scene.t6_film_grade);
     extracted.frame = render_gpu::DofFrame {
         dof: render_gpu::DepthOfField {
             view_model_start: frame.dof.view_model_start,
@@ -828,7 +839,7 @@ pub fn extract_geometry(
         .as_ref()
         .map(|stats| stats.g0_world_surfs.clone())
         .unwrap_or_default();
-    let generation = runtime.catalog.generation_id;
+    let generation = runtime.catalog.generation_id();
     let world_v = world
         .as_ref()
         .map_or(0, |plan| plan.decoded_vertices().len());
@@ -941,7 +952,9 @@ pub fn extract_minecraft_world(
     mut clouds_of: Local<Option<(usize, std::sync::Arc<render_gpu::MinecraftClouds>)>>,
     mut cracks_of: Local<Option<(usize, std::sync::Arc<render_gpu::MinecraftAtlasImage>)>>,
 ) {
-    let Some(mut view) = main_world.get_resource_mut::<render_anim::minecraft_world::MinecraftWorldView>() else {
+    let Some(mut view) =
+        main_world.get_resource_mut::<render_anim::minecraft_world::MinecraftWorldView>()
+    else {
         return;
     };
     frame.active = view.active;
@@ -971,12 +984,18 @@ pub fn extract_minecraft_world(
     });
     let to_pos = |p: minecraft_terrain::sections::SectionPos| [p.0, p.1, p.2];
     frame.removed.extend(view.removed.drain(..).map(to_pos));
-    frame.uploads.extend(view.uploads.drain(..).map(|(pos, mesh)| render_gpu::MinecraftSectionUpload {
-        pos: to_pos(pos),
-        vertices: bytemuck::cast_slice(&mesh.vertices).to_vec(),
-        indices: mesh.indices,
-        transparent_start: mesh.transparent_start,
-    }));
+    frame
+        .uploads
+        .extend(
+            view.uploads
+                .drain(..)
+                .map(|(pos, mesh)| render_gpu::MinecraftSectionUpload {
+                    pos: to_pos(pos),
+                    vertices: bytemuck::cast_slice(&mesh.vertices).to_vec(),
+                    indices: mesh.indices,
+                    transparent_start: mesh.transparent_start,
+                }),
+        );
     frame.visible = view.visible.iter().map(|(pos, _)| to_pos(*pos)).collect();
     frame.environment = view.environment;
     frame.eye_light = view.eye_light;

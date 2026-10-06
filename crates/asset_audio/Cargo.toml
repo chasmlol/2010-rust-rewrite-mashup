@@ -12,8 +12,10 @@ asset_iw4.workspace = true
 fastfile_iw4.workspace = true
 fastfile_iw5.workspace = true
 fastfile_t5.workspace = true
+fastfile_t6.workspace = true
 diag.workspace = true
 bevy.workspace = true
+blake3 = "=1.8.5"
 
 [lints]
 workspace = true

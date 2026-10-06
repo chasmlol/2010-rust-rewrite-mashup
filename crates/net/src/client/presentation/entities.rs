@@ -133,7 +133,8 @@ pub fn sync_client_entities(
         proxy
             .as_ref()
             .zip(clock.as_ref())
-            .and_then(|(proxy, clock)| proxy.0.snapshot_at(clock.time()))
+            .zip(local.as_ref())
+            .and_then(|((proxy, clock), local)| proxy.0.snapshot_at(local.0, clock.time()))
     } else {
         None
     };

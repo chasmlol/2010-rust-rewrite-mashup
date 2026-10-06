@@ -178,6 +178,30 @@ pub fn snapshot_for_viewer(
     snapshot_and_sample_for_viewer(archive, seats, live, viewer, now_ms).0
 }
 
+pub fn snapshot_override_for_viewer(
+    archive: &FrameArchive,
+    seats: &ActiveKillcams,
+    live: &Snapshot,
+    viewer: ClientId,
+    now_ms: i32,
+) -> Option<Snapshot> {
+    let hidden_movers = live.meta.script_movers.iter().any(|mover| {
+        mover.shown_to != 0 && mover.state.e_flags & entity_iw4::CG_SCRIPT_MOVER_NODRAW != 0
+    });
+    (hidden_movers || seat_applies(seats, live, viewer))
+        .then(|| snapshot_for_viewer(archive, seats, live, viewer, now_ms))
+}
+
+fn seat_applies(seats: &ActiveKillcams, live: &Snapshot, viewer: ClientId) -> bool {
+    seats.get(viewer).is_some_and(|session| {
+        session.final_kill
+            || !live
+                .meta
+                .for_client(viewer)
+                .is_some_and(|m| m.lifecycle == ClientLifecycle::Alive)
+    })
+}
+
 pub fn snapshot_and_sample_for_viewer(
     archive: &FrameArchive,
     seats: &ActiveKillcams,
@@ -219,18 +243,12 @@ fn seat_snapshot(
     viewer: ClientId,
     now_ms: i32,
 ) -> (Snapshot, Option<SeatSample>) {
-    let Some(session) = seats.get(viewer) else {
+    let Some(session) = seats
+        .get(viewer)
+        .filter(|_| seat_applies(seats, live, viewer))
+    else {
         return (live.clone(), None);
     };
-
-    if !session.final_kill
-        && live
-            .meta
-            .for_client(viewer)
-            .is_some_and(|m| m.lifecycle == ClientLifecycle::Alive)
-    {
-        return (live.clone(), None);
-    }
     if session.killcamoffset_ms == 0 {
         let mut out = live.clone();
         let sample = apply_seat_to_snapshot(archive, &mut out, viewer, session, now_ms);
@@ -274,6 +292,7 @@ fn overlay_archived_world(
     out.meta.score_limit = live.meta.score_limit;
     out.meta.time_limit_ms = live.meta.time_limit_ms;
     out.meta.kind = live.meta.kind;
+    out.meta.sound_aliases = live.meta.sound_aliases.clone();
     out.meta.hud_strings = live.meta.hud_strings.clone();
     out.meta.hud_materials = live.meta.hud_materials.clone();
 

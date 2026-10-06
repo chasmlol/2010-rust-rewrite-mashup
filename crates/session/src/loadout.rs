@@ -12,6 +12,7 @@ pub struct ClassRow {
     pub attachments: [Vec<String>; 2],
     pub perks: [String; 3],
     pub deathstreak: String,
+    pub camos: [String; 2],
 }
 
 pub fn resolve_class_weapon(
@@ -30,7 +31,12 @@ pub fn resolve_class_weapon(
     let resolve = |selection: asset_game::WeaponSelection| {
         weapons
             .resolve_configuration(&selection, rules)
-            .map(|resolved| resolved.id)
+            .map(|resolved| {
+                weapons
+                    .bind(resolved.handle())
+                    .expect("resolved in this registry")
+                    .wire_id()
+            })
             .map_err(|refusal| format!("{name}:{}", refusal.code()))
     };
     if let Some(family) = asset_game::FamilyKey::parse(name)
@@ -153,6 +159,7 @@ impl From<&frame::HostClassSlot> for ClassRow {
             ],
             perks: slot.perks.clone(),
             deathstreak: slot.deathstreak.clone(),
+            camos: slot.camos.clone(),
         }
     }
 }
@@ -170,6 +177,11 @@ pub fn resolve_personal_class(
             row.attachments.get(slot).map_or(&[], Vec::as_slice),
             rules,
         )?;
+    }
+    for (slot, camo) in row.camos.iter().enumerate() {
+        loadout.camos[slot] = registry
+            .camouflage_slot(loadout.weapons[slot], camo)
+            .ok_or_else(|| format!("{camo}:camouflage.unavailable"))?;
     }
     for (slot, name) in row.perks.iter().enumerate() {
         if name.is_empty() || name == "specialty_null" {

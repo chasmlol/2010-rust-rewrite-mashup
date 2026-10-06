@@ -11,6 +11,7 @@ serde_json = { workspace = true }
 
 [target.'cfg(windows)'.dependencies]
 mimalloc = { version = "0.1", default-features = false }
+windows-sys = { version = "0.61", features = ["Win32_UI_WindowsAndMessaging"] }
 
 [lints]
 workspace = true

@@ -1,12 +1,3 @@
-//! The private CA and the single server identity it signs, minted with
-//! `openssl`.
-//!
-//! Two callers with two different requirements share this: our release host
-//! also serves release HTTPS through Caddy, so its certificate must carry the
-//! host in the SAN; a master of your own is verified against a fixed label
-//! instead (`docs/MASTER.md`), so its certificate carries no host at all and
-//! survives a move to a new IP.
-
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -14,15 +5,11 @@ use master_protocol::Channel;
 
 use crate::shell::{Res, capture, run};
 
-/// Days a freshly minted certificate is good for. 825 is the browser cap that
-/// Caddy's clients enforce; the CA itself outlives ten of those.
 const SERVER_DAYS: &str = "825";
 const CA_DAYS: &str = "3650";
 
 pub enum San {
-    /// Only the `Channel` labels — the QUIC path, which never looks at the host.
     Labels,
-    /// The labels plus this host, for the HTTPS path (`updater`).
     WithHost(String),
 }
 

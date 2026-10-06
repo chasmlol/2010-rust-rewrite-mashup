@@ -1,4 +1,4 @@
-use crate::random::{FX_RAND_CH_ATLAS, random_table_u16};
+use crate::random::{FxRandomChannel, sample_u16};
 
 pub const FX_ELEM_ATLAS_OFF: usize = 0xa8;
 
@@ -45,7 +45,7 @@ impl FxSpriteAtlasUv {
 
 pub fn sprite_atlas_uv(
     atlas: &[u8],
-    random_seed: u32,
+    random_seed: u64,
     sequence: u8,
     msec_elapsed: i32,
     norm_time: f32,
@@ -61,7 +61,7 @@ pub fn sprite_atlas_uv(
     let mut index: i32 = match behavior & FX_ATLAS_START_MASK {
         0 => i32::from(atlas[1]),
         FX_ATLAS_START_RANDOM => {
-            let lo = u32::from(random_table_u16(random_seed, FX_RAND_CH_ATLAS));
+            let lo = u32::from(sample_u16(random_seed, FxRandomChannel::Atlas));
             ((lo.wrapping_mul(entry_count as u32)) >> 16) as i32
         }
         _ => i32::from(sequence) & (entry_count - 1),

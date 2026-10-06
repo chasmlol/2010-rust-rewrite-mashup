@@ -41,3 +41,7 @@ Game data: the Windows depot of a Steam copy, `steamcmd
 Then follow `README.md` (Build and run): copy `.env.example`, set
 `IW4L_GAMES`, `make map mp_boneyard`. Portable Windows is
 [`WINDOWS.md`](WINDOWS.md).
+
+Match metadata uses the Git commit count as its numeric build number. Release
+builders can set `IW4L_BUILD_NUMBER`; source archives need this variable. The
+package version remains the textual build version.

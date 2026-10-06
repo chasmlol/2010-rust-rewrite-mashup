@@ -23,7 +23,19 @@ pub fn cache_get(kind: &str, key: &str) -> Option<Vec<u8>> {
     fs::read(path).ok()
 }
 
+pub fn cache_open(kind: &str, key: &str) -> Option<fs::File> {
+    fs::File::open(cache_path(kind, key).ok()?).ok()
+}
+
 pub fn cache_put(kind: &str, key: &str, bytes: &[u8]) -> Result<(), String> {
+    cache_put_with(kind, key, |file| file.write_all(bytes))
+}
+
+pub fn cache_put_with(
+    kind: &str,
+    key: &str,
+    write: impl FnOnce(&mut fs::File) -> std::io::Result<()>,
+) -> Result<(), String> {
     let path = cache_path(kind, key)?;
     let Some(parent) = path.parent() else {
         return Err(format!("cache path has no directory: {}", path.display()));
@@ -37,7 +49,7 @@ pub fn cache_put(kind: &str, key: &str, bytes: &[u8]) -> Result<(), String> {
             .write(true)
             .create_new(true)
             .open(&tmp)?;
-        file.write_all(bytes)
+        write(&mut file)
     })();
     if let Err(error) = write {
         let _ = fs::remove_file(&tmp);

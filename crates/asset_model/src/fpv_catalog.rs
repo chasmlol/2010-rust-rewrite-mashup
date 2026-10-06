@@ -36,7 +36,7 @@ impl FpvMeshKey {
 
 const fn game_default_hands_name(ns: AssetNamespace) -> &'static str {
     match ns {
-        AssetNamespace::Iw4 | AssetNamespace::Iw5 => VIEWHANDS_NAME,
+        AssetNamespace::Iw4 | AssetNamespace::Iw5 | AssetNamespace::T6 => VIEWHANDS_NAME,
         AssetNamespace::T5 => VIEWHANDS_NAME_T5,
     }
 }
@@ -217,7 +217,7 @@ pub struct FpvMeshBuild {
     catalog: FpvMeshCatalog,
     capture_zone: crate::ZoneOwner,
     strings: ScriptStrings,
-    capture_ns: AssetNamespace,
+    capture_ns: Option<AssetNamespace>,
 }
 
 impl Default for FpvMeshBuild {
@@ -226,7 +226,7 @@ impl Default for FpvMeshBuild {
             catalog: FpvMeshCatalog::default(),
             capture_zone: crate::ZoneOwner::default(),
             strings: ScriptStrings::default(),
-            capture_ns: AssetNamespace::Iw4,
+            capture_ns: None,
         }
     }
 }
@@ -252,7 +252,7 @@ impl FpvMeshBuild {
     }
 
     pub fn set_capture_ns(&mut self, ns: AssetNamespace) {
-        self.capture_ns = ns;
+        self.capture_ns = Some(ns);
     }
 
     pub fn set_capture_zone(&mut self, zone: crate::ZoneOwner) {
@@ -330,8 +330,29 @@ impl FpvMeshBuild {
         self.insert_in(AssetNamespace::Iw5, skel, Some(materials));
     }
 
+    pub fn capture_shared(
+        &mut self,
+        ns: Option<AssetNamespace>,
+        skel: &std::sync::Arc<FpvSkel>,
+        materials: &MaterialCatalog,
+    ) {
+        if model_kind(&skel.name) == Some(ModelKind::Fpv) {
+            self.insert_in(
+                ns.or(self.capture_ns)
+                    .expect("asset capture requires an explicit family"),
+                skel.clone(),
+                Some(materials),
+            );
+        }
+    }
+
     pub fn insert_captured(&mut self, skel: FpvSkel, materials: Option<&MaterialCatalog>) {
-        self.insert_in(self.capture_ns, skel, materials);
+        self.insert_in(
+            self.capture_ns
+                .expect("asset capture requires an explicit family"),
+            skel,
+            materials,
+        );
     }
 
     pub fn insert_in(
@@ -501,23 +522,10 @@ impl FpvMeshCatalog {
                 AssetNamespace::Iw4 => 1,
                 AssetNamespace::T5 => 2,
                 AssetNamespace::Iw5 => 4,
+                AssetNamespace::T6 => 8,
             };
         }
         seen.values().filter(|bits| bits.count_ones() >= 2).count()
-    }
-
-    pub fn peer(&self, ns: AssetNamespace, name: &str) -> Option<&FpvMeshEntry> {
-        const PREFER: [AssetNamespace; 3] =
-            [AssetNamespace::T5, AssetNamespace::Iw5, AssetNamespace::Iw4];
-        for other in PREFER {
-            if other == ns {
-                continue;
-            }
-            if let Some(entry) = self.get(other, name) {
-                return Some(entry);
-            }
-        }
-        None
     }
 
     pub fn tag_view_count(&self) -> usize {
@@ -565,6 +573,17 @@ pub struct FpvMountPlan {
     pub secondary_gun: Option<FpvMeshIndex>,
     pub attachments: Vec<FpvMount>,
     pub rocket: Option<FpvMount>,
+    pub ads_swaps: Vec<(usize, FpvMeshIndex)>,
+}
+
+impl FpvMountPlan {
+    pub fn attachment_models(&self, ads: bool) -> impl Iterator<Item = FpvMeshIndex> + '_ {
+        self.attachments.iter().enumerate().map(move |(at, mount)| {
+            ads.then(|| self.ads_swaps.iter().find(|(swap, _)| *swap == at))
+                .flatten()
+                .map_or(mount.model, |&(_, model)| model)
+        })
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -612,6 +631,7 @@ pub fn plan_fpv_mounts(
     gun: FpvMeshIndex,
     attachments: &[FpvMeshIndex],
     rocket: Option<FpvMeshIndex>,
+    on_gun_root: bool,
 ) -> Result<FpvMountPlan, FpvMountError> {
     let gun_entry = catalog.get_at(gun.order()).ok_or_else(|| FpvMountError {
         model: format!("#{}", gun.order()),
@@ -652,7 +672,23 @@ pub fn plan_fpv_mounts(
                 .iter()
                 .any(|name| name.eq_ignore_ascii_case(root))
         });
-        let joint = if root_on_gun {
+        let gun_root = || {
+            let tag = skel.mount_tag.as_deref().and_then(|tag| {
+                gun_skel
+                    .bone_names
+                    .iter()
+                    .find(|name| name.eq_ignore_ascii_case(tag))
+            });
+            on_gun_root
+                .then(|| {
+                    tag.or(gun_skel.bone_names.first())
+                        .map(|bone| (1, bone.as_str()))
+                })
+                .flatten()
+        };
+        let joint = if on_gun_root {
+            gun_root()
+        } else if root_on_gun {
             on_gun()
         } else {
             on_attachment.or_else(on_gun)
@@ -699,5 +735,37 @@ pub fn plan_fpv_mounts(
         secondary_gun: None,
         attachments: selected,
         rocket,
+        ads_swaps: Vec::new(),
     })
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FamilyFpvMesh<F: asset_core::Family> {
+    index: crate::FpvMeshIndex,
+    owner: u64,
+    family: core::marker::PhantomData<F>,
+}
+
+impl<F: asset_core::Family> FamilyFpvMesh<F> {
+    pub fn index(self) -> crate::FpvMeshIndex {
+        self.index
+    }
+    pub fn owner(self) -> u64 {
+        self.owner
+    }
+}
+
+impl FpvMeshCatalog {
+    pub fn family_mesh<F: asset_core::Family>(
+        &self,
+        index: crate::FpvMeshIndex,
+    ) -> Option<FamilyFpvMesh<F>> {
+        (self.identity() != 0 && self.get_at(index.order())?.namespace == F::ID).then_some(
+            FamilyFpvMesh {
+                index,
+                owner: self.identity(),
+                family: core::marker::PhantomData,
+            },
+        )
+    }
 }

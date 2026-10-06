@@ -1,9 +1,18 @@
 use sim::Snapshot;
 use std::collections::BTreeMap;
+use std::sync::Arc;
+
+use crate::transport::frame::FrameParts;
+
+#[derive(Debug)]
+struct SentFrame {
+    snapshot: Arc<Snapshot>,
+    parts: FrameParts,
+}
 
 #[derive(Debug, Default)]
 pub struct AckedBaselineTable {
-    sent: BTreeMap<u32, Snapshot>,
+    sent: BTreeMap<u32, SentFrame>,
 
     highest_acked: Option<u32>,
     max_retained: usize,
@@ -18,13 +27,14 @@ impl AckedBaselineTable {
         }
     }
 
-    pub fn remember(&mut self, snapshot_seq: u32, snapshot: Snapshot) {
-        self.sent.insert(snapshot_seq, snapshot);
+    pub fn remember(&mut self, snapshot_seq: u32, snapshot: Arc<Snapshot>, parts: FrameParts) {
+        self.sent
+            .insert(snapshot_seq, SentFrame { snapshot, parts });
         self.trim();
     }
 
     pub fn ack(&mut self, snapshot_seq: u32) -> Option<sim::Tick> {
-        let tick = self.sent.get(&snapshot_seq)?.tick;
+        let tick = self.sent.get(&snapshot_seq)?.snapshot.tick;
         self.highest_acked = Some(match self.highest_acked {
             Some(prev) => prev.max(snapshot_seq),
             None => snapshot_seq,
@@ -82,7 +92,12 @@ impl AckedBaselineTable {
 
     pub fn baseline_for_encode(&self) -> Option<&Snapshot> {
         let acked = self.highest_acked?;
-        self.sent.get(&acked)
+        self.sent.get(&acked).map(|sent| sent.snapshot.as_ref())
+    }
+
+    pub fn baseline_parts_for_encode(&self) -> Option<&FrameParts> {
+        let acked = self.highest_acked?;
+        self.sent.get(&acked).map(|sent| &sent.parts)
     }
 
     pub fn may_encode_against(&self, baseline_seq: u32) -> bool {

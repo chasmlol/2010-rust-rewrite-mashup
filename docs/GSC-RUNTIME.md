@@ -51,8 +51,8 @@ in the call's namespace, then a unique include. Qualified names and `thread` cal
 never resolve to builtins. A developer builtin used as a statement compiles to nothing
 (arguments are not evaluated); using its value or referencing it fails the load.
 `prof_begin`/`prof_end` statements compile to nothing. SHA-256 covers decompressed source bytes
-after terminator removal. Fingerprints hash IR version 3 and each module's
-`(site, realm)`; server modules of the IW4 and T5 realms are instantiated. Calls, `::f` references (script
+after terminator removal. Fingerprints hash IR version 5 and each module's
+`(site, realm, origin)`; server modules of the IW4 and T5 realms are instantiated. Calls, `::f` references (script
 `Function` or native `Builtin`), locals (per-function slots) and field names (symbol ids)
 are resolved at load, and `install` binds native slots once.
 UTF-8 and single-byte sources are supported; developer blocks are excluded.
@@ -70,6 +70,16 @@ string-conversion rules are:
 - Only ints and floats have truth.
 - Floats print with MSVC `%g`.
 - Overlong int literals wrap.
+
+
+Ordinary strings retain their original bytes. UTF-8 strings and legacy byte
+strings use the same GSC string type; equality and array keys compare bytes.
+String size, indexing, `getSubStr`, `isSubStr`, `strTok` and `toLower` operate
+on bytes, with ASCII-only case conversion. Concatenation preserves the bytes.
+Single-byte source literals retain the source encoding. The public
+`ScriptString::as_bytes()` and `Value::byte_string()` APIs carry non-UTF-8
+values without converting them into overlong UTF-8 strings. Text adapters for
+asset names, dvars and presentation remain separate from this byte storage.
 
 Arrays copy on assignment and argument/event transfer; objects preserve aliases.
 Foreach snapshots sorted keys.
@@ -139,6 +149,11 @@ before script entry points run even when audio output is disabled. Host aliases
 resolve case-insensitively; imported aliases use an explicit `t5:` or `iw5:`
 prefix. A missing catalog reports an unavailable native error. Arguments use the usual
 script string conversion.
+
+`Objective_Team(index, player)` is an extension: given a player instead of a team
+name, the objective shows to that player alone, in team and free-for-all modes
+(T6 sensor grenade pings, `iw4l_t6/equipment`). The compass draws objectives in
+free-for-all only when they are addressed this way.
 
 `AmbientPlay(alias, [fadeSeconds])`, `AmbientStop([fadeSeconds])` and
 `SetAC130Ambience(alias, [fadeSeconds])` update persistent sound state in
@@ -294,6 +309,66 @@ impact/splash attribution uses the captured owner object across client-slot reus
 
 `IsUsingTurret()` reads the player's authoritative turret-active prone/duck flags.
 
+
+Player 0 can read and write `percentcompletesp`, `percentcompletemp` and
+`percentcompleteso` through `GetLocalPlayerProfileData(name)` and
+`SetLocalPlayerProfileData(name, value)`. Names ignore ASCII case; unknown fields
+fail. The setter requires an integer and stores its low byte, including values
+outside 0–100. Get needs at least one argument and set at least two; extra
+arguments are ignored. Other players return undefined before validating arguments.
+These fields are separate from `Get/SetPlayerData` and survive script resets and
+simulation copies. New local profiles start at zero.
+
+Listen hosts load the local profile before scripts run and save changes at the
+end of each application frame, before normal console exit. Map replacement
+inherits the current authority profile. `profile.cfg` sits beside `settings.cfg`;
+`IW4L_PROFILE_PATH` selects a separate file. Client, Replay and Dedicated roles
+do not load or save this local file. This storage does not implement multiplayer
+account stats, unlocks, rested time or platform identities.
+
+
+Listen hosts and clients load `account.dat` beside `settings.cfg`, with
+`IW4L_ACCOUNT_PATH` as its override. It holds a signing key, derived account ID and
+an optional schema-stamped player-data buffer. Listen binds existing buffers to
+the local client before level entry scripts start and saves authority changes
+at the end of the frame. Schema installation rejects recursive layouts, overflowing
+storage spans and fields or array elements that exceed their containers. Packed
+booleans use bit offsets; zero-size struct metadata derives its span from fields.
+Schema mismatches refuse import. Client frame-end saves
+persist supplied snapshots. IW4 relay admission verifies a signed account profile
+and binds it before accepting gameplay or releasing Enter. Host changes return
+to that owner over control; saved ACKs require an exact successful disk receipt. Replay and
+Dedicated roles do not read or write this file. Version 1 files upgrade to keyed
+identities while retaining all stat bytes and revisions. Writes use a file lock
+and reject stale disk revisions. On Unix the key file is owner-readable/writable.
+A new Listen account initializes an 8,188-byte buffer with the first authored schema stamp, ten raw localized
+class names and the captured `mp/stats_init.cfg` assignments before level entry
+scripts start. Missing or invalid defaults refuse initialization without
+publishing a partial record. Existing account records are retained.
+`Get/SetPlayerData` use the bound account buffer with exact schema keys and
+scalar types. Struct and enum-array names use GSC string casts; indexed arrays
+require integer keys. Name matching stops at the first NUL byte. Strings retain
+original bytes; failed writes preserve the record.
+Missing accounts fail rather than return guessed stats. `developer_script`
+blocks script writes. Explicit class selection writes the schema atomically;
+reconnecting does not reseed saved classes. Loading any external or unclassified
+script blocks persistent-data writes for the entire program, including packaged
+callers. Captured zone scripts and runtime-generated scripts carry explicit
+packaged/built-in origins. File and plain-map resolvers default to external;
+custom resolvers must declare their source origin. Clones and map restarts keep
+the loaded program's policy; a fresh program load derives a new policy. Origin
+records source delivery, not a signature or platform identity. Full connection
+state parity, schema migration and platform identity remain incomplete.
+Remote profiles bind a signing key to member, connection, session, epoch and
+a fresh host challenge. Duplicate owners and stale contexts refuse admission.
+This protocol uses game-wire version 106; installed multiplayer validation remains
+required.
+Host bots bind distinct temporary accounts before their join actions are queued.
+Their 8,188-byte buffers start at zero and use the first installed player schema
+without human profile defaults. Script writes and map restarts retain these
+records; departure or a new match discards them. Temporary records are excluded
+from durable saves. Occupied clients or accounts refuse admission before any
+record is imported or initialized.
 
 ## Remaining
 

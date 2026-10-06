@@ -522,7 +522,10 @@ pub const WEAPON_VARIANT_RELOAD_EMPTY_TIME_OFF: usize = 0x28;
 pub const WEAPON_VARIANT_RELOAD_QUICK_TIME_OFF: usize = 0x2c;
 pub const WEAPON_VARIANT_RELOAD_QUICK_EMPTY_TIME_OFF: usize = 0x30;
 
+pub const WEAPON_VARIANT_SILENCED_OFF: usize = 0x84;
+
 pub const WEAPON_VARIANT_DUAL_MAG_OFF: usize = 0x85;
+pub const WEAPON_VARIANT_RAPID_FIRE_OFF: usize = 0x88;
 
 pub const WEAPON_VARIANT_ADS_TRANS_IN_OFF: usize = 0x34;
 pub const WEAPON_VARIANT_ADS_TRANS_OUT_OFF: usize = 0x38;
@@ -550,6 +553,7 @@ pub const WEAPON_DEF_NOTE_SOUND_KEYS_OFF: usize = 0x10;
 pub const WEAPON_DEF_NOTE_SOUND_VALUES_OFF: usize = 0x14;
 
 pub const WEAPON_DEF_IMPACT_TYPE_OFF: usize = 0x28;
+pub const WEAPON_DEF_PARENT_WEAPON_NAME_OFF: usize = 0x3c;
 pub const WEAPON_DEF_VIEW_FLASH_OFF: usize = 0x74;
 pub const WEAPON_DEF_WORLD_FLASH_OFF: usize = 0x78;
 pub const WEAPON_DEF_VIEW_SHELL_EJECT_OFF: usize = 0x190;
@@ -660,6 +664,9 @@ pub const WEAPON_DEF_PERPENDICULAR_BOUNCE_OFF: usize = 0x654;
 pub const WEAPON_DEF_OFFHAND_CLASS_OFF: usize = 0x68;
 
 pub const WEAPON_DEF_FUSE_TIME_OFF: usize = 0x46c;
+pub const WEAPON_DEF_REQUIRE_LOCK_TO_FIRE_OFF: usize = 0x47c;
+pub const WEAPON_DEF_MISSILE_GUIDANCE_OFF: usize = 0x668;
+pub const WEAPON_DEF_IGNITION_DELAY_OFF: usize = 0x670;
 
 pub const WEAPON_DEF_HOLD_FIRE_TIME_OFF: usize = 0x3bc;
 const _: () = assert!(WEAPON_DEF_RECHAMBER_BOLT_TIME_OFF == WEAPON_RECHAMBER_TIME_OFF + 4);

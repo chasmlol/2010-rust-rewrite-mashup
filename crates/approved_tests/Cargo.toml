@@ -9,6 +9,8 @@ description = "The owner-approved end-to-end scenarios, run against a real iw4l 
 [dependencies]
 asset_transport.workspace = true
 serde_json.workspace = true
+updater = { path = "../updater" }
+toml = "0.9"
 
 [lints]
 workspace = true

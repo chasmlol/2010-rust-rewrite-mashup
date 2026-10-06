@@ -63,19 +63,80 @@ pub struct PreparedMap {
 pub struct PreparedKillstreaks(pub Vec<String>);
 
 #[derive(Clone, Debug, Default, Resource)]
-pub struct PreparedWeapons(pub std::sync::Arc<WeaponRegistry>);
+pub struct PreparedWeapons(
+    std::sync::Arc<WeaponRegistry>,
+    Option<u32>,
+    frame::WorldGeneration,
+);
+
+#[derive(Clone, Copy)]
+pub struct BoundWeapons<'a>(&'a PreparedWeapons);
+
+impl<'a> BoundWeapons<'a> {
+    pub fn row(&self, row: u32) -> Option<asset_game::BoundWeapon<'a>> {
+        self.0.registry().bind_published_row(row).ok()
+    }
+
+    pub fn registry(&self) -> &'a std::sync::Arc<WeaponRegistry> {
+        self.0.registry()
+    }
+}
+
+impl PreparedWeapons {
+    pub fn registry(&self) -> &std::sync::Arc<WeaponRegistry> {
+        &self.0
+    }
+
+    pub fn for_match(registry: std::sync::Arc<WeaponRegistry>, key: frame::LocalLoadKey) -> Self {
+        Self(
+            registry,
+            Some(key.match_key.match_epoch),
+            frame::WorldGeneration::from_install(key.local_load_request_id),
+        )
+    }
+
+    pub fn snapshot_weapon(
+        &self,
+        epoch: Option<u32>,
+        row: u32,
+    ) -> Result<asset_game::BoundWeapon<'_>, asset_game::WeaponBindingRefusal> {
+        self.for_snapshot(epoch)?
+            .row(row)
+            .ok_or(asset_game::WeaponBindingRefusal::UnknownWeapon)
+    }
+
+    pub fn for_event(
+        &self,
+        generation: frame::WorldGeneration,
+    ) -> Result<BoundWeapons<'_>, asset_game::WeaponBindingRefusal> {
+        if generation.0.is_none() || generation != self.2 {
+            return Err(asset_game::WeaponBindingRefusal::StaleSnapshot);
+        }
+        Ok(BoundWeapons(self))
+    }
+
+    pub fn for_snapshot(
+        &self,
+        epoch: Option<u32>,
+    ) -> Result<BoundWeapons<'_>, asset_game::WeaponBindingRefusal> {
+        if self.1.is_none() || epoch != self.1 {
+            return Err(asset_game::WeaponBindingRefusal::StaleSnapshot);
+        }
+        Ok(BoundWeapons(self))
+    }
+}
 
 #[derive(Clone, Debug, Default, Resource)]
 pub struct MatchType10SoundHints(pub Vec<String>);
 
 #[derive(Clone, Debug, Default, Resource)]
-pub struct PreparedFpvMeshes(pub FpvMeshCatalog);
+pub struct PreparedFpvMeshes(pub std::sync::Arc<FpvMeshCatalog>);
 
 #[derive(Clone, Debug, Default, Resource)]
 pub struct PreparedBodies(pub std::sync::Arc<BodyMeshCatalog>);
 
 #[derive(Clone, Debug, Default, Resource)]
-pub struct PreparedWorldWeapons(pub WorldWeaponCatalog);
+pub struct PreparedWorldWeapons(pub std::sync::Arc<WorldWeaponCatalog>);
 
 #[derive(Clone, Debug, Default, Resource)]
 pub struct PreparedProjectileMeshes(pub asset_model::ProjectileMeshCatalog);
@@ -114,7 +175,7 @@ impl PreparedXModelWalkCensus {
 }
 
 #[derive(Clone, Debug, Default, Resource)]
-pub struct PreparedXAnims(pub XAnimCatalog);
+pub struct PreparedXAnims(pub std::sync::Arc<XAnimCatalog>);
 
 #[derive(Clone, Debug, Default, Resource)]
 pub struct PreparedDestructibleDeath(pub Vec<DestructibleDeathRow>);

@@ -3,8 +3,8 @@ use std::path::{Path, PathBuf};
 
 use bevy::prelude::Resource;
 use net::AUTHORITY_MS;
-use playerstate_iw4::{PlayerState, UserCmd};
-use sim::{Snapshot, TickInput};
+use playerstate_iw4::PlayerState;
+use sim::Snapshot;
 
 use crate::file::{demo_stem, sanitize_demo_name};
 use crate::{ReplayError, demo_path};
@@ -28,7 +28,6 @@ const _: () = assert!(CLIP_TICK_MS as i32 == AUTHORITY_MS);
 
 #[derive(Clone, Debug)]
 struct ClipTick {
-    input: TickInput,
     snapshot: Snapshot,
     bytes: usize,
 }
@@ -57,7 +56,7 @@ impl ClipRing {
         }
     }
 
-    pub fn push(&mut self, input: TickInput, snapshot: Snapshot) {
+    pub fn push(&mut self, snapshot: Snapshot) {
         if self
             .ticks
             .back()
@@ -65,13 +64,9 @@ impl ClipRing {
         {
             return;
         }
-        let bytes = clip_tick_bytes(&input, &snapshot);
+        let bytes = clip_tick_bytes(&snapshot);
         self.bytes = self.bytes.saturating_add(bytes);
-        self.ticks.push_back(ClipTick {
-            input,
-            snapshot,
-            bytes,
-        });
+        self.ticks.push_back(ClipTick { snapshot, bytes });
         self.evict();
     }
 
@@ -118,20 +113,18 @@ impl ClipRing {
         self.bytes
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = (&TickInput, &Snapshot)> {
-        self.ticks.iter().map(|tick| (&tick.input, &tick.snapshot))
+    pub fn iter(&self) -> impl Iterator<Item = &Snapshot> {
+        self.ticks.iter().map(|tick| &tick.snapshot)
     }
 }
 
-fn clip_tick_bytes(input: &TickInput, snapshot: &Snapshot) -> usize {
+fn clip_tick_bytes(snapshot: &Snapshot) -> usize {
     const SNAPSHOT_BASE: usize = 64;
     const ENTITY_STATE: usize = 0x100;
     SNAPSHOT_BASE
         + snapshot.players.len() * core::mem::size_of::<PlayerState>()
         + snapshot.projectiles.len() * 64
         + snapshot.meta.entities.len() * ENTITY_STATE
-        + input.cmds.len() * core::mem::size_of::<UserCmd>()
-        + input.actions.len() * 32
 }
 
 pub fn clips_dir(artifacts_root: &Path) -> PathBuf {

@@ -63,6 +63,7 @@ pub(super) fn upload_exact_geometry(
         geometry.world_layer_count = source.world.static_geometry.world_layer.len();
         geometry.world_index_count = source.world.static_geometry.world_indices.len();
         geometry.smodel_vertex = None;
+        geometry.smodel_vertex_lighting = None;
         geometry.smodel_index = None;
         geometry.smodel_surface_ranges.clear();
         geometry.smodel_vertex_count = source.world.static_geometry.smodel_vertices.len();
@@ -126,6 +127,23 @@ pub(super) fn upload_exact_geometry(
                 ),
                 usage: BufferUsages::VERTEX,
             }));
+            if source.world.static_geometry.smodel_vertex_lighting.len()
+                == source.world.static_geometry.smodel_vertices.len()
+            {
+                geometry.smodel_vertex_lighting = Some(
+                    device.create_buffer_with_data(&BufferInitDescriptor {
+                        label: Some("iw4_exact_colour_smodel_vertex_lighting_vb"),
+                        contents: bytemuck::cast_slice(
+                            source
+                                .world
+                                .static_geometry
+                                .smodel_vertex_lighting
+                                .as_slice(),
+                        ),
+                        usage: BufferUsages::VERTEX,
+                    }),
+                );
+            }
             geometry.smodel_index = Some(device.create_buffer_with_data(&BufferInitDescriptor {
                 label: Some("iw4_exact_colour_smodel_ib"),
                 contents: bytemuck::cast_slice(
@@ -240,6 +258,41 @@ pub(super) fn upload_exact_geometry(
             }
         }
     }
+    ensure_neutral_vertex_lighting(geometry, &device);
+}
+
+// Every packed stream that a T6 vertex-lit pipeline can draw from without
+// its own baked colours reads this buffer at the same vertex index.
+fn ensure_neutral_vertex_lighting(geometry: &mut ExactColourGeometry, device: &RenderDevice) {
+    const VERTEX_BYTES: u64 = asset_iw4::size::GFX_PACKED_VERTEX as u64;
+    let vertex_buffers = [
+        geometry.smodel_vertex.as_ref(),
+        geometry.smodel_cached_vertex.as_ref(),
+        geometry.xmodel.vertex.buffer(),
+        geometry.fx_vertex.as_ref(),
+        geometry.particle_cloud.vertex.buffer(),
+        geometry.mark_mesh.vertex.buffer(),
+        geometry.glass_mesh.vertex.buffer(),
+    ];
+    let need = vertex_buffers
+        .into_iter()
+        .flatten()
+        .map(|buffer| buffer.size() / VERTEX_BYTES)
+        .chain([u64::from(lighting_iw4::SMC_BANK_VB_BYTES) / VERTEX_BYTES])
+        .max()
+        .unwrap_or(0) as usize;
+    if geometry.neutral_vertex_lighting.is_some() && geometry.neutral_vertex_lighting_count >= need
+    {
+        return;
+    }
+    let count = need.next_power_of_two();
+    geometry.neutral_vertex_lighting =
+        Some(device.create_buffer_with_data(&BufferInitDescriptor {
+            label: Some("iw4_exact_colour_neutral_vertex_lighting_vb"),
+            contents: bytemuck::cast_slice(&vec![NEUTRAL_VERTEX_LIGHTING; count]),
+            usage: BufferUsages::VERTEX,
+        }));
+    geometry.neutral_vertex_lighting_count = count;
 }
 
 // Only the custom tail changes frame to frame; the template ahead of it is

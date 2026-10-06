@@ -63,6 +63,7 @@ fn hash_combat(h: &mut Digest, combat: &[WeaponCombatFacts]) {
     h.u64(combat.len() as u64);
     for row in combat {
         h.bool(row.dual_wield);
+        h.bool(row.fire_melees);
         h.i32(row.fire_time_ms);
         h.i32(row.fire_delay_ms);
         h.i32(row.raise_time_ms);
@@ -70,6 +71,7 @@ fn hash_combat(h: &mut Digest, combat: &[WeaponCombatFacts]) {
         h.u32(row.alternate_weapon);
         h.i32(row.alternate_raise_time_ms);
         h.i32(row.alternate_drop_time_ms);
+        h.i32(row.first_raise_time_ms);
         h.i32(row.quick_drop_time_ms);
         h.i32(row.inventory_type);
         h.i32(row.weap_class);
@@ -240,6 +242,8 @@ fn hash_equipment(h: &mut Digest, rows: &[crate::EquipmentRuntimeFacts]) {
         h.i32(row.projectile_speed);
         h.i32(row.projectile_speed_up);
         h.i32(row.projectile_speed_forward);
+        h.i32(row.projectile_speed_relative_up);
+        h.bool(row.refuses_pickup);
         h.i32(row.projectile_activate_dist);
         h.i32(row.projectile_explosion_type);
         h.i32(row.weap_type);

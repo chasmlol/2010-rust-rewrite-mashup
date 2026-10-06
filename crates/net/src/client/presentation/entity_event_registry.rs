@@ -13,6 +13,7 @@ macro_rules! land_ev {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EntityEventDispatch {
     Observer(EntityEventAction),
+    OwnerInput,
 
     Unsupported(&'static str),
 }
@@ -54,6 +55,21 @@ pub const EV_DISPATCH_REGISTRY: &[EntityEventRow] = &[
         name: "EV_STOPSOUNDS",
         event: EntityEventKind::STOPSOUNDS,
         dispatch: EntityEventDispatch::Observer(EntityEventAction::Sound),
+    },
+    EntityEventRow {
+        name: "EV_STANCE_FORCE_STAND",
+        event: EntityEventKind::STANCE_FORCE_STAND,
+        dispatch: EntityEventDispatch::OwnerInput,
+    },
+    EntityEventRow {
+        name: "EV_STANCE_FORCE_CROUCH",
+        event: EntityEventKind::STANCE_FORCE_CROUCH,
+        dispatch: EntityEventDispatch::OwnerInput,
+    },
+    EntityEventRow {
+        name: "EV_STANCE_FORCE_PRONE",
+        event: EntityEventKind::STANCE_FORCE_PRONE,
+        dispatch: EntityEventDispatch::OwnerInput,
     },
     EntityEventRow {
         name: "EV_ITEM_PICKUP",
@@ -290,6 +306,16 @@ pub const EV_DISPATCH_REGISTRY: &[EntityEventRow] = &[
     EntityEventRow {
         name: "EV_PLAY_FX",
         event: EntityEventKind::PLAY_FX,
+        dispatch: EntityEventDispatch::Observer(EntityEventAction::PlayFx),
+    },
+    EntityEventRow {
+        name: "EV_PLAY_FX_ON_TAG",
+        event: EntityEventKind::PLAY_FX_ON_TAG,
+        dispatch: EntityEventDispatch::Observer(EntityEventAction::PlayFx),
+    },
+    EntityEventRow {
+        name: "EV_STOP_FX_ON_TAG",
+        event: EntityEventKind::STOP_FX_ON_TAG,
         dispatch: EntityEventDispatch::Observer(EntityEventAction::PlayFx),
     },
     EntityEventRow {

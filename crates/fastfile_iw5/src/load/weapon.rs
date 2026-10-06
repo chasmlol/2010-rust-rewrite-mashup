@@ -31,10 +31,19 @@ pub(super) fn load_weapon(s: &mut ZoneStream<'_>, links: &mut dyn AssetLinkSink)
             let body = s.resolve_alias(q);
             (
                 Some(body),
-                None,
-                None,
-                None,
-                None,
+                xmodel_array_name(s, links, body, s.layout(4, 8)),
+                xmodel_name(s, links, body.at(s.layout(8, 16))),
+                xmodel_array_name(
+                    s,
+                    links,
+                    body,
+                    s.layout(sz::WEAPON_DEF_WORLD_MODEL_OFF, 752),
+                ),
+                xmodel_name(
+                    s,
+                    links,
+                    body.at(s.layout(sz::WEAPON_DEF_KNIFE_MODEL_OFF, 776)),
+                ),
                 s.f32_at(body, s.layout(sz::WEAPON_DEF_MOVE_SPEED_OFF, 1332))?,
                 s.f32_at(body, s.layout(sz::WEAPON_DEF_ADS_MOVE_SPEED_OFF, 1336))?,
             )
@@ -202,7 +211,26 @@ pub(super) fn load_weapon(s: &mut ZoneStream<'_>, links: &mut dyn AssetLinkSink)
         Ok(ZonePtr::Offset(q)) => Some(s.resolve_alias(q)),
         _ => None,
     };
+    let rocket_model_name = match weap_def {
+        Some(body) => xmodel_name(s, links, body.at(s.layout(488, 768))),
+        None => None,
+    };
+    let projectile_model_name = match weap_def {
+        Some(body) => xmodel_name(s, links, body.at(s.layout(1304, 1672))),
+        None => None,
+    };
+    let overlay_material_names = core::array::from_fn(|index| {
+        let body = weap_def?;
+        super::material_name_at(
+            s,
+            links,
+            body.at(s.layout(sz::WEAPON_DEF_OVERLAY_SHADER_OFF, 1352) + index * s.pointer_bytes()),
+        )
+    });
     s.record_weapon(WeaponGeometry {
+        overlay_material_names,
+        rocket_model_name,
+        projectile_model_name,
         alternate_weapon_name,
         alternate_raise_time_ms: s.i32_at(p, s.layout(124, 208))?,
         alternate_drop_time_ms: weap_def
@@ -495,6 +523,29 @@ fn follow_string_array(
     }
 }
 
+fn xmodel_name(s: &ZoneStream<'_>, links: &dyn AssetLinkSink, slot: Ptr) -> Option<Ptr> {
+    match s.ptr_at(slot, 0).ok()? {
+        ZonePtr::Null => None,
+        ZonePtr::Offset(ptr) => links
+            .xmodel_name_ptr(s.resolve_alias(ptr))
+            .or_else(|| links.xmodel_name_ptr(ptr))
+            .or_else(|| links.xmodel_name_ptr(slot)),
+        ZonePtr::Following | ZonePtr::Insert => links.xmodel_name_ptr(slot),
+    }
+}
+
+fn xmodel_array_name(
+    s: &ZoneStream<'_>,
+    links: &dyn AssetLinkSink,
+    body: Ptr,
+    field: usize,
+) -> Option<Ptr> {
+    let ZonePtr::Offset(ptr) = s.ptr_at(body, field).ok()? else {
+        return None;
+    };
+    xmodel_name(s, links, s.resolve_alias(ptr))
+}
+
 fn follow_xmodel_array(
     s: &mut ZoneStream<'_>,
     links: &mut dyn AssetLinkSink,
@@ -506,15 +557,7 @@ fn follow_xmodel_array(
         ZonePtr::Offset(q) => {
             s.note_offset(q);
             let arr = s.resolve_alias(q);
-            Ok(match s.ptr_at(arr, 0)? {
-                ZonePtr::Offset(m) => {
-                    let body = s.resolve_alias(m);
-                    links
-                        .xmodel_name_ptr(body)
-                        .or_else(|| links.xmodel_name_ptr(m))
-                }
-                _ => None,
-            })
+            Ok(xmodel_name(s, links, arr))
         }
         _ => {
             if !s.begin_body(p.at(field))? {

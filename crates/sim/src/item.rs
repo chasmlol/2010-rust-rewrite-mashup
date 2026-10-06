@@ -27,6 +27,8 @@ pub const WEAP_INVENTORY_PRIMARY: i32 = 0;
 pub const ITEM_MINS: [f32; 3] = [0.0, 0.0, 0.0];
 pub const ITEM_MAXS: [f32; 3] = [1.0, 1.0, 1.0];
 
+pub const ITEM_USE_HOLD_MS: i32 = 250;
+
 pub const PLAYER_DROP_Z: f32 = (PLAYER_MAXS[2] - PLAYER_MINS[2]) * 0.5;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -480,6 +482,9 @@ fn try_touch_one(world: &mut FrameWorld, walker: ClientId) {
         return;
     };
     if !walker_can_touch(world, walker, &ps) {
+        if perf::enabled() {
+            record_rejected_touches(world, walker, &ps);
+        }
         return;
     }
     let candidates = world.dropped_item_numbers_sorted();
@@ -522,6 +527,23 @@ fn try_touch_one(world: &mut FrameWorld, walker: ClientId) {
         return;
     };
     grab_number(world, walker, number);
+}
+
+fn record_rejected_touches(world: &FrameWorld, walker: ClientId, ps: &PlayerState) {
+    for number in world.dropped_item_numbers_sorted() {
+        if let Some(item) = world.dropped_item_by_number(number)
+            && aabb_overlap(
+                ps.origin,
+                PLAYER_MINS,
+                PLAYER_MAXS,
+                item.origin,
+                ITEM_MINS,
+                ITEM_MAXS,
+            )
+        {
+            perf::pickup_rejected(walker.0, number, ps.pm_type);
+        }
+    }
 }
 
 fn grab_number(world: &mut FrameWorld, walker: ClientId, number: i32) {
@@ -581,7 +603,8 @@ fn grab_number(world: &mut FrameWorld, walker: ClientId, number: i32) {
             give_weapon_to_ps_akimbo(&mut next, weapon, akimbo);
 
             if let Some(facts) = world.combat_facts_for(weapon) {
-                let hand = weapon_iw4::spawn_weapon_hand(weapon, &facts);
+                let hand = weapon_iw4::spawn_weapon_hand(weapon, &facts, true);
+                crate::combat::raise_given_weapon(&mut next, weapon, &hand);
                 next.weaponstate_primary = hand.weaponstate;
                 next.weapon_time = hand.weapon_time;
                 next.weapon_delay = hand.weapon_delay;
@@ -623,6 +646,7 @@ fn grab_number(world: &mut FrameWorld, walker: ClientId, number: i32) {
         meta.burst_latch_secondary = false;
         meta.rechamber_pending = false;
         meta.rechamber_pending_secondary = false;
+        meta.pending_brass = [None; 2];
     }
     world.item_pickups_mut().push(ItemPickupRecord {
         picker: walker.0 as i32,
@@ -754,6 +778,9 @@ fn projectile_pickup_ammo(
         return None;
     }
     let facts = world.equipment_facts_for(weapon)?;
+    if facts.refuses_pickup {
+        return None;
+    }
     if !facts.is_retrievable_knife()
         && (!facts.is_offhand()
             || facts.stickiness == 0
@@ -946,14 +973,20 @@ pub(crate) fn phase_use_items(
                 .expect("occupied item")
         });
         let meta = world.client_meta_mut(id);
-        if !held || selected.is_none() {
+        if !held || selected.is_none() || selected_ref != meta.item_use_entity {
             meta.item_use_entity = None;
         }
         if pressed {
             meta.item_use_entity = selected_ref;
+            meta.item_use_press_ms = now;
         }
         let pending = meta.item_use_entity;
-        let ready = now - meta.item_use_spawn_ms >= 500;
+        let hold_ms = if selected.is_some_and(|item| item.projectile) {
+            0
+        } else {
+            ITEM_USE_HOLD_MS
+        };
+        let ready = now - meta.item_use_spawn_ms >= 500 && now - meta.item_use_press_ms >= hold_ms;
         if held && ready && pending.is_some() && selected_ref == pending {
             let item = selected.expect("selected use item");
             if item.projectile {

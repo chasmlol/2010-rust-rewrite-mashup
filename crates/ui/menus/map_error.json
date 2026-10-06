@@ -1,0 +1,19 @@
+[
+  {
+    "name": "iw4l_map_error",
+    "rect": {"x": 0, "y": 0, "w": 640, "h": 480, "horz_align": 4, "vert_align": 4},
+    "handlers": {
+      "open": [{"Script": "focusFirst;"}],
+      "esc": [{"Script": "close self;"}],
+      "close": [{"Script": "setDvar ui_map_error 0; setDvar ui_map_error_reason \"\";"}]
+    },
+    "items": [
+      {"name": "shade", "background": "white", "rect": {"x": 0, "y": 0, "w": 640, "h": 480, "horz_align": 4, "vert_align": 4}, "fore_color": [0, 0, 0, 0.65], "static_flags": 1048576},
+      {"name": "panel", "background": "white", "rect": {"x": -250, "y": -125, "w": 500, "h": 250, "horz_align": 2, "vert_align": 2}, "fore_color": [0.07, 0.08, 0.07, 0.98], "static_flags": 1048576},
+      {"name": "line", "background": "white", "rect": {"x": -250, "y": -125, "w": 500, "h": 2, "horz_align": 2, "vert_align": 2}, "fore_color": [0.65, 0.7, 0.4, 1], "static_flags": 1048576},
+      {"name": "title", "text_key": "MAP LOAD ERROR", "rect": {"x": -230, "y": -110, "w": 460, "h": 28, "horz_align": 2, "vert_align": 2}, "fore_color": [1, 1, 1, 1], "font_enum": 3, "text_scale": 0.5, "text_align_mode": 8, "static_flags": 1048576},
+      {"name": "reason", "text_exp": "op 38 s:75695f6d61705f6572726f725f726561736f6e op 1", "text_literal": true, "rect": {"x": -230, "y": -65, "w": 460, "h": 130, "horz_align": 2, "vert_align": 2}, "fore_color": [1, 1, 1, 1], "font_enum": 3, "text_scale": 0.375, "text_align_mode": 0, "text_align_y": 14, "static_flags": 9437184},
+      {"name": "ok", "item_type": 1, "style": 1, "text_key": "@MENU_OK", "rect": {"x": -230, "y": 83, "w": 460, "h": 24, "horz_align": 2, "vert_align": 2}, "background": "menu_button_selection_bar", "fore_color": [1, 1, 1, 1], "back_color": [0, 0, 0, 1], "font_enum": 3, "text_scale": 0.375, "text_align_mode": 8, "text_align_x": 8, "handlers": {"action": [{"Script": "play mouse_click; close self;"}]}}
+    ]
+  }
+]

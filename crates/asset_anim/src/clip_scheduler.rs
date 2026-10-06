@@ -1,4 +1,10 @@
+use std::cmp::Ordering;
+use std::collections::BinaryHeap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
+
+static NEXT_SCHEDULER: AtomicU64 = AtomicU64::new(1);
+const NOTIFY_CAPACITY: usize = 4096;
 
 use crate::xanim_clip::AnimClip;
 
@@ -31,10 +37,61 @@ pub struct ActiveAnim<'a> {
     pub weight: f32,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ClipNotification {
+    pub scheduler: u64,
+    pub playback: u64,
+    pub node: usize,
+    pub cycle: i64,
+    pub marker: usize,
+    pub name: String,
+}
+
+#[derive(Debug, Default)]
+pub struct ClipAdvance {
+    pub notifications: Vec<ClipNotification>,
+    pub discarded: u64,
+}
+
+#[derive(Debug)]
+struct Crossing {
+    offset: f64,
+    spacing: f64,
+    node: usize,
+    marker: usize,
+    cycle: i64,
+    step: i64,
+    remaining: u64,
+}
+
+impl PartialEq for Crossing {
+    fn eq(&self, other: &Self) -> bool {
+        self.cmp(other) == Ordering::Equal
+    }
+}
+impl Eq for Crossing {}
+impl PartialOrd for Crossing {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+impl Ord for Crossing {
+    fn cmp(&self, other: &Self) -> Ordering {
+        other
+            .offset
+            .total_cmp(&self.offset)
+            .then_with(|| other.node.cmp(&self.node))
+            .then_with(|| other.marker.cmp(&self.marker))
+    }
+}
+
 #[derive(Debug, Default)]
 struct Node {
     clip: Option<Arc<AnimClip>>,
-    time: f32,
+    time: f64,
+    cycle: i64,
+    playback: u64,
+    initial: bool,
     rate: f32,
     weight: f32,
     goal_weight: f32,
@@ -43,12 +100,20 @@ struct Node {
 
 #[derive(Debug)]
 pub struct ClipScheduler {
+    identity: u64,
+    next_playback: u64,
     nodes: Vec<Node>,
 }
 
 impl ClipScheduler {
     pub fn new(node_count: usize) -> Self {
         Self {
+            identity: NEXT_SCHEDULER
+                .fetch_update(AtomicOrdering::Relaxed, AtomicOrdering::Relaxed, |value| {
+                    value.checked_add(1)
+                })
+                .expect("clip scheduler identity exhausted"),
+            next_playback: 1,
             nodes: (0..node_count)
                 .map(|_| Node {
                     rate: 1.0,
@@ -63,9 +128,18 @@ impl ClipScheduler {
     }
 
     pub fn set_clip(&mut self, node: usize, clip: Arc<AnimClip>) -> Result<(), ClipSchedulerError> {
+        self.node(node)?;
+        let playback = self.next_playback;
+        self.next_playback = self
+            .next_playback
+            .checked_add(1)
+            .expect("clip playback identity exhausted");
         let node = self.node_mut(node)?;
         node.clip = Some(clip);
         node.time = 0.0;
+        node.cycle = 0;
+        node.playback = playback;
+        node.initial = true;
         Ok(())
     }
 
@@ -78,12 +152,18 @@ impl ClipScheduler {
     }
 
     pub fn set_time(&mut self, node: usize, time: f32) -> Result<(), ClipSchedulerError> {
-        self.node_mut(node)?.time = time.max(0.0);
+        let node = self.node_mut(node)?;
+        node.time = if time.is_finite() {
+            f64::from(time.max(0.0))
+        } else {
+            0.0
+        };
+        node.initial = false;
         Ok(())
     }
 
     pub fn set_rate(&mut self, node: usize, rate: f32) -> Result<(), ClipSchedulerError> {
-        self.node_mut(node)?.rate = rate;
+        self.node_mut(node)?.rate = if rate.is_finite() { rate } else { 0.0 };
         Ok(())
     }
 
@@ -102,22 +182,42 @@ impl ClipScheduler {
         Ok(())
     }
 
-    pub fn advance(&mut self, dt: f32) -> Vec<String> {
-        let dt = dt.max(0.0);
-        let mut notifies = Vec::new();
-        for node in &mut self.nodes {
+    pub fn advance(&mut self, dt: f32) -> ClipAdvance {
+        let dt = if dt.is_finite() { dt.max(0.0) } else { 0.0 };
+        let mut crossings = BinaryHeap::new();
+        let mut total = 0u64;
+        for (index, node) in self.nodes.iter_mut().enumerate() {
             if node.weight > 0.0 {
-                let old_time = node.time;
-                advance_time(node, dt);
-                if node.goal_weight > 0.0
-                    && let Some(clip) = node.clip.as_deref()
-                {
-                    notifies.extend(clip.crossed_notifies(old_time, node.time));
-                }
+                collect_crossings(node, index, dt, &mut crossings, &mut total);
             }
             advance_goal(node, dt);
         }
-        notifies
+        let mut notifications = Vec::with_capacity((total.min(NOTIFY_CAPACITY as u64)) as usize);
+        while notifications.len() < NOTIFY_CAPACITY {
+            let Some(mut crossing) = crossings.pop() else {
+                break;
+            };
+            let node = &self.nodes[crossing.node];
+            let clip = node.clip.as_ref().expect("active clip");
+            notifications.push(ClipNotification {
+                scheduler: self.identity,
+                playback: node.playback,
+                node: crossing.node,
+                cycle: crossing.cycle,
+                marker: crossing.marker,
+                name: clip.notifies[crossing.marker].name.clone(),
+            });
+            crossing.remaining -= 1;
+            if crossing.remaining != 0 {
+                crossing.cycle = crossing.cycle.saturating_add(crossing.step);
+                crossing.offset += crossing.spacing;
+                crossings.push(crossing);
+            }
+        }
+        ClipAdvance {
+            discarded: total.saturating_sub(notifications.len() as u64),
+            notifications,
+        }
     }
 
     pub fn active(&self) -> impl Iterator<Item = ActiveAnim<'_>> {
@@ -126,7 +226,7 @@ impl ClipScheduler {
                 state.clip.as_deref().map(|clip| ActiveAnim {
                     node,
                     clip,
-                    time: state.time,
+                    time: state.time as f32,
                     rate: state.rate,
                     weight: state.weight,
                 })
@@ -139,7 +239,7 @@ impl ClipScheduler {
     }
 
     pub fn time(&self, node: usize) -> Result<f32, ClipSchedulerError> {
-        Ok(self.node(node)?.time)
+        Ok(self.node(node)?.time as f32)
     }
 
     pub fn rate(&self, node: usize) -> Result<f32, ClipSchedulerError> {
@@ -161,15 +261,86 @@ impl ClipScheduler {
     }
 }
 
-fn advance_time(node: &mut Node, dt: f32) {
+fn collect_crossings(
+    node: &mut Node,
+    index: usize,
+    dt: f32,
+    crossings: &mut BinaryHeap<Crossing>,
+    total: &mut u64,
+) {
     let Some(clip) = &node.clip else { return };
-    let duration = clip.duration();
-    if duration <= f32::EPSILON {
+    let duration = f64::from(clip.duration());
+    if !duration.is_finite() || duration <= f64::from(f32::EPSILON) {
         node.time = 0.0;
-    } else if clip.looping {
-        node.time = (node.time + dt * node.rate).rem_euclid(duration);
+        return;
+    }
+    let rate = f64::from(node.rate);
+    let old = if clip.looping {
+        node.cycle as f64 + node.time / duration
     } else {
-        node.time = (node.time + dt * node.rate).clamp(0.0, duration);
+        node.time / duration
+    };
+    let next = old + f64::from(dt) * rate / duration;
+    let new = if clip.looping {
+        next
+    } else {
+        next.clamp(0.0, 1.0)
+    };
+    let initial = node.initial;
+    if new != old {
+        node.initial = false;
+    }
+    if clip.looping {
+        node.cycle = new.floor() as i64;
+        node.time = new.rem_euclid(1.0) * duration;
+    } else {
+        node.time = new * duration;
+    }
+    if node.goal_weight <= 0.0 || new == old {
+        return;
+    }
+    for (marker, notify) in clip.notifies.iter().enumerate() {
+        if notify.name.is_empty()
+            || notify.name.eq_ignore_ascii_case("end")
+            || !notify.time.is_finite()
+        {
+            continue;
+        }
+        let point = f64::from(notify.time.clamp(0.0, 1.0));
+        let (first, last, step) = if new > old {
+            let first = if initial && old == 0.0 && point == 0.0 {
+                0
+            } else {
+                ((old - point).floor() as i64).saturating_add(1)
+            };
+            (first, (new - point).floor() as i64, 1)
+        } else {
+            (
+                ((old - point).ceil() as i64).saturating_sub(1),
+                (new - point).ceil() as i64,
+                -1,
+            )
+        };
+        if !clip.looping
+            && ((step == 1 && (first > 0 || last < 0)) || (step == -1 && (first < 0 || last > 0)))
+        {
+            continue;
+        }
+        let (first, last) = if clip.looping { (first, last) } else { (0, 0) };
+        if (step == 1 && first > last) || (step == -1 && first < last) {
+            continue;
+        }
+        let count = first.abs_diff(last).saturating_add(1);
+        *total = total.saturating_add(count);
+        crossings.push(Crossing {
+            offset: (first as f64 + point - old) * duration / rate,
+            spacing: duration / rate.abs(),
+            node: index,
+            marker,
+            cycle: first,
+            step,
+            remaining: count,
+        });
     }
 }
 

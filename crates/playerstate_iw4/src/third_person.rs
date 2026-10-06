@@ -38,7 +38,7 @@ pub const CG_CAMERA_PULLBACK_BOX_HALF: f32 = 4.0;
 
 pub const CG_CAMERA_PULLBACK_CLIPMASK: u32 = 0x0281_0011;
 
-pub const LINK_FLAGS_FORCE_THIRD_PERSON: u32 = 4;
+pub const LINK_FLAGS_WEAPON_VIEW_ONLY: u32 = 4;
 
 #[derive(Clone, Copy, Debug)]
 pub struct ThirdPersonViewInputs {
@@ -59,7 +59,7 @@ pub fn is_third_person_view(i: ThirdPersonViewInputs) -> bool {
     if third_person_in_killcam(i.in_killcam, i.killcam_mode) {
         tpv = true;
     }
-    if (i.link_flags & LINK_FLAGS_FORCE_THIRD_PERSON) != 0 {
+    if (i.link_flags & LINK_FLAGS_WEAPON_VIEW_ONLY) != 0 {
         tpv = true;
     }
     tpv
@@ -156,7 +156,7 @@ pub fn offset_third_person_view(
     view[2] += CG_THIRD_PERSON_FOCUS_Z;
 
     let cam_yaw = focus_yaw - i.cg_third_person_angle;
-    let cam_pitch_half = focus_pitch * CG_THIRD_PERSON_PITCH_SCALE;
+    let cam_pitch_half = i.viewangles[0] * CG_THIRD_PERSON_PITCH_SCALE;
     let (forward, _, _) = angle_vectors([cam_pitch_half, cam_yaw, 0.0]);
     let back = -i.cg_third_person_range;
     view[0] += back * forward[0];

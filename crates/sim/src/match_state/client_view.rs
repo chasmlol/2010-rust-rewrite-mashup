@@ -111,6 +111,13 @@ impl RadarMode {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct LinkedWeaponView {
+    pub entity_num: i32,
+    pub origin: [f32; 3],
+    pub angles: [f32; 3],
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct RemoteMissile {
     pub projectile: crate::ProjectileId,
     pub entnum: i32,
@@ -156,5 +163,8 @@ pub fn is_postfx_dvar(name: &str) -> bool {
                 | "r_gamma"
                 | "r_exposure"
                 | "nightvision"
+                | "cg_drawshellshock"
+                | "thermalblurfactorscope"
+                | "thermalblurfactornoscope"
         )
 }

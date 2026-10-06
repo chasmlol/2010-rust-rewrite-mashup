@@ -305,13 +305,71 @@ pub fn events_for_authority_tick(
     events
 }
 
+#[derive(Clone, Debug)]
+pub struct FpvNotetrack {
+    pub hand: u8,
+    pub notification: asset_anim::ClipNotification,
+}
+
+#[derive(Default)]
+pub struct FpvNotetracks {
+    pub records: Vec<FpvNotetrack>,
+    pub discarded: u64,
+}
+
+impl FpvNotetracks {
+    pub fn into_audio_batch(
+        self,
+        generation: frame::WorldGeneration,
+        timeline: u64,
+        client: sim::ClientId,
+        life: sim::LifeSequence,
+        weapon: u32,
+        tick: sim::Tick,
+    ) -> audio::ViewmodelNotetracks {
+        audio::ViewmodelNotetracks {
+            generation,
+            client,
+            life,
+            weapon,
+            records: self
+                .records
+                .into_iter()
+                .map(|record| {
+                    let notify = record.notification;
+                    audio::ViewmodelNotetrack {
+                        event: audio::AudioEvent::from_animation(
+                            generation,
+                            timeline,
+                            client,
+                            tick,
+                            audio::AnimationMarkerId {
+                                controller: notify.scheduler,
+                                playback: notify.playback,
+                                node: notify.node,
+                                cycle: notify.cycle,
+                                marker: notify.marker,
+                                hand: record.hand,
+                                life: life.0,
+                                weapon,
+                            },
+                        ),
+                        name: notify.name,
+                    }
+                })
+                .collect(),
+            discarded: self.discarded,
+        }
+    }
+}
+
 pub fn tick_equipped_fpv_with_predicted_fire(
     equipped: &mut EquippedFpv,
     present: &mut FpvPresentState,
     sample: Option<FpvAuthoritySample>,
     predicted_local_fire: bool,
     dt_secs: f32,
-) -> (FpvPoseSample, Vec<String>) {
+) -> (FpvPoseSample, FpvNotetracks) {
     tick_equipped_fpv_with_extra_events(
         equipped,
         present,
@@ -329,7 +387,7 @@ pub fn tick_equipped_fpv_with_extra_events(
     predicted_local_fire: bool,
     extra_events: &[PresentFpvEvent],
     dt_secs: f32,
-) -> (FpvPoseSample, Vec<String>) {
+) -> (FpvPoseSample, FpvNotetracks) {
     let mut events = match sample {
         Some(sample) => events_for_authority_tick(present, sample),
         None => Vec::new(),
@@ -365,7 +423,18 @@ pub fn tick_equipped_fpv_with_extra_events(
             }
         }
     }
-    let crate::AdvanceResult { mut notifies } = equipped.controller.advance(dt_secs);
+    let advance = equipped.controller.advance(dt_secs);
+    let mut notetracks = FpvNotetracks {
+        records: advance
+            .notifications
+            .into_iter()
+            .map(|notification| FpvNotetrack {
+                hand: 0,
+                notification,
+            })
+            .collect(),
+        discarded: advance.discarded,
+    };
     let ads_frac = sample
         .map(|s| s.ads_frac)
         .or(present.last_ads_frac)
@@ -388,16 +457,24 @@ pub fn tick_equipped_fpv_with_extra_events(
                     report_dispatch_slot(slot, left.dispatch_sz_xanim_index(slot));
                 }
             }
-            for note in left.advance(dt_secs).notifies {
-                if !notifies.contains(&note) {
-                    notifies.push(note);
-                }
-            }
+            let advance = left.advance(dt_secs);
+            notetracks
+                .records
+                .extend(
+                    advance
+                        .notifications
+                        .into_iter()
+                        .map(|notification| FpvNotetrack {
+                            hand: 1,
+                            notification,
+                        }),
+                );
+            notetracks.discarded = notetracks.discarded.saturating_add(advance.discarded);
 
             left.apply_ads_overlay_frame(0.0);
         }
     }
-    (sample_pose(&equipped.controller), notifies)
+    (sample_pose(&equipped.controller), notetracks)
 }
 
 fn observe_weap_anim_edge_on(previous: &mut Option<i32>, raw: i32) -> WeapAnimEdge {

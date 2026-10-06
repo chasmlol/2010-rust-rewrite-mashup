@@ -15,6 +15,8 @@ pub(super) fn load_vehicle(s: &mut ZoneStream<'_>, links: &mut dyn AssetLinkSink
     s.follow_string(p, s.layout(180, 208))?;
 
     let turret_weapon = s.follow_string(p, s.layout(408, 448))?;
+    let accel = s.f32_at(p, s.layout(28, 40))?;
+    s.record_vehicle_accel(accel);
     s.record_vehicle(name, turret_weapon);
     asset_ptr_at(s, links, AssetType::Weapon, p.at(s.layout(412, 456)))?;
 

@@ -121,6 +121,12 @@ pub trait AssetLinkSink {
         None
     }
 
+    fn remember_material_name(&mut self, _slot: Ptr, _insert_slot: Option<Ptr>, _name: Ptr) {}
+
+    fn material_name_ptr(&self, _slot: Ptr) -> Option<Ptr> {
+        None
+    }
+
     fn remember_xmodel_name(&mut self, _slot: Ptr, _insert_slot: Option<Ptr>, _name: Ptr) {}
 
     fn capture_script_file(&mut self, name: &str, stack: &[u8], bytecode: &[u8]) -> Result<()> {
@@ -237,6 +243,11 @@ pub fn load_asset_at_durable_slot(
             let (load, insert_slot) = s.begin_body_with_insert(slot)?;
             debug_assert!(load);
             load_asset_body_observed(s, ty, links)?;
+            if ty == AssetType::Material
+                && let Some(name) = s.latest_material().and_then(|g| g.name)
+            {
+                links.remember_material_name(slot, insert_slot, name);
+            }
             if ty == AssetType::XModel {
                 if let Some(name) = s.latest_xmodel().and_then(|g| g.name) {
                     links.remember_xmodel_name(slot, insert_slot, name);
@@ -305,4 +316,19 @@ pub(crate) fn always_array(
     let body = s.alloc_load(align, bytes)?;
     s.fixup_slot(slot, body)?;
     Ok(Some(body))
+}
+
+pub(super) fn material_name_at(
+    s: &ZoneStream<'_>,
+    links: &dyn AssetLinkSink,
+    slot: Ptr,
+) -> Option<Ptr> {
+    match s.ptr_at(slot, 0).ok()? {
+        ZonePtr::Null => None,
+        ZonePtr::Offset(target) => links
+            .material_name_ptr(s.resolve_alias(target))
+            .or_else(|| links.material_name_ptr(target))
+            .or_else(|| links.material_name_ptr(slot)),
+        ZonePtr::Following | ZonePtr::Insert => links.material_name_ptr(slot),
+    }
 }

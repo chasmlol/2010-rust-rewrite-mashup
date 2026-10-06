@@ -38,6 +38,7 @@ pub struct MenuDefCapture<'a> {
     pub window_background: &'a str,
     pub expr_dvars: &'a str,
     pub fullscreen: i32,
+    pub static_flags: i32,
     pub item_count: i32,
     pub focus_color: [f32; 4],
 
@@ -76,6 +77,7 @@ pub struct MenuItemLayout<'a> {
     pub text_align_y: f32,
 
     pub text_style: i32,
+    pub game_msg_window_index: i32,
     pub background: &'a str,
     pub focus_sound: &'a str,
 
@@ -286,6 +288,7 @@ pub(super) fn load_menu(s: &mut ZoneStream<'_>, links: &mut dyn AssetLinkSink) -
         window_background,
         expr_dvars,
         fullscreen,
+        static_flags: s.i32_at(p, s.layout(68, 76))?,
         item_count: item_count as i32,
         focus_color: read_vec4(s, p, s.layout(240, 292)).unwrap_or([1.0; 4]),
         rect,
@@ -988,6 +991,7 @@ fn load_item_def(
     let text_align_x = s.f32_at(p, s.layout(0xcc, 216)).unwrap_or(0.0);
     let text_align_y = s.f32_at(p, s.layout(0xd0, 220)).unwrap_or(0.0);
     let text_style = s.i32_at(p, s.layout(0xd8, 228)).unwrap_or(0);
+    let game_msg_window_index = s.i32_at(p, s.layout(220, 232))?;
 
     let bg_ptr = ptr_kind(s, p, s.layout(160, 168));
     let sound_ptr = ptr_kind(s, p, s.layout(296, 376));
@@ -1071,6 +1075,7 @@ fn load_item_def(
         text_align_x,
         text_align_y,
         text_style,
+        game_msg_window_index,
         background,
         focus_sound,
         dvar,

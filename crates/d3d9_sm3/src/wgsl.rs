@@ -663,6 +663,89 @@ pub fn lower_pass_to_wgsl(
     source.push_str("        sm3_constant_base,\n");
     source.push_str("    );\n}\n");
 
+    let front_facing = pixel_plan
+        .external
+        .iter()
+        .any(|r| r.file == Sm3RegisterFile::Misc && r.index == 1);
+    source.push_str("\nfn sm3_pixel_main");
+    source.push_str("(varyings: Sm3Varyings");
+    if front_facing {
+        source.push_str(", sm3_front_facing: bool");
+    }
+    source.push_str(") -> vec4<f32> {\n");
+    for register in &pixel_plan.external {
+        if register.file == Sm3RegisterFile::Misc {
+            match register.index {
+                0 => {
+                    if pixel_plan
+                        .external_read_masks
+                        .get(register)
+                        .copied()
+                        .unwrap_or(0)
+                        & !3
+                        != 0
+                    {
+                        return Err(Sm3WgslError::UnsupportedSourceFile {
+                            at_word: 0,
+                            file: register.file,
+                        });
+                    }
+                    source.push_str("    let misc0 = varyings.position.xy - vec2<f32>(0.5);\n");
+                }
+                1 => {
+                    source.push_str(
+                        "    let misc1 = vec4<f32>(select(-1.0, 1.0, sm3_front_facing));\n",
+                    );
+                }
+                _ => {
+                    return Err(Sm3WgslError::UnsupportedSourceFile {
+                        at_word: 0,
+                        file: register.file,
+                    });
+                }
+            }
+        }
+    }
+    for varying in &abi.varyings {
+        let Some(register) = varying.pixel_register else {
+            continue;
+        };
+        writeln!(
+            source,
+            "    let {} = varyings.varying_{};",
+            register_name(register),
+            varying.location
+        )
+        .unwrap();
+    }
+    emit_constant_prologue(
+        &mut source,
+        abi,
+        &pixel_plan,
+        Stage::Pixel,
+        &format!("varyings.sm3_constant_base + {}u", vertex_constant_len),
+    )?;
+    emit_texture_slot_prologue(
+        &mut source,
+        abi,
+        &pixel_plan,
+        "varyings.sm3_constant_base",
+        slot_row_base,
+    )?;
+    let mut defined = BTreeMap::new();
+    emit_prologue(&mut source, &pixel_plan, &mut defined);
+    emit_body(
+        &mut source,
+        &pixel.instructions,
+        &pixel_plan.external,
+        &pixel_plan.samplers,
+        &compare,
+        &mut defined,
+        None,
+    )?;
+    writeln!(source, "    return {};", register_name(colour_output)).unwrap();
+    source.push_str("}\n");
+
     for index in 0..=abi.alpha_tests.len() {
         let alpha_test = index.checked_sub(1).map(|slot| abi.alpha_tests[slot]);
         source.push_str("\n@fragment\nfn ");
@@ -671,84 +754,21 @@ pub fn lower_pass_to_wgsl(
             Some(slot) => source.push_str(&pass_fragment_alpha_test_entry(slot)),
         }
         source.push_str("(varyings: Sm3Varyings");
-        if pixel_plan
-            .external
-            .iter()
-            .any(|r| r.file == Sm3RegisterFile::Misc && r.index == 1)
-        {
+        if front_facing {
             source.push_str(", @builtin(front_facing) sm3_front_facing: bool");
         }
         source.push_str(") -> @location(0) vec4<f32> {\n");
-        for register in &pixel_plan.external {
-            if register.file == Sm3RegisterFile::Misc {
-                match register.index {
-                    0 => {
-                        if pixel_plan
-                            .external_read_masks
-                            .get(register)
-                            .copied()
-                            .unwrap_or(0)
-                            & !3
-                            != 0
-                        {
-                            return Err(Sm3WgslError::UnsupportedSourceFile {
-                                at_word: 0,
-                                file: register.file,
-                            });
-                        }
-                        source.push_str("    let misc0 = varyings.position.xy - vec2<f32>(0.5);\n");
-                    }
-                    1 => {
-                        source.push_str(
-                            "    let misc1 = vec4<f32>(select(-1.0, 1.0, sm3_front_facing));\n",
-                        );
-                    }
-                    _ => {
-                        return Err(Sm3WgslError::UnsupportedSourceFile {
-                            at_word: 0,
-                            file: register.file,
-                        });
-                    }
-                }
+        writeln!(
+            source,
+            "    let {} = sm3_pixel_main(varyings{});",
+            register_name(colour_output),
+            if front_facing {
+                ", sm3_front_facing"
+            } else {
+                ""
             }
-        }
-        for varying in &abi.varyings {
-            let Some(register) = varying.pixel_register else {
-                continue;
-            };
-            writeln!(
-                source,
-                "    let {} = varyings.varying_{};",
-                register_name(register),
-                varying.location
-            )
-            .unwrap();
-        }
-        emit_constant_prologue(
-            &mut source,
-            abi,
-            &pixel_plan,
-            Stage::Pixel,
-            &format!("varyings.sm3_constant_base + {}u", vertex_constant_len),
-        )?;
-        emit_texture_slot_prologue(
-            &mut source,
-            abi,
-            &pixel_plan,
-            "varyings.sm3_constant_base",
-            slot_row_base,
-        )?;
-        let mut defined = BTreeMap::new();
-        emit_prologue(&mut source, &pixel_plan, &mut defined);
-        emit_body(
-            &mut source,
-            &pixel.instructions,
-            &pixel_plan.external,
-            &pixel_plan.samplers,
-            &compare,
-            &mut defined,
-            None,
-        )?;
+        )
+        .unwrap();
         if let Some(alpha_test) = alpha_test {
             emit_alpha_test(&mut source, alpha_test, colour_output)?;
         }

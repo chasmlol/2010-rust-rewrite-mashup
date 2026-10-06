@@ -7,14 +7,15 @@ pub fn step(
     input: &TickInput,
     msec: i32,
     reason: StepReason,
-) -> Snapshot
+) -> TickResult
 ```
 
 `crates/sim/src/carrier.rs`. Everything able to change the authoritative world
-enters through `TickInput` and leaves through `Snapshot`. There is no second
-door. `try_step` exposes the same path as a `Result<Snapshot, script::Fault>`;
-`step` panics on script failure. Authority/replay require a loaded, started GSC
-program.
+enters through `TickInput`, including recorded shot-sample provenance. The tick
+publishes a `TickResult` containing the snapshot, per-client action outcomes,
+script effects and presentation metadata. `try_step` returns
+`Result<TickResult, script::Fault>`;
+`step` panics on script failure. Authority requires a loaded, started GSC program.
 
 ## One function, three callers
 
@@ -30,8 +31,6 @@ differ only in `StepReason`:
 A human at a keyboard and a bot both arrive as entries in `TickInput.cmds`.
 `sim` cannot tell them apart, and nothing downstream needs to.
 
-## Why it is shaped this way
-
 * **State is explicit.** `&mut SimWorld` owns the `bevy_ecs` world, so two of
   them step side by side without touching each other: one in
   `net::authority::runtime`, one in `net::client::predict`.
@@ -40,10 +39,9 @@ A human at a keyboard and a bot both arrive as entries in `TickInput.cmds`.
 * **Input is canonical.** `TickInput::canonicalize()` sorts commands and
   actions by `ClientId`, so the same set of inputs is the same input whatever
   order the network delivered it in.
-* **The snapshot is the return value**, not a later pass over the world. What
-  is absent from `Snapshot` cannot reach a client.
-
-## Coming back the other way
+* **Publication is closed.** Networking consumes the returned snapshot and
+  effects without draining the simulation world. Each action reports applied,
+  accepted for script execution, or refused; absence of a rejection is no verdict.
 
 `adopt_snapshot` installs an authoritative snapshot; `adopt_prediction_snapshot`
 reconciles the local client against one. Both live in `crates/sim/src/adopt.rs`

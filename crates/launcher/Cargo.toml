@@ -14,6 +14,7 @@ bevy-debug = ["bootstrap/bevy-debug"]
 bevy-trace = ["bootstrap/bevy-trace"]
 
 [dependencies]
+updater = { path = "../updater" }
 diag.workspace = true
 asset_transport.workspace = true
 assets.workspace = true

@@ -1,45 +1,25 @@
-use std::collections::HashMap;
 use std::sync::Arc;
 
-use asset_audio::{SoundCatalog, namespace_for_zone};
+use asset_audio::SoundCatalog;
 use asset_core::AssetNamespace;
-use asset_iw4::attenuate;
 use asset_transport::GamesRoot;
 use assets::{NamespaceSoundIwd, NamespaceTrees};
 use bevy::{
-    audio::{AudioSink, AudioSinkPlayback, Volume},
     prelude::*,
     tasks::{AsyncComputeTaskPool, Task, TaskPool, futures_lite::future},
 };
 use frame::{MatchTornDown, ReturnedToMenu};
 
-use crate::backend::{AudioScope, MatchEpoch, Voice};
-use crate::pcm::{LoopingPcmAudio, PcmAudio};
-use crate::playback::{
-    AmbientListener, MissingAliasGaps, SharedPlayAssets, SoundBank, world_oneshot_channel_gains,
-};
-use crate::space::{distance_inches, transform_inches};
+use crate::backend::{AudioScope, MatchEpoch};
+use crate::playback::SoundBank;
+use crate::sources::{DesiredSource, SourceCueRequest, SourceKey, SourceRenderGroup};
 
-#[derive(Component)]
-pub struct MapAmbient;
+pub(crate) const MAP_BED_SLOT: u32 = 2;
+const MAP_EMITTER_SLOT: u32 = 3;
 
-#[derive(Component)]
-pub(crate) struct LegacyAmbient;
-
-pub const MAX_ACTIVE_MAP_EMITTERS: usize = 8;
-
-pub const MIN_AUDIBLE_EMITTER_GAIN: f32 = 0.002;
-
-#[derive(Component)]
-pub struct MapEmitter {
-    pub origin_inches: [f32; 3],
-    pub dist_min: f32,
-    pub dist_max: f32,
-    pub knots: Arc<[[f32; 2]]>,
-    pub base_gain: f32,
-    pub pcm: Handle<PcmAudio>,
-
-    pub live_pan: Option<crate::pcm::LivePan>,
+#[derive(Resource, Default)]
+pub(crate) struct MapSources {
+    pub desired: Vec<DesiredSource>,
 }
 
 #[derive(Resource, Clone)]
@@ -95,20 +75,15 @@ struct ResidentComposed {
 
 #[derive(Resource)]
 pub(crate) struct SoundBankNamespace {
+    pub(crate) generation: frame::WorldGeneration,
     pub(crate) zone: String,
     pub(crate) namespace: AssetNamespace,
-}
-
-pub fn stop_map_ambient(commands: &mut Commands, ambient: &Query<Entity, With<MapAmbient>>) {
-    for entity in ambient.iter() {
-        commands.entity(entity).despawn();
-    }
 }
 
 pub(crate) fn stop_map_ambient_on_match_end(
     mut torn: MessageReader<MatchTornDown>,
     mut returned: MessageReader<ReturnedToMenu>,
-    ambient: Query<Entity, With<MapAmbient>>,
+    mut sources: ResMut<MapSources>,
     mut booted: ResMut<MapAmbientBooted>,
     mut attempted: ResMut<SoundBankLoadAttempted>,
     mut epoch: ResMut<MatchEpoch>,
@@ -122,7 +97,7 @@ pub(crate) fn stop_map_ambient_on_match_end(
         return;
     }
     epoch.bump();
-    stop_map_ambient(&mut commands, &ambient);
+    sources.desired.clear();
     booted.0 = false;
     commands.remove_resource::<asset_audio::CreateFxOneshotEmitters>();
 
@@ -203,7 +178,6 @@ pub(crate) fn start_sound_bank_compose(
             }))
         }
     };
-    commands.remove_resource::<SoundBankFailed>();
     commands.insert_resource(SoundBankCompose {
         load_key: accepted.load_key,
         zone,
@@ -215,10 +189,6 @@ pub(crate) fn start_sound_bank_compose(
         stall_reported: false,
     });
 }
-
-/// The last sound bank load failed, so the match goes on without one.
-#[derive(Resource)]
-pub(crate) struct SoundBankFailed;
 
 pub(crate) fn install_sound_bank(
     mut compose: Option<ResMut<SoundBankCompose>>,
@@ -287,9 +257,7 @@ pub(crate) fn install_sound_bank(
                         namespace: bank.namespace,
                         reused: true,
                     });
-                let namespace = identity.as_ref().map_or(AssetNamespace::Iw4, |identity| {
-                    namespace_for_zone(&GamesRoot(identity.games_root.clone()), &compose.zone)
-                });
+                let namespace = arrived.namespace;
                 let gaps = arrived.gaps;
                 let pool = AsyncComputeTaskPool::get_or_init(TaskPool::default);
                 compose.bank = Some(pool.spawn(async move {
@@ -375,8 +343,7 @@ pub(crate) fn install_sound_bank(
                 });
                 world.insert_resource(new_clips);
             });
-            commands.insert_resource(crate::clip_store::PendingStarts::default());
-            commands.insert_resource(crate::playback::SharedPlayAssets::default());
+            commands.insert_resource(crate::clip_store::CueFeedback::default());
             commands.insert_resource(SoundBank(bank));
             diag::info!(
                 Audio,
@@ -387,6 +354,9 @@ pub(crate) fn install_sound_bank(
                 compose.started.elapsed().as_secs_f32() * 1000.0
             );
             commands.insert_resource(SoundBankNamespace {
+                generation: frame::WorldGeneration::from_install(
+                    compose.load_key.local_load_request_id,
+                ),
                 zone: compose.zone.clone(),
                 namespace,
             });
@@ -397,7 +367,6 @@ pub(crate) fn install_sound_bank(
                 "audio: sound bank load failed for {}: {e}",
                 compose.zone
             );
-            commands.insert_resource(SoundBankFailed);
         }
     }
 }
@@ -411,13 +380,11 @@ pub(crate) fn boot_map_ambient_once(
     script_sound: Option<Res<asset_audio::SessionMapScriptSound>>,
     namespace: Option<Res<SoundBankNamespace>>,
     epoch: Res<MatchEpoch>,
-    clips: Option<Res<crate::ClipStore>>,
     ready: Res<crate::AudioReady>,
+    generation: Res<frame::WorldGeneration>,
+    runtime: Res<crate::AudioRuntime>,
+    mut sources: ResMut<MapSources>,
     mut commands: Commands,
-    mut pcm_assets: ResMut<Assets<PcmAudio>>,
-    mut looping_assets: ResMut<Assets<LoopingPcmAudio>>,
-    mut shared: ResMut<SharedPlayAssets>,
-    mut gaps: ResMut<MissingAliasGaps>,
 ) {
     if booted.0 {
         return;
@@ -426,7 +393,7 @@ pub(crate) fn boot_map_ambient_once(
     if loading.is_some_and(|screen| !screen.is_complete()) {
         return;
     }
-    if !ready.0 {
+    if !ready.0.ready_for(*generation) {
         return;
     }
     let Some(bank) = bank else {
@@ -454,19 +421,61 @@ pub(crate) fn boot_map_ambient_once(
         .as_deref()
         .and_then(|facts| facts.0.ambient_alias.as_deref())
         .filter(|_| !scripted);
-    start_map_ambient_prepared(
-        &mut commands,
-        &mut pcm_assets,
-        &mut looping_assets,
-        &mut shared,
-        bank.0.as_ref(),
-        namespace.namespace,
-        &identity.zone,
-        ambient_alias,
-        clips.as_deref(),
-        epoch.0,
-        &mut gaps,
-    );
+    if runtime.media_for_bank(&bank.0).is_none() {
+        return;
+    }
+    sources.desired.clear();
+    let rows = ambient_alias
+        .into_iter()
+        .map(|alias| (0, MAP_BED_SLOT, alias.to_owned(), None, 0.55, None))
+        .chain(
+            bank.0
+                .createfx_loop_sounds(namespace.namespace, &identity.zone)
+                .into_iter()
+                .enumerate()
+                .map(|(ordinal, emitter)| {
+                    (
+                        ordinal as u64,
+                        MAP_EMITTER_SLOT,
+                        emitter.soundalias,
+                        Some(emitter.origin_inches),
+                        1.0,
+                        Some(SourceRenderGroup::MapEmitter),
+                    )
+                }),
+        );
+    for (object, slot, alias, origin, gain, group) in rows.take(crate::runtime::LOGICAL_INSTANCES) {
+        let Some(cue) = runtime.source_cue(SourceCueRequest {
+            bank: bank.0.clone(),
+            namespace: namespace.namespace,
+            alias,
+            emitter: None,
+            scope: AudioScope::Match,
+            epoch: epoch.0,
+            group,
+        }) else {
+            continue;
+        };
+        sources.desired.push(DesiredSource {
+            key: SourceKey {
+                scope: AudioScope::Match,
+                epoch: epoch.0,
+                object,
+                slot,
+            },
+            version: 1,
+            cue,
+            origin_inches: origin,
+            start_frame: runtime.audio_frame(),
+            gain,
+            rate: 1.0,
+            audible: true,
+        });
+    }
+    commands.insert_resource(asset_audio::CreateFxOneshotEmitters(
+        bank.0
+            .createfx_oneshots(namespace.namespace, &identity.zone),
+    ));
     booted.0 = true;
     perf::ambient_boot(&identity.zone, ambient_alias);
     diag::info!(
@@ -474,243 +483,4 @@ pub(crate) fn boot_map_ambient_once(
         "audio: map ambient boot complete for {}",
         identity.zone
     );
-}
-
-fn start_map_ambient_prepared(
-    commands: &mut Commands,
-    pcm_assets: &mut Assets<PcmAudio>,
-    looping_assets: &mut Assets<LoopingPcmAudio>,
-    shared: &mut SharedPlayAssets,
-    bank: &SoundCatalog,
-    map_ns: AssetNamespace,
-    map_name: &str,
-    ambient_alias: Option<&str>,
-    clips: Option<&crate::ClipStore>,
-    epoch: u64,
-    gaps: &mut MissingAliasGaps,
-) {
-    if let Some(alias) = ambient_alias {
-        if let Some((pcm, row)) = pcm_for_map_alias(clips, bank, map_ns, alias) {
-            let handle = looping_assets.add(pcm.into_looping());
-            let entity = crate::backend::spawn_loop(
-                commands,
-                handle,
-                Volume::Linear(0.55),
-                epoch,
-                AudioScope::Match,
-            );
-            commands.entity(entity).insert((MapAmbient, LegacyAmbient));
-            if let Some(flags) = row.decoded_flags() {
-                commands
-                    .entity(entity)
-                    .insert(crate::backend::SoundChannel(flags.channel()));
-            }
-            diag::info!(Audio, "audio: ambient loop `{alias}`");
-        } else {
-            gaps.record(alias);
-            diag::warn!(
-                Audio,
-                "audio: ambient alias `{alias}` unresolved for {map_name}"
-            );
-        }
-    }
-
-    let loops = bank.createfx_loop_sounds(map_ns, map_name);
-    let mut pcm_by_alias: HashMap<String, (Handle<PcmAudio>, &asset_audio::CapturedAlias)> =
-        HashMap::new();
-    let mut started = 0usize;
-    let mut missed = 0usize;
-    for emitter in &loops {
-        let (handle, row) = if let Some((handle, row)) = pcm_by_alias.get(&emitter.soundalias) {
-            (handle.clone(), *row)
-        } else {
-            let Some((pcm, row)) = pcm_for_map_alias(clips, bank, map_ns, &emitter.soundalias)
-            else {
-                gaps.record(&emitter.soundalias);
-                missed += 1;
-                continue;
-            };
-            let handle = pcm_assets.add(pcm);
-            pcm_by_alias.insert(emitter.soundalias.clone(), (handle.clone(), row));
-            (handle, row)
-        };
-        let origin_inches = emitter.origin_inches;
-        let (dist_min, dist_max, knots, base_gain) = {
-            let knots = row
-                .volume_falloff
-                .as_ref()
-                .map(|c| shared.intern_curve(&c.name, &c.knots))
-                .unwrap_or_else(|| Arc::from(Vec::<[f32; 2]>::new()));
-            if knots.is_empty() {
-                diag::warn!(
-                    Audio,
-                    "audio: CreateFX loop `{}` has no falloff curve (typed gap)",
-                    emitter.soundalias
-                );
-            }
-            (row.dist_min, row.dist_max, knots, row.vol_min.max(0.0))
-        };
-        let entity = commands
-            .spawn((
-                MapAmbient,
-                MapEmitter {
-                    origin_inches,
-                    dist_min,
-                    dist_max,
-                    knots,
-                    base_gain,
-                    pcm: handle,
-                    live_pan: None,
-                },
-                Transform::from_translation(Vec3::from_array(origin_inches)),
-            ))
-            .id();
-        if let Some(flags) = row.decoded_flags() {
-            commands
-                .entity(entity)
-                .insert(crate::backend::SoundChannel(flags.channel()));
-        }
-        started += 1;
-    }
-    if started > 0 {
-        diag::info!(
-            Audio,
-            "audio: createfx emitters {started}/{} ({} unique, max {} active; {missed} miss) for {map_name}",
-            loops.len(),
-            pcm_by_alias.len(),
-            MAX_ACTIVE_MAP_EMITTERS,
-        );
-    } else if !loops.is_empty() {
-        diag::info!(
-            Audio,
-            "audio: createfx listed {} emitters but none resolved PCM",
-            loops.len()
-        );
-    }
-
-    let oneshots = bank.createfx_oneshots(map_ns, map_name);
-    let oneshot_count = oneshots.len();
-    commands.insert_resource(asset_audio::CreateFxOneshotEmitters(oneshots));
-    if oneshot_count > 0 {
-        diag::info!(
-            Audio,
-            "audio: createfx oneshots {oneshot_count} parsed for {map_name} (host markers)"
-        );
-    }
-}
-
-pub(crate) fn emitter_gain(emitter: &MapEmitter, ear_inches: [f32; 3]) -> f32 {
-    let dist = distance_inches(ear_inches, emitter.origin_inches);
-    if emitter.knots.is_empty() {
-        return 0.0;
-    }
-    let atten = attenuate(&emitter.knots, dist, emitter.dist_min, emitter.dist_max);
-    if atten < 0.0 {
-        0.0
-    } else {
-        emitter.base_gain * atten
-    }
-}
-
-pub fn update_map_emitter_gain(
-    listeners: Query<&Transform, With<AmbientListener>>,
-    mut emitters: Query<(Entity, &mut MapEmitter, Has<Voice>)>,
-    mut sinks: Query<&mut AudioSink, With<MapEmitter>>,
-    pcm_assets: Res<Assets<PcmAudio>>,
-    mut looping_assets: ResMut<Assets<LoopingPcmAudio>>,
-    mut commands: Commands,
-    settings: Res<frame::GameSettings>,
-    epoch: Res<MatchEpoch>,
-    mut ranked: Local<Vec<(Entity, f32, Handle<PcmAudio>, [f32; 3], bool)>>,
-) {
-    let n = listeners.iter().len();
-    if n == 0 {
-        return;
-    }
-    if n > 1 {
-        panic!("more than one ambient listener");
-    }
-    let Some(listener) = listeners.iter().next() else {
-        return;
-    };
-    let ear = listener.translation;
-    let r = listener.rotation * Vec3::X;
-    let right = Vec3::new(r.x, r.y, r.z);
-    let ear_inches = transform_inches(ear);
-
-    ranked.clear();
-    ranked.extend(emitters.iter().map(|(entity, emitter, has_player)| {
-        (
-            entity,
-            emitter_gain(&emitter, ear_inches),
-            emitter.pcm.clone(),
-            emitter.origin_inches,
-            has_player,
-        )
-    }));
-    ranked.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-
-    for (rank, (entity, gain, dry_pcm, origin, has_player)) in ranked.iter().enumerate() {
-        let entity = *entity;
-        let gain = *gain;
-        let origin = *origin;
-        let has_player = *has_player;
-        let audible = rank < MAX_ACTIVE_MAP_EMITTERS && gain >= MIN_AUDIBLE_EMITTER_GAIN;
-        let origin_v = Vec3::from_array(origin);
-        let (pan_l, pan_r) = world_oneshot_channel_gains(ear, right, origin_v, 1.0);
-        if audible {
-            if !has_player {
-                let Some(dry) = pcm_assets.get(dry_pcm).cloned() else {
-                    continue;
-                };
-                let live = dry.with_live_pan();
-                let live_pan = live.live_pan().expect("with_live_pan").clone();
-                live_pan.set(pan_l, pan_r);
-                let handle = looping_assets.add(live.into_looping());
-                if let Ok((_, mut emitter, _)) = emitters.get_mut(entity) {
-                    emitter.live_pan = Some(live_pan);
-                }
-                crate::backend::attach_loop(
-                    &mut commands,
-                    entity,
-                    handle,
-                    Volume::Linear(gain),
-                    epoch.0,
-                );
-            } else {
-                if let Ok((_, emitter, _)) = emitters.get(entity)
-                    && let Some(pan) = emitter.live_pan.as_ref()
-                {
-                    pan.set(pan_l, pan_r);
-                }
-                if let Ok(mut sink) = sinks.get_mut(entity) {
-                    sink.set_volume(Volume::Linear(gain * settings.master_volume));
-                    if sink.is_paused() {
-                        sink.play();
-                    }
-                }
-            }
-        } else if has_player {
-            if let Ok((_, mut emitter, _)) = emitters.get_mut(entity) {
-                emitter.live_pan = None;
-            }
-            crate::backend::detach_loop(&mut commands, entity);
-        }
-    }
-}
-
-fn pcm_for_map_alias<'a>(
-    clips: Option<&crate::ClipStore>,
-    bank: &'a SoundCatalog,
-    ns: AssetNamespace,
-    alias: &str,
-) -> Option<(PcmAudio, &'a asset_audio::CapturedAlias)> {
-    let clips = clips?;
-    for key in crate::clip_store::clip_keys_for_alias(bank, ns, alias) {
-        if let Some(Ok(pcm)) = clips.ready(&key) {
-            let row = crate::clip_store::alias_for_clip(bank, ns, alias, &key)?;
-            return Some((pcm, row));
-        }
-    }
-    None
 }

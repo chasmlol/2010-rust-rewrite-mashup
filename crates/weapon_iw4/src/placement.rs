@@ -4,7 +4,7 @@ use math_iw4::{angle_vectors, get_lean_fraction};
 use playerstate_iw4::{eflags, pm_flags};
 
 use crate::kick::{
-    GunKickSpring, GunRecoilPlacementState, calculate_weapon_position_gun_recoil,
+    GunRecoilPlacementState, GunRecoilResponse, calculate_weapon_position_gun_recoil,
     gun_recoil_angle_contribution,
 };
 use crate::sway::{SwaySpringState, sway_contribution};
@@ -736,8 +736,8 @@ pub fn weapon_placement_assemble(
     bob_inputs: WeaponBobInputs,
     idle: WeaponIdleInputs,
     bob_waveform: Option<WeaponBobState>,
-    gun_spring_hip: GunKickSpring,
-    gun_spring_ads: GunKickSpring,
+    gun_spring_hip: GunRecoilResponse,
+    gun_spring_ads: GunRecoilResponse,
     gun_max_pitch: f32,
     gun_max_yaw: f32,
     dt_secs: f32,
@@ -760,8 +760,7 @@ pub fn weapon_placement_assemble(
         ps.aim_down_sight,
         gun_spring_hip,
         gun_spring_ads,
-        gun_max_pitch,
-        gun_max_yaw,
+        [gun_max_pitch, gun_max_yaw],
     );
 
     steps_out[step] = WeaponPlacementAssembleStep::Bob;

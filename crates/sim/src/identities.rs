@@ -30,6 +30,23 @@ impl ActionSequence {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct FireCause {
+    pub client: crate::ClientId,
+    pub life: LifeSequence,
+    pub command: crate::CommandSequence,
+    pub ordinal: u16,
+    pub hand: u8,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PendingBrass {
+    pub cause: Option<FireCause>,
+    pub life: LifeSequence,
+    pub shot: ShotId,
+    pub weapon: u32,
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct ShotId(pub u32);
 

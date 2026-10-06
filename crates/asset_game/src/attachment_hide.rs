@@ -4,7 +4,7 @@ use crate::weapon_catalog::WeaponRegistry;
 
 pub fn effective_hide_tags(registry: &WeaponRegistry, weapon_id: u32) -> Vec<String> {
     let mut tags = registry.hide_tags_of(weapon_id).to_vec();
-    if registry.namespace_of(weapon_id) == Some(crate::AssetNamespace::Iw5) {
+    if registry.identity_namespace_of(weapon_id) == Some(crate::AssetNamespace::Iw5) {
         let scoped = registry
             .iw5_configuration_of(weapon_id)
             .is_some_and(|(_, selection)| selection.scope != 0);

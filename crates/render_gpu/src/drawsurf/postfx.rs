@@ -23,6 +23,7 @@ use std::collections::HashMap;
 pub struct ExtractedFilm {
     pub name: &'static str,
     pub generation: MaterialGenerationId,
+    pub catalog: std::sync::Arc<render_material::RuntimeMaterialCatalog>,
     pub port: AdmittedExactPort,
     pub shader: Handle<bevy::shader::Shader>,
     pub shell: StableMaterialShell,
@@ -42,6 +43,7 @@ pub struct ExtractedPostFx {
     pub depth_sampler: Option<super::DecodedSampler>,
     pub frame: DofFrame,
     pub vision: Option<asset_world::FilmVision>,
+    pub t6_film_grade: Option<asset_world::T6FilmGrade>,
 }
 
 struct PreparedPostFxGpu {
@@ -468,12 +470,12 @@ fn queue_postfx_pipeline(
     film: &ExtractedFilm,
     cache: &PipelineCache,
 ) -> Result<CachedRenderPipelineId, PostFxGpuRefusal> {
-    let state = super::state::GfxPassState::from_bits(film.shell.passes[0].state);
+    let state = super::state::GfxPassState::from_prepared(film.shell.passes()[0].state());
     if let Some(fields) = state.unsupported_host_fields() {
         return Err(PostFxGpuRefusal::UnsupportedState {
             fields,
-            word0: state.word0,
-            word1: state.word1,
+            word0: state.authored_words()[0],
+            word1: state.authored_words()[1],
         });
     }
     let vertex_layouts =
@@ -672,7 +674,8 @@ fn draw_postfx(
         return;
     }
     let active = extracted.frame.dof.active();
-    let graded = extracted.frame.grading != [0.0, 1.0, 0.0, 1.0];
+    let graded =
+        extracted.frame.grading != [0.0, 1.0, 0.0, 1.0] || extracted.t6_film_grade.is_some();
     let prepare = || -> Result<Vec<Vec<u8>>, PostFxSubmitRefusal> {
         if target.main_texture_format() != TextureFormat::Rgba8Unorm {
             return Err(PostFxSubmitRefusal::TargetFormat(
@@ -740,12 +743,12 @@ fn draw_postfx(
                 }
             }
             let execution =
-                rebind_stable_material(&ready.film.shell, &sources).map_err(|cause| {
-                    PostFxSubmitRefusal::Execute {
+                rebind_stable_material(&ready.film.shell, &ready.film.catalog, &sources).map_err(
+                    |cause| PostFxSubmitRefusal::Execute {
                         material: step.name,
                         cause,
-                    }
-                })?;
+                    },
+                )?;
             let Some(pass) = execution.pass(0).filter(|_| execution.pass_count() == 1) else {
                 return Err(PostFxSubmitRefusal::PassCount);
             };
@@ -829,6 +832,7 @@ fn draw_postfx(
             post.source,
             targets.view(Image::Graded),
             extracted.frame.grading,
+            extracted.t6_film_grade,
         );
     }
     for ((ready, step), bytes) in gpu.prepared.iter().zip(&gpu.steps).zip(&uploads) {
@@ -877,7 +881,8 @@ fn draw_postfx(
         let destination = if step.target == Image::Output {
             post.destination
         } else {
-            let state = super::state::GfxPassState::from_bits(ready.film.shell.passes[0].state);
+            let state =
+                super::state::GfxPassState::from_prepared(ready.film.shell.passes()[0].state());
             targets.attachment(step.target, state.srgb_write_enable())
         };
         let attachments = [Some(RenderPassColorAttachment {
@@ -914,7 +919,7 @@ fn draw_postfx(
         pass.draw_indexed(0..6, 0, 0..1);
     }
     span.end(encoder);
-    let state = (gpu.prepared[0].film.generation.0, active, targets.size);
+    let state = (gpu.prepared[0].film.generation.get(), active, targets.size);
     if submitted.as_ref() != Some(&state) || refusal.is_some() {
         diag::info!(
             World,

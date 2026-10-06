@@ -33,9 +33,9 @@ pub(super) fn load_weapon(s: &mut ZoneStream<'_>, links: &mut dyn AssetLinkSink)
 
     let (
         weap_def,
-        gun_xmodel_name,
+        gun_xmodel_names,
         hand_xmodel_name,
-        world_model_name,
+        world_model_names,
         projectile_model_name,
         rocket_model_name,
         sound_names,
@@ -46,9 +46,9 @@ pub(super) fn load_weapon(s: &mut ZoneStream<'_>, links: &mut dyn AssetLinkSink)
             s.note_offset(q);
             (
                 Some(s.resolve_alias(q)),
+                [None; 16],
                 None,
-                None,
-                None,
+                [None; 16],
                 None,
                 None,
                 WeaponSoundNames::default(),
@@ -73,9 +73,9 @@ pub(super) fn load_weapon(s: &mut ZoneStream<'_>, links: &mut dyn AssetLinkSink)
         }
         _ => (
             None,
+            [None; 16],
             None,
-            None,
-            None,
+            [None; 16],
             None,
             None,
             WeaponSoundNames::default(),
@@ -171,6 +171,7 @@ pub(super) fn load_weapon(s: &mut ZoneStream<'_>, links: &mut dyn AssetLinkSink)
             ads_crosshair_out_frac: s.f32_at(body, s.layout(0x47c, 1552))?,
             ads_spread: s.f32_at(body, s.layout(0x4c0, 1620))?,
             aim_down_sight: s.u8_at(body, s.layout(0x65f, 2151))? != 0,
+            thermal_scope: s.u8_at(body, s.layout(0x67b, 2179))? != 0,
             no_ads_when_mag_empty: s.u8_at(body, s.layout(0x658, 2144))? != 0,
             inherits_perks: s.u8_at(body, s.layout(0x65a, 2146))? != 0,
             ads_reload_trans_time_ms: s.i32_at(body, s.layout(0x520, 1736))?,
@@ -346,6 +347,7 @@ pub(super) fn load_weapon(s: &mut ZoneStream<'_>, links: &mut dyn AssetLinkSink)
     s.record_weapon(WeaponGeometry {
         alternate_weapon_name,
         alternate_raise_time_ms: s.i32_at(p, s.layout(68, 92))?,
+        first_raise_time_ms: s.i32_at(p, s.layout(84, 116))?,
         alternate_drop_time_ms: weap_def
             .map(|body| s.i32_at(body, s.layout(0x290, 984)))
             .transpose()?
@@ -389,9 +391,11 @@ pub(super) fn load_weapon(s: &mut ZoneStream<'_>, links: &mut dyn AssetLinkSink)
         proj_beacon_slot: authored_material_slot(s, weap_def, s.layout(0x450, 1496))?,
         proj_ignition_slot: authored_material_slot(s, weap_def, s.layout(0x46c, 1528))?,
         reticle_center_size: body_facts.reticle_center_size,
-        gun_xmodel_name,
+        gun_xmodel_name: gun_xmodel_names[0],
+        gun_xmodel_names,
         hand_xmodel_name,
-        world_model_name,
+        world_model_name: world_model_names[0],
+        world_model_names,
         projectile_model_name,
         rocket_model_name,
         sz_xanims,
@@ -480,6 +484,7 @@ pub(super) fn load_weapon(s: &mut ZoneStream<'_>, links: &mut dyn AssetLinkSink)
         ads_crosshair_out_frac: body_facts.ads_crosshair_out_frac,
         ads_spread: body_facts.ads_spread,
         aim_down_sight: body_facts.aim_down_sight,
+        thermal_scope: body_facts.thermal_scope,
         no_ads_when_mag_empty: body_facts.no_ads_when_mag_empty,
         inherits_perks: body_facts.inherits_perks,
         ads_reload_trans_time_ms: body_facts.ads_reload_trans_time_ms,
@@ -629,6 +634,7 @@ struct WeapDefScalars {
     ads_crosshair_out_frac: f32,
     ads_spread: f32,
     aim_down_sight: bool,
+    thermal_scope: bool,
     no_ads_when_mag_empty: bool,
     inherits_perks: bool,
     ads_reload_trans_time_ms: i32,
@@ -835,9 +841,9 @@ fn load_weapon_def(
     ai_vs_player_knots: usize,
 ) -> Result<(
     Ptr,
+    [Option<Ptr>; 16],
     Option<Ptr>,
-    Option<Ptr>,
-    Option<Ptr>,
+    [Option<Ptr>; 16],
     Option<Ptr>,
     Option<Ptr>,
     WeaponSoundNames,
@@ -1072,55 +1078,59 @@ fn follow_xmodel_array(
     links: &mut dyn AssetLinkSink,
     p: Ptr,
     field: usize,
-) -> Result<Option<Ptr>> {
+) -> Result<[Option<Ptr>; 16]> {
+    let mut names = [None; 16];
     match s.ptr_at(p, field)? {
-        ZonePtr::Null => Ok(None),
+        ZonePtr::Null => {}
         ZonePtr::Offset(q) => {
             s.note_offset(q);
             let arr = s.resolve_alias(q);
-
-            if let Some(name) = links.xmodel_name_ptr(arr) {
-                return Ok(Some(name));
-            }
-            Ok(match s.ptr_at(arr, 0)? {
-                ZonePtr::Offset(m) => {
-                    let body = s.resolve_alias(m);
-                    links
-                        .xmodel_name_ptr(body)
-                        .or_else(|| links.xmodel_name_ptr(m))
+            for (i, name) in names.iter_mut().enumerate() {
+                let slot = arr.at(i * s.pointer_bytes());
+                if i == 0
+                    && let Some(found) = links.xmodel_name_ptr(arr)
+                {
+                    *name = Some(found);
+                    continue;
                 }
-                _ => None,
-            })
+                *name = match s.ptr_at(slot, 0)? {
+                    ZonePtr::Offset(m) => {
+                        let body = s.resolve_alias(m);
+                        links
+                            .xmodel_name_ptr(body)
+                            .or_else(|| links.xmodel_name_ptr(m))
+                    }
+                    _ => None,
+                }
+                .or_else(|| links.xmodel_name_ptr(slot));
+            }
         }
         _ => {
             if !s.begin_body(p.at(field))? {
-                return Ok(None);
+                return Ok(names);
             }
             let arr = s.alloc_load(4, s.pointer_bytes() * 16)?;
-            let mut first_name = None;
-            for i in 0..16 {
+            for (i, name) in names.iter_mut().enumerate() {
                 let slot = arr.at(i * s.pointer_bytes());
                 let loaded = load_asset_at_observed(s, AssetType::XModel, slot, links)?;
-                if i == 0 {
-                    first_name = if loaded {
-                        s.xmodel().and_then(|g| g.name)
-                    } else {
-                        match s.ptr_at(slot, 0)? {
-                            ZonePtr::Offset(q) => {
-                                let body = s.resolve_alias(q);
-                                links
-                                    .xmodel_name_ptr(body)
-                                    .or_else(|| links.xmodel_name_ptr(q))
-                                    .or_else(|| links.xmodel_name_ptr(slot))
-                            }
-                            _ => None,
+                *name = if loaded {
+                    s.xmodel().and_then(|g| g.name)
+                } else {
+                    match s.ptr_at(slot, 0)? {
+                        ZonePtr::Offset(q) => {
+                            let body = s.resolve_alias(q);
+                            links
+                                .xmodel_name_ptr(body)
+                                .or_else(|| links.xmodel_name_ptr(q))
+                                .or_else(|| links.xmodel_name_ptr(slot))
                         }
-                    };
-                }
+                        _ => None,
+                    }
+                };
             }
-            Ok(first_name)
         }
     }
+    Ok(names)
 }
 
 fn follow_xmodel_ptr(

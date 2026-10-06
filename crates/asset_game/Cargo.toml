@@ -6,6 +6,7 @@ license.workspace = true
 description = "Weapons, attachments, penetration, localization, menus, teams, and stats."
 
 [dependencies]
+structured_data_iw4.workspace = true
 asset_core.workspace = true
 asset_transport.workspace = true
 asset_anim.workspace = true
@@ -17,6 +18,7 @@ asset_iw4.workspace = true
 fastfile_iw4.workspace = true
 fastfile_iw5.workspace = true
 fastfile_t5.workspace = true
+fastfile_t6.workspace = true
 weapon_iw4.workspace = true
 anim_iw4.workspace = true
 xmodel_runtime.workspace = true

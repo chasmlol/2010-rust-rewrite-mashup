@@ -54,7 +54,8 @@ pub enum EventResult {
 
 #[derive(Debug, Clone, Default)]
 pub struct AdvanceResult {
-    pub notifies: Vec<String>,
+    pub notifications: Vec<asset_anim::ClipNotification>,
+    pub discarded: u64,
 }
 
 #[derive(Debug)]
@@ -349,7 +350,7 @@ impl ViewmodelController {
 
     pub fn advance(&mut self, dt_secs: f32) -> AdvanceResult {
         let dt_secs = dt_secs.max(0.0);
-        let notifies = self.tree.advance(dt_secs);
+        let advance = self.tree.advance(dt_secs);
 
         if let Some(remaining) = self.action_remaining.as_mut() {
             *remaining = (*remaining - dt_secs).max(0.0);
@@ -362,7 +363,10 @@ impl ViewmodelController {
             self.finish_fire_cycle();
         }
 
-        AdvanceResult { notifies }
+        AdvanceResult {
+            notifications: advance.notifications,
+            discarded: advance.discarded,
+        }
     }
 
     pub fn apply_idle_weap_anim(&mut self, empty_mag: bool) -> bool {
@@ -459,20 +463,19 @@ impl ViewmodelController {
             self.tree
                 .set_time(WeaponAnimSlot::AdsDown.index(), time)
                 .expect("ads down index is within tree");
-            if self.weapon.ads_overlay == AdsOverlayConvention::PlayAdsAnim {
-                let ads_down_weight = if aiming {
+            let ads_down_weight =
+                if self.weapon.ads_overlay == AdsOverlayConvention::PlayAdsAnim && aiming {
                     INACTIVE_GOAL_WEIGHT
                 } else {
                     ACTIVE_GOAL_WEIGHT
                 };
-                self.tree
-                    .set_goal_weight(
-                        WeaponAnimSlot::AdsDown.index(),
-                        ads_down_weight,
-                        ACTION_GOAL_TIME_SECS,
-                    )
-                    .expect("ads down index is within tree");
-            }
+            self.tree
+                .set_goal_weight(
+                    WeaponAnimSlot::AdsDown.index(),
+                    ads_down_weight,
+                    ACTION_GOAL_TIME_SECS,
+                )
+                .expect("ads down index is within tree");
         }
     }
 

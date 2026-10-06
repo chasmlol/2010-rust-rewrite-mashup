@@ -57,7 +57,7 @@ pub fn apply_pending_class_equip(
         .ok_or_else(|| "Weapon catalog is not ready".to_owned())
         .and_then(|weapons| {
             let row = session::ClassRow::from(&frame::HostClassSlot::from(slot));
-            session::loadout::resolve_personal_class(&row, &weapons.0)
+            session::loadout::resolve_personal_class(&row, weapons.registry())
         });
     let loadout = match resolved {
         Ok(loadout) => loadout,
@@ -238,7 +238,7 @@ fn consume_class_select_handoff(
         let Some(weapons) = weapons else {
             return;
         };
-        *catalog = crate::ClassLoadoutCatalog::from_weapon_registry(weapons.0.clone());
+        *catalog = crate::ClassLoadoutCatalog::from_weapon_registry(weapons.registry().clone());
     }
     catalog.revision = catalog.revision.wrapping_add(1);
     catalog.primary = std::mem::take(&mut handoff.primary);

@@ -197,8 +197,11 @@ pub fn finish_putaway_to_cmd(hand: &mut WeaponHandState, cmd: &WeaponCmd) {
     } else {
         WeaponState::Raising
     } as i32;
+    let first = !alternate && cmd.switch_first_raise_time_ms > 0;
     hand.weapon_time = if alternate {
         cmd.switch_alternate_raise_time_ms
+    } else if first {
+        cmd.switch_first_raise_time_ms
     } else {
         raise_time_for_cmd(cmd, quick)
     };
@@ -206,6 +209,8 @@ pub fn finish_putaway_to_cmd(hand: &mut WeaponHandState, cmd: &WeaponCmd) {
         &mut hand.weap_anim,
         if alternate {
             0x12
+        } else if first {
+            crate::weap_anim::weap_anim_event::FIRST_RAISE
         } else if quick {
             crate::weap_anim::weap_anim_event::QUICK_RAISE
         } else {

@@ -18,71 +18,8 @@ use trace_iw4::surface_type_from_flags;
 
 const SURF_TYPE_GLASS: u8 = 9;
 
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub struct EquipmentRuntimeFacts {
-    pub offhand_class: i32,
-    pub start_ammo: i32,
-    pub clip_size: i32,
-    pub impact_damage: i32,
-    pub impact_payload_weapon: u32,
-    pub fuse_time_ms: i32,
-
-    pub hold_fire_time_ms: i32,
-
-    pub cook_off_hold: bool,
-
-    pub has_detonator: bool,
-    pub detonate_delay_ms: i32,
-    pub detonate_time_ms: i32,
-    pub projectile_rotates: bool,
-    pub stickiness: i32,
-    pub timed_detonation: bool,
-
-    pub proj_impact_explode: bool,
-
-    pub stick_to_players: bool,
-    pub ballistic_blade: bool,
-    pub explosion_radius: i32,
-    pub explosion_radius_min: i32,
-    pub explosion_inner_damage: i32,
-    pub explosion_outer_damage: i32,
-    pub damage_cone_angle: f32,
-    pub missile_guidance: i32,
-    pub ignition_delay_ms: i32,
-    pub require_lock_to_fire: bool,
-    pub projectile_speed: i32,
-    pub projectile_speed_up: i32,
-    pub projectile_speed_forward: i32,
-    pub projectile_activate_dist: i32,
-    pub projectile_explosion_type: i32,
-    pub weap_type: i32,
-    pub weap_class: i32,
-    pub parallel_bounce: Option<[f32; 31]>,
-    pub perpendicular_bounce: Option<[f32; 31]>,
-}
-
-impl EquipmentRuntimeFacts {
-    pub fn is_usable(self) -> bool {
-        (self.projectile_speed > 0 || self.stickiness != 0)
-            && (self.fuse_time_ms > 0 || self.impact_damage > 0 || self.explosion_inner_damage > 0)
-    }
-
-    pub(crate) fn is_throwing_knife(self) -> bool {
-        self.weap_class == WEAPCLASS_THROWINGKNIFE
-    }
-
-    pub(crate) fn is_retrievable_knife(self) -> bool {
-        self.is_throwing_knife() || self.ballistic_blade
-    }
-
-    pub fn is_offhand(self) -> bool {
-        self.offhand_class != 0
-    }
-
-    pub fn spawn_clip_count(self) -> i32 {
-        self.start_ammo.max(self.clip_size).max(1)
-    }
-}
+pub use weapon_iw4::EquipmentRuntimeFacts;
+use weapon_iw4::WEAPCLASS_THROWINGKNIFE;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ProjectileState {
@@ -126,7 +63,6 @@ const OFFHAND_CLASS_SMOKE: i32 = 2;
 pub const GRENADE_DEFAULT_FUSE_MS: i32 = 30_000;
 pub const ROCKET_CLEANUP_MS: i32 = 60_000;
 pub const BOUNCE_EVENT_SPEED_DELTA: f32 = 100.0;
-const WEAPCLASS_THROWINGKNIFE: i32 = 9;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum GrenadeLaunchKind {
@@ -220,6 +156,17 @@ fn grenade_launch_velocity(
         velocity[0] += flat[0] * extra;
         velocity[1] += flat[1] * extra;
         velocity[2] += flat[2] * extra;
+    }
+    if facts.projectile_speed_relative_up != 0 {
+        let level = direction[0].hypot(direction[1]);
+        let up = match flatten_xy(direction) {
+            Some(flat) => [-flat[0] * direction[2], -flat[1] * direction[2], level],
+            None => [0.0, 0.0, 1.0],
+        };
+        let extra = facts.projectile_speed_relative_up as f32;
+        for (axis, along) in velocity.iter_mut().zip(up) {
+            *axis += along * extra;
+        }
     }
     project_owner_velocity(velocity, owner_vel)
 }

@@ -39,6 +39,9 @@ entity_events! {
     SOUND_ALIAS = 0x03;
     SOUND_ALIAS_AS_MASTER = 0x04;
     STOPSOUNDS = 0x05;
+    STANCE_FORCE_STAND = 0x06;
+    STANCE_FORCE_CROUCH = 0x07;
+    STANCE_FORCE_PRONE = 0x08;
     ITEM_PICKUP = 0x0a;
     AMMO_PICKUP = 0x0b;
     NOAMMO = 0x0c;
@@ -85,6 +88,8 @@ entity_events! {
     ROCKET_EXPLODE_NOMARKS = 0x4a;
     FLASHBANG_EXPLODE = 0x4b;
     PLAY_FX = 0x53;
+    PLAY_FX_ON_TAG = 0x54;
+    STOP_FX_ON_TAG = 0x55;
     PHYS_EXPLOSION_SPHERE = 0x56;
     DETONATE = 0x5e;
     OBITUARY = 0x62;
@@ -211,6 +216,7 @@ impl EntityEventKind {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EntityEventAction {
     None,
+    OwnerStance,
     Sound,
     WeaponFire,
     EjectBrass,
@@ -236,6 +242,9 @@ pub fn entity_event_action(
 ) -> Result<EntityEventAction, UnsupportedEntityEvent> {
     Ok(match event {
         EntityEventKind::NONE => EntityEventAction::None,
+        EntityEventKind::STANCE_FORCE_STAND
+        | EntityEventKind::STANCE_FORCE_CROUCH
+        | EntityEventKind::STANCE_FORCE_PRONE => EntityEventAction::OwnerStance,
         EntityEventKind::RESET_ADS => EntityEventAction::ResetAds,
         EntityEventKind::FOLIAGE_SOUND
         | EntityEventKind::STOP_WEAPON_SOUND
@@ -290,7 +299,9 @@ pub fn entity_event_action(
         | EntityEventKind::PLAY_RUMBLE_ON_POS
         | EntityEventKind::STOP_RUMBLE => EntityEventAction::Rumble,
         EntityEventKind::PHYS_EXPLOSION_SPHERE => EntityEventAction::PhysicsSphere,
-        EntityEventKind::PLAY_FX => EntityEventAction::PlayFx,
+        EntityEventKind::PLAY_FX
+        | EntityEventKind::PLAY_FX_ON_TAG
+        | EntityEventKind::STOP_FX_ON_TAG => EntityEventAction::PlayFx,
         EntityEventKind::OBITUARY => EntityEventAction::Obituary,
         EntityEventKind::FOOTSTEP_SPRINT
         | EntityEventKind::FOOTSTEP_RUN

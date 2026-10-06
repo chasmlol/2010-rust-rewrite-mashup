@@ -60,6 +60,8 @@ pub const OP_SCOREBOARD_VISIBLE: i32 = 0x2E;
 
 pub const OP_INKILLCAM: i32 = 0x2F;
 
+pub const OP_INKILLCAMNPC: i32 = 0x30;
+
 pub const OP_MENUISOPEN: i32 = 0x39;
 pub const OP_PLAYERFIELD: i32 = 0x31;
 pub const OP_GETPERK: i32 = 0x32;
@@ -111,6 +113,8 @@ pub const OP_GETPLAYERDATA: i32 = 0x6C;
 pub const OP_IS_ITEM_UNLOCKED: i32 = 0x70;
 
 pub const OP_WEAPONNAME: i32 = 0x75;
+
+pub const OP_ISRELOADING: i32 = 0x76;
 
 pub const OP_EMPJAMMED: i32 = 0x8A;
 
@@ -320,6 +324,14 @@ pub trait ExprHost {
     }
 
     fn in_killcam(&self) -> Result<i32, ExprError> {
+        Ok(0)
+    }
+
+    fn in_killcam_npc(&self) -> Result<i32, ExprError> {
+        Ok(0)
+    }
+
+    fn is_reloading(&self) -> Result<i32, ExprError> {
         Ok(0)
     }
 
@@ -745,6 +757,14 @@ fn run_op(
         }
         OP_INKILLCAM => {
             data.push(Operand::Int(host.in_killcam()?));
+            Ok(())
+        }
+        OP_INKILLCAMNPC => {
+            data.push(Operand::Int(host.in_killcam_npc()?));
+            Ok(())
+        }
+        OP_ISRELOADING => {
+            data.push(Operand::Int(host.is_reloading()?));
             Ok(())
         }
         OP_SELECTINGLOCATION => {

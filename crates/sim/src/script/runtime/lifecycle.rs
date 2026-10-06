@@ -48,6 +48,8 @@ pub(crate) fn install(
         tables: Arc::new(level.tables),
         keys: Arc::new(level.keys),
         entries: Vec::new(),
+        schemas: level.schemas,
+        player_data_defaults: level.player_data_defaults.map(Arc::new),
     };
     install_level(world, Arc::new(program), plan)
 }
@@ -83,6 +85,13 @@ pub(crate) fn install_level(
             format!("{} unbound natives: {}", unbound.len(), unbound.join(" ")),
         ));
     }
+    world
+        .resource_mut::<crate::PersistentDataStore>()
+        .install_schemas(plan.schemas.clone())
+        .map_err(|error| Fault::at(&location, format!("persistent data schema: {error:?}")))?;
+    world
+        .resource_mut::<crate::PersistentDataStore>()
+        .install_defaults(plan.player_data_defaults.clone());
     let bound = program
         .natives
         .iter()

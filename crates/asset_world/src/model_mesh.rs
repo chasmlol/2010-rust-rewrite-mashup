@@ -337,6 +337,8 @@ pub enum MapXModelSceneAsset {
     T5(Arc<ModelSkel>),
 
     Iw5(Arc<ModelSkel>),
+
+    T6(Arc<ModelSkel>),
     Unavailable { reason: &'static str },
 }
 
@@ -388,6 +390,7 @@ impl MapXModelSceneCatalog {
             let skel = match asset {
                 MapXModelSceneAsset::Iw4(skel)
                 | MapXModelSceneAsset::Iw5(skel)
+                | MapXModelSceneAsset::T6(skel)
                 | MapXModelSceneAsset::T5(skel) => skel,
                 MapXModelSceneAsset::Unavailable { .. } => continue,
             };
@@ -445,7 +448,8 @@ impl MapXModelSceneCatalog {
         for asset in self.assets.values_mut() {
             let (MapXModelSceneAsset::Iw4(skel)
             | MapXModelSceneAsset::T5(skel)
-            | MapXModelSceneAsset::Iw5(skel)) = asset
+            | MapXModelSceneAsset::Iw5(skel)
+            | MapXModelSceneAsset::T6(skel)) = asset
             else {
                 continue;
             };

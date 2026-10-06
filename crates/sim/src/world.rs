@@ -284,6 +284,7 @@ pub struct WeaponSetup {
     pub realm: crate::script::Realm,
     pub base: String,
     pub attachments: Vec<String>,
+    pub stand_in: Option<String>,
 }
 
 #[derive(Debug, Default)]
@@ -312,6 +313,7 @@ pub struct SimContentBuilder {
     weapon_script_aliases: std::collections::BTreeMap<String, u32>,
     vehicle_turrets: std::collections::BTreeMap<String, String>,
     vehicle_compass: std::collections::BTreeMap<String, ([String; 2], [i32; 2])>,
+    vehicle_accel: std::collections::BTreeMap<String, f32>,
     weapon_setups: Arc<[Option<WeaponSetup>]>,
     weapon_world_models: Vec<(String, Vec<String>)>,
     shield_models: Vec<Option<Arc<xmodel_runtime::RetainedModelCapability>>>,
@@ -441,6 +443,10 @@ impl SimContentBuilder {
         rows: impl IntoIterator<Item = (String, ([String; 2], [i32; 2]))>,
     ) {
         self.vehicle_compass = rows.into_iter().collect();
+    }
+
+    pub fn set_vehicle_accel(&mut self, rows: impl IntoIterator<Item = (String, f32)>) {
+        self.vehicle_accel = rows.into_iter().collect();
     }
 
     pub fn set_vehicle_turrets(&mut self, turrets: Vec<(String, String)>) {
@@ -910,7 +916,7 @@ impl SimState {
         self.pending_prints.push(print);
     }
 
-    pub fn take_pending_prints(&mut self) -> Vec<PendingPrint> {
+    pub(crate) fn take_pending_prints(&mut self) -> Vec<PendingPrint> {
         core::mem::take(&mut self.pending_prints)
     }
 
@@ -922,11 +928,11 @@ impl SimState {
         self.pending_script_audio.push(command);
     }
 
-    pub fn take_pending_script_audio(&mut self) -> Vec<crate::ScriptAudioCommand> {
+    pub(crate) fn take_pending_script_audio(&mut self) -> Vec<crate::ScriptAudioCommand> {
         core::mem::take(&mut self.pending_script_audio)
     }
 
-    pub fn take_pending_local_sounds(&mut self) -> Vec<PendingLocalSound> {
+    pub(crate) fn take_pending_local_sounds(&mut self) -> Vec<PendingLocalSound> {
         core::mem::take(&mut self.pending_local_sounds)
     }
 
@@ -975,11 +981,11 @@ impl SimState {
         });
     }
 
-    pub fn take_pending_player_cards(&mut self) -> Vec<PendingPlayerCardEvent> {
+    pub(crate) fn take_pending_player_cards(&mut self) -> Vec<PendingPlayerCardEvent> {
         core::mem::take(&mut self.pending_player_cards)
     }
 
-    pub fn take_pending_final_kill(&mut self) -> Option<(ClientId, ClientId)> {
+    pub(crate) fn take_pending_final_kill(&mut self) -> Option<(ClientId, ClientId)> {
         self.pending_final_kill.take()
     }
 
@@ -1253,6 +1259,10 @@ impl SimState {
 
     pub fn vehicle_compass(&self, name: &str) -> Option<&([String; 2], [i32; 2])> {
         self.content.data.vehicle_compass.get(name)
+    }
+
+    pub fn vehicle_accel(&self, name: &str) -> Option<f32> {
+        self.content.data.vehicle_accel.get(name).copied()
     }
 
     pub fn vehicle_turret_weapon(&self, vehicle: &str) -> Option<u32> {
@@ -1755,10 +1765,7 @@ impl SimState {
         mask: u32,
         exclude: Option<crate::AuthorityModelOwner>,
     ) -> trace_iw4::Trace {
-        self.trace_clip_maps_glass(
-            &self.content.data.clip_brushes,
-            &self.content.data.clip_bsp,
-            &self.content.data.clip_mesh,
+        self.trace_world_hull_except(
             movement_iw4::GroundTraceInput {
                 start,
                 end,
@@ -1766,6 +1773,20 @@ impl SimState {
                 maxs: [0.0; 3],
                 tracemask: mask,
             },
+            exclude,
+        )
+    }
+
+    pub(crate) fn trace_world_hull_except(
+        &self,
+        input: movement_iw4::GroundTraceInput,
+        exclude: Option<crate::AuthorityModelOwner>,
+    ) -> trace_iw4::Trace {
+        self.trace_clip_maps_glass(
+            &self.content.data.clip_brushes,
+            &self.content.data.clip_bsp,
+            &self.content.data.clip_mesh,
+            input,
             false,
             exclude,
         )
@@ -1926,6 +1947,32 @@ impl SimState {
         )
     }
 
+    pub fn penetrations(
+        &self,
+        input: movement_iw4::GroundTraceInput,
+        contacts: &mut movement_iw4::recovery::ContactBuffer,
+    ) -> movement_iw4::recovery::Coverage {
+        let linked: Vec<_> = self
+            .entity_collision_capabilities
+            .iter()
+            .flat_map(|row| row.solid_brushes().iter().cloned())
+            .collect();
+        let models = self.model_movement_brushes_where(|_| true);
+        crate::penetration::contacts(
+            &crate::penetration::RecoveryScene {
+                brushes: &self.content.data.clip_brushes,
+                bsp: &self.content.data.clip_bsp,
+                mesh: &self.content.data.clip_mesh,
+                cmodels: &self.content.data.clip_cmodels.models,
+                linked: &linked,
+                models: &models,
+                glass_is_solid: &|piece| self.world_objects.glass_is_solid(u32::from(piece)),
+            },
+            input,
+            contacts,
+        )
+    }
+
     pub fn collision_history(&self) -> &CollisionHistory {
         &self.collision_history
     }
@@ -1985,7 +2032,7 @@ impl SimState {
         }
     }
 
-    pub fn set_lagcomp_commands(
+    pub(crate) fn set_lagcomp_commands(
         &mut self,
         rows: impl IntoIterator<Item = ((ClientId, i32), crate::ShotSampleProvenance)>,
     ) {
@@ -3430,6 +3477,14 @@ impl SimState {
             event,
             payload,
         });
+    }
+
+    pub fn entity_events(&self) -> &[EntityEventRecord] {
+        &self.entity_events
+    }
+
+    pub fn next_entity_event_sequence(&self) -> EventSequence {
+        self.next_entity_event
     }
 
     pub fn pellet_fx(&self) -> &[crate::PelletFxRecord] {

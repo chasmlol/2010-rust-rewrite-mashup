@@ -144,7 +144,6 @@ pub(crate) fn select_usables(world: &mut World) {
             runtime
                 .entities
                 .iter()
-                .filter(|(_, e)| !e.hidden)
                 .filter_map(|(object, e)| {
                     Some((
                         *object,

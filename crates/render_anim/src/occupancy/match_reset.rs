@@ -6,19 +6,20 @@ use crate::anim::fpv_prepared::PreparedFpv;
 use crate::anim::scene_submission::AnimDObjSceneSkels;
 use crate::occupancy::dyn_ent::{DynEntPhysClip, DynEntPhysWorld};
 use crate::occupancy::fpv_present::{
-    FpvHeldLife, FpvHeldSettled, FpvPlacementRoot, FpvPresentCursor, LocalSpawnArmed,
-    PendingFpvSpawn, SessionViewmodel,
+    FpvHeldLife, FpvHeldSettled, FpvPlacementRoot, FpvPresentCursor, PendingFpvSpawn,
+    SessionViewmodel,
 };
 
-pub fn reset_anim_for_match(
+pub(crate) fn reset_anim_for_match(
     mut commands: Commands,
     mut installed: MessageReader<MatchInstalled>,
     mut torn: MessageReader<MatchTornDown>,
-    mut armed: ResMut<LocalSpawnArmed>,
     mut cursor: ResMut<FpvPresentCursor>,
     mut pending: ResMut<PendingFpvSpawn>,
     mut viewmodel: ResMut<SessionViewmodel>,
     mut prepared_fpv: ResMut<PreparedFpv>,
+    mut item_compositions: ResMut<crate::occupancy::item::PreparedItemCompositions>,
+    mut remote_kits: ResMut<crate::anim::remote_body::PreparedRemoteKits>,
     mut model_materials: ResMut<crate::anim::model_materials::PreparedModelMaterials>,
     mut settled: ResMut<FpvHeldSettled>,
     mut held_life: ResMut<FpvHeldLife>,
@@ -31,11 +32,12 @@ pub fn reset_anim_for_match(
         return;
     }
 
-    armed.0 = false;
     cursor.0.clear();
     pending.0 = None;
     *viewmodel = SessionViewmodel::default();
     prepared_fpv.clear();
+    item_compositions.clear();
+    remote_kits.clear();
     model_materials.clear();
     settled.0 = None;
     held_life.0 = None;

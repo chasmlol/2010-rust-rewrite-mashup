@@ -1,8 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use net::{Frame, SnapshotDecoder, SnapshotEncoder, Transport, frame_from_tick};
-use playerstate_iw4::UserCmd;
-use sim::{ClientAction, ClientId, Snapshot};
+use sim::Snapshot;
 
 use crate::file::{FileTransport, MatchRecordIdentity, ReplayError, demo_path, sanitize_demo_name};
 
@@ -79,12 +78,8 @@ impl Recording {
         })
     }
 
-    pub fn record(
-        &mut self,
-        input: &sim::TickInput,
-        snapshot: &Snapshot,
-    ) -> Result<(), ReplayError> {
-        let frame = frame_from_tick(&mut self.encoder, input, snapshot);
+    pub fn record(&mut self, snapshot: &Snapshot) -> Result<(), ReplayError> {
+        let frame = frame_from_tick(&mut self.encoder, snapshot);
         self.transport
             .send(&frame)
             .map_err(|e| ReplayError::Io(std::io::Error::other(e.to_string())))?;
@@ -93,8 +88,8 @@ impl Recording {
     }
 
     pub fn record_clip_ring(&mut self, ring: &crate::clip::ClipRing) -> Result<u64, ReplayError> {
-        for (input, snapshot) in ring.iter() {
-            self.record(input, snapshot)?;
+        for snapshot in ring.iter() {
+            self.record(snapshot)?;
         }
         Ok(ring.len() as u64)
     }
@@ -158,12 +153,7 @@ impl Playback {
         let mut snapshot = self.decoder.decode(&frame.snapshot_delta)?;
         snapshot.meta = frame.snapshot_meta.clone();
         self.ticks += 1;
-        Ok(Some(PlayedTick {
-            cmds: frame.cmds.clone(),
-            actions: frame.actions.clone(),
-            snapshot,
-            frame,
-        }))
+        Ok(Some(PlayedTick { snapshot, frame }))
     }
 
     pub fn ticks(&self) -> u64 {
@@ -181,8 +171,6 @@ impl Playback {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct PlayedTick {
-    pub cmds: Vec<(ClientId, UserCmd)>,
-    pub actions: Vec<(ClientId, ClientAction)>,
     pub snapshot: Snapshot,
 
     pub frame: Frame,

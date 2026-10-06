@@ -48,7 +48,16 @@ pub fn complete_ground_trace<C: CollisionBackend>(
 
     if trace.startsolid != 0 {
         let retry = GroundTraceInput {
-            start: [origin[0], origin[1], origin[2] - STARTSOLID_RETRY_EPSILON],
+            start: [
+                ps.origin[0],
+                ps.origin[1],
+                ps.origin[2] - STARTSOLID_RETRY_EPSILON,
+            ],
+            end: [
+                ps.origin[0],
+                ps.origin[1],
+                ps.origin[2] - if mounted { 1.0 } else { 0.25 },
+            ],
             ..input
         };
         trace = collision.trace(retry);

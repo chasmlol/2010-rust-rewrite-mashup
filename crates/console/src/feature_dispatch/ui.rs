@@ -1,9 +1,7 @@
+use ::ui::UiDraw;
 use bevy::prelude::*;
 use frame::LaunchIdentity;
-use net::{
-    AuthorityClock, AuthorityWorld, PresentedSnapshot,
-};
-use ::ui::UiDraw;
+use net::{AuthorityClock, AuthorityWorld, PresentedSnapshot};
 
 use crate::{ConsoleCommand, ConsoleLine, ConsoleSettings, ConsoleState};
 
@@ -17,6 +15,7 @@ pub(crate) fn route_ui_commands(
         ResMut<ConsoleLine>,
     ),
     mut ui_draw: ResMut<UiDraw>,
+    mut game_settings: ResMut<frame::GameSettings>,
     menus: Res<hud::ScriptMenus>,
     identity: Option<Res<LaunchIdentity>>,
     (authority, authority_clock, presented): (
@@ -53,6 +52,24 @@ pub(crate) fn route_ui_commands(
                 _ => echo("usage: ui [0|1]".into(), console, line),
             },
 
+            "thirdperson" | "cg_thirdPerson" => {
+                let next = match cmd.args.as_slice() {
+                    [] => Some(!game_settings.third_person),
+                    [value] if value.eq_ignore_ascii_case("toggle") => {
+                        Some(!game_settings.third_person)
+                    }
+                    [value] if value == "1" || value.eq_ignore_ascii_case("on") => Some(true),
+                    [value] if value == "0" || value.eq_ignore_ascii_case("off") => Some(false),
+                    _ => None,
+                };
+                if let Some(next) = next {
+                    game_settings.third_person = next;
+                    game_settings.touch();
+                    echo(format!("thirdperson {}", u8::from(next)), console, line);
+                } else {
+                    echo("usage: thirdperson [0|1|toggle]".into(), console, line);
+                }
+            }
             "togglemenu" => {
                 menu_requests.write(frame::UiMenuRequest::Toggle);
             }
@@ -146,7 +163,6 @@ pub(crate) fn route_ui_commands(
         }
     }
 }
-
 
 const MENU_USAGE: &str = "usage: menu [open <screen> | nav up|down | accept | back | dump]";
 

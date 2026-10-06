@@ -1,4 +1,4 @@
-use assets::PreparedWeapons;
+use assets::BoundWeapons;
 use bevy::prelude::*;
 use fx::{FxMsec, FxSystemHost, PlayResult, SpawnFail, axis_from_hit_normal};
 use fx_iw4::{
@@ -169,7 +169,7 @@ pub fn play_pellet_segment(
     catalog: Option<&PreparedFxCatalog>,
     elem_infos: &mut FxElemInfoCache,
     impact_fx: Option<&PreparedImpactFx>,
-    weapons: Option<&PreparedWeapons>,
+    weapons: Option<&BoundWeapons<'_>>,
     tracers: Option<&PreparedTracers>,
     tracer_world: &mut TracerWorld,
     gate: &mut TracerDrawGate,
@@ -192,7 +192,7 @@ pub fn play_pellet_segment(
         .get(surf_type as usize)
         .map(|name| (*name).to_owned());
     let tracer_edge = weapons
-        .and_then(|weapons| weapons.0.combat_fx_of(weapon))
+        .and_then(|weapons| weapons.registry().combat_fx_of(weapon))
         .map(|fx| fx.tracer)
         .unwrap_or(assets::AssetEdge::Absent);
     let own_shot = attacker_entity_num == local_number;
@@ -221,6 +221,8 @@ pub fn play_pellet_segment(
             &t.0,
             tracer_edge,
             source_id,
+            correlation,
+            pellet,
             start,
             seg_end,
             own_shot,
@@ -248,14 +250,11 @@ pub fn play_pellet_segment(
         }
     }
     if normal == [0.0, 0.0, 0.0] {
-        cursor.impact_miss_table = cursor.impact_miss_table.saturating_add(1);
-        combat.last_impact_miss_why = Some("zero_dir".into());
-        log_combat_fx_gaps(cursor, combat);
         sync_combat_dump(cursor, combat);
         return;
     }
     let Some(impact_type) = weapons
-        .and_then(|w| w.0.facts_of(weapon))
+        .and_then(|w| w.row(weapon).and_then(|weapon| weapon.event_facts()))
         .map(|f| f.impact_type)
     else {
         cursor.impact_miss_table = cursor.impact_miss_table.saturating_add(1);

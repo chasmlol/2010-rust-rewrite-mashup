@@ -28,7 +28,10 @@ impl Plugin for RenderPlugin {
         )
         .add_systems(
             Update,
-            publish_overhead_posed_players
+            (
+                publish_overhead_posed_players,
+                publish_overhead_posed_models,
+            )
                 .after(frame::WorkerCmdSet::SkinModel)
                 .in_set(hud::OverheadPosedPlayerFramePublished)
                 .in_set(ClientSet::Present),
@@ -150,4 +153,13 @@ fn publish_overhead_posed_players(
         };
         (player.entnum, head)
     }));
+}
+
+fn publish_overhead_posed_models(
+    source: Res<render_anim::ScriptModelDObjFrame>,
+    mut destination: Option<ResMut<hud::OverheadPosedModelFrame>>,
+) {
+    if let Some(destination) = destination.as_mut() {
+        destination.replace(source.iter());
+    }
 }

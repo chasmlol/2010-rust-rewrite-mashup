@@ -69,7 +69,7 @@ impl Default for FxElemSlot {
 
 impl FxElemSlot {
     #[inline]
-    pub fn orient_spawn_params(&self, seed: u32) -> fx_iw4::FxOrientSpawnParams {
+    pub fn orient_spawn_params(&self, seed: u64) -> fx_iw4::FxOrientSpawnParams {
         fx_iw4::FxOrientSpawnParams {
             spawn_origin: self.spawn_origin,
             spawn_offset_radius: self.spawn_offset_radius,

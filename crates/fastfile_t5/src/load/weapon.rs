@@ -8,19 +8,27 @@ pub(super) fn load_weapon(s: &mut ZoneStream<'_>, links: &mut dyn AssetLinkSink)
     s.push(XFILE_BLOCK_VIRTUAL)?;
     follow_name(s, p, 0)?;
 
-    let (body_combat, weap_def, models) = match s.ptr_at(p, 0x8)? {
+    let (body_combat, weap_def, assets) = match s.ptr_at(p, 0x8)? {
         ZonePtr::Offset(q) => {
             s.note_offset(q);
             let body = s.resolve_alias(q);
-            (read_body_combat(s, body)?, Some(body), [None; 5])
+            (
+                read_body_combat(s, body)?,
+                Some(body),
+                WeaponAssets {
+                    reticle_center: material_name_at(s, links, body.at(0x1a0)),
+                    reticle_side: material_name_at(s, links, body.at(0x1a4)),
+                    ..WeaponAssets::default()
+                },
+            )
         }
         _ if s.begin_body(p.at(0x8))? => {
             let def = s.alloc_load(4, sz::WEAPON_DEF)?;
             s.fixup_slot(p.at(0x8), def)?;
-            let models = load_weapon_def(s, links, def)?;
-            (read_body_combat(s, def)?, Some(def), models)
+            let assets = load_weapon_def(s, links, def)?;
+            (read_body_combat(s, def)?, Some(def), assets)
         }
-        _ => (BodyCombat::default(), None, [None; 5]),
+        _ => (BodyCombat::default(), None, WeaponAssets::default()),
     };
 
     follow_name(s, p, 0xc)?;
@@ -43,8 +51,8 @@ pub(super) fn load_weapon(s: &mut ZoneStream<'_>, links: &mut dyn AssetLinkSink)
 
     follow_name(s, p, 0x40)?;
     follow_name(s, p, 0x48)?;
-    asset_ptr_at(s, links, AssetType::Material, p.at(0x8c))?;
-    asset_ptr_at(s, links, AssetType::Material, p.at(0x90))?;
+    let overlay_material_name = follow_material_name(s, links, p.at(0x8c))?;
+    let overlay_material_lowres_name = follow_material_name(s, links, p.at(0x90))?;
     asset_ptr_at(s, links, AssetType::Material, p.at(0x94))?;
 
     let name = match s.ptr_at(p, 0)? {
@@ -57,6 +65,10 @@ pub(super) fn load_weapon(s: &mut ZoneStream<'_>, links: &mut dyn AssetLinkSink)
         _ => None,
     };
     s.record_weapon(WeaponGeometry {
+        overlay_material_name,
+        overlay_material_lowres_name,
+        reticle_center_name: assets.reticle_center,
+        reticle_side_name: assets.reticle_side,
         alternate_weapon_name,
         alternate_raise_time_ms: s.i32_at(p, 0x3c)?,
         alternate_drop_time_ms: weap_def
@@ -66,11 +78,11 @@ pub(super) fn load_weapon(s: &mut ZoneStream<'_>, links: &mut dyn AssetLinkSink)
         name,
         display_name,
         weap_def,
-        gun_xmodel_name: models[0],
-        hand_xmodel_name: models[1],
-        rocket_model_name: models[2],
-        projectile_model_name: models[3],
-        world_model_name: models[4],
+        gun_xmodel_name: assets.gun,
+        hand_xmodel_name: assets.hand,
+        rocket_model_name: assets.rocket,
+        projectile_model_name: assets.projectile,
+        world_model_name: assets.world,
         move_speed_scale: body_combat.move_speed_scale,
         ads_move_speed_scale: body_combat.ads_move_speed_scale,
         weap_type: body_combat.weap_type,
@@ -94,7 +106,7 @@ fn load_weapon_def(
     s: &mut ZoneStream<'_>,
     links: &mut dyn AssetLinkSink,
     p: Ptr,
-) -> Result<[Option<Ptr>; 5]> {
+) -> Result<WeaponAssets> {
     follow_name(s, p, 0x0)?;
 
     let gun0 = follow_xmodel_array(s, links, p, 0x4)?;
@@ -126,8 +138,8 @@ fn load_weapon_def(
     for off in [0x190, 0x194, 0x198, 0x19c] {
         asset_ptr_at(s, links, AssetType::Fx, p.at(off))?;
     }
-    asset_ptr_at(s, links, AssetType::Material, p.at(0x1a0))?;
-    asset_ptr_at(s, links, AssetType::Material, p.at(0x1a4))?;
+    let reticle_center = follow_material_name(s, links, p.at(0x1a0))?;
+    let reticle_side = follow_material_name(s, links, p.at(0x1a4))?;
 
     let world0 = follow_xmodel_array(s, links, p, 0x30c)?;
     asset_ptr_at(s, links, AssetType::XModel, p.at(0x310))?;
@@ -207,7 +219,15 @@ fn load_weapon_def(
 
     asset_ptr_at(s, links, AssetType::Fx, p.at(0x7f8))?;
     asset_ptr_at(s, links, AssetType::Fx, p.at(0x7fc))?;
-    Ok([gun0, hand0, rocket, projectile, world0])
+    Ok(WeaponAssets {
+        gun: gun0,
+        hand: hand0,
+        rocket,
+        projectile,
+        world: world0,
+        reticle_center,
+        reticle_side,
+    })
 }
 
 fn follow_string_array(
@@ -351,4 +371,37 @@ fn read_body_combat(s: &ZoneStream<'_>, body: Ptr) -> Result<BodyCombat> {
         raise_time_ms: s.i32_at(body, sz::WEAPON_RAISE_TIME_OFF)?,
         bolt_action: s.u8_at(body, sz::WEAPON_BOLT_ACTION_OFF)? != 0,
     })
+}
+
+fn material_name_at(s: &ZoneStream<'_>, links: &dyn AssetLinkSink, slot: Ptr) -> Option<Ptr> {
+    match s.ptr_at(slot, 0).ok()? {
+        ZonePtr::Null => None,
+        ZonePtr::Offset(target) => links
+            .material_name_ptr(target)
+            .or_else(|| links.material_name_ptr(slot)),
+        ZonePtr::Following | ZonePtr::Insert => links.material_name_ptr(slot),
+    }
+}
+
+fn follow_material_name(
+    s: &mut ZoneStream<'_>,
+    links: &mut dyn AssetLinkSink,
+    slot: Ptr,
+) -> Result<Option<Ptr>> {
+    if load_asset_at_observed(s, AssetType::Material, slot, links)? {
+        Ok(s.latest_material().and_then(|g| g.name))
+    } else {
+        Ok(material_name_at(s, links, slot))
+    }
+}
+
+#[derive(Default)]
+struct WeaponAssets {
+    gun: Option<Ptr>,
+    hand: Option<Ptr>,
+    rocket: Option<Ptr>,
+    projectile: Option<Ptr>,
+    world: Option<Ptr>,
+    reticle_center: Option<Ptr>,
+    reticle_side: Option<Ptr>,
 }

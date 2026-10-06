@@ -156,6 +156,8 @@ pub struct ModelPoseSrc {
     pub trans: Vec<[f32; 3]>,
 
     pub base_mat: Vec<(Quat, Vec3)>,
+
+    pub root_rest: Option<(Quat, Vec3)>,
 }
 
 impl DObj {
@@ -210,7 +212,11 @@ impl DObj {
                 let bind_world = Mat4::from_rotation_translation(bq.normalize(), bt);
 
                 let (bind_rotation, bind_translation, parent) = if bone < roots {
-                    (Quat::IDENTITY, Vec3::ZERO, attach_to)
+                    let (rotation, translation) = model
+                        .root_rest
+                        .filter(|_| bone == 0)
+                        .unwrap_or((Quat::IDENTITY, Vec3::ZERO));
+                    (rotation, translation, attach_to)
                 } else {
                     let child = bone - roots;
                     let step = *model

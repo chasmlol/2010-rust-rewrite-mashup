@@ -29,7 +29,7 @@ const REPO_TOOLS: &[&str] = &[
     "mr ls",
     "mr fmt FILE.rs...",
     "publish-check",
-    "duo",
+    "licenses",
 ];
 
 /// Everything that leaves this machine. These read `.env` for the host, the
@@ -111,7 +111,7 @@ fn main() -> ExitCode {
 fn repo(cmd: &str, rest: &[String]) -> Option<Res<()>> {
     let root = repo_root();
     match cmd {
-        "duo" => Some(xtask::duo::run(&root)),
+        "licenses" => Some(xtask::licenses::run_cli(&root)),
         "mr" => Some(xtask::mrs::run_cli(&root, rest)),
         "publish-check" => Some(xtask::publish_check::run_cli(&root)),
         _ => None,

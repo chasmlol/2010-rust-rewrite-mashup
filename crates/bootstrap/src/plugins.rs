@@ -34,6 +34,9 @@ pub fn add_runtime_plugins_with_role(app: &mut App, role: RuntimeRole) {
         // Unfocused benchmarks must not inherit the window runner's 60 Hz sleep.
         app.insert_resource(bevy::winit::WinitSettings::continuous());
     }
+    app.insert_resource(audio::AudioRuntime::new(
+        role != RuntimeRole::Dedicated && !audio::AudioSilent::active(),
+    ));
     app.add_plugins(AssetPlugin)
         .add_plugins(UiPlugin)
         .add_plugins(ConsolePlugin)

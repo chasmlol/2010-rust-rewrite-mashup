@@ -12,7 +12,7 @@ pub fn get_velocity_at_time(
     local_samples: &[crate::FxElemVec3Range],
     world_samples: &[crate::FxElemVec3Range],
     orient_axis: [[f32; 3]; 3],
-    seed: u32,
+    seed: u64,
 ) -> [f32; 3] {
     let mut out = base_vel;
     let age01 = if life_ms > 0.0 {

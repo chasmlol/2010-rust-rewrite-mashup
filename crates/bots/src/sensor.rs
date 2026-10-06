@@ -258,7 +258,11 @@ fn public_objectives(snapshot: &Snapshot, bot: ClientId, team: i32) -> Vec<ModeO
         .objectives
         .compass
         .iter()
-        .filter(|o| o.shows_to(team) && !o.icon.contains("defend"))
+        .filter(|o| {
+            o.shows_to(team, bot.0)
+                && !o.icon.contains("defend")
+                && !o.icon.starts_with("compassping")
+        })
         .map(|o| ModeObjective {
             id: u32::from(o.index),
             origin: o.origin,

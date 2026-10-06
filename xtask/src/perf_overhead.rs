@@ -219,7 +219,7 @@ fn run_once(config: &Config, enabled: bool) -> Result<f64, String> {
     let mut command = Command::new(&config.binary);
     command
         .current_dir(&config.workdir)
-        .args(["map", &config.zone, "--cmds", &config.commands])
+        .args(["--cheats", "map", &config.zone, "--cmds", &config.commands])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     // Both recorders are cleared first: whichever one the caller inherited

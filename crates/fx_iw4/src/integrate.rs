@@ -7,10 +7,18 @@ pub struct FxElemVec3Range {
 }
 
 impl FxElemVec3Range {
-    fn sampled(self, seed: u32) -> [f32; 3] {
+    fn sampled(self, seed: u64) -> [f32; 3] {
         core::array::from_fn(|axis| {
             self.base[axis]
-                + self.amplitude[axis] * crate::random::random_table_f32(seed, axis as u32)
+                + self.amplitude[axis]
+                    * crate::random::sample_f32(
+                        seed,
+                        [
+                            crate::random::FxRandomChannel::VelocityX,
+                            crate::random::FxRandomChannel::VelocityY,
+                            crate::random::FxRandomChannel::VelocityZ,
+                        ][axis],
+                    )
         })
     }
 }
@@ -20,7 +28,7 @@ pub fn integrate_velocity_graph(
     start_age01: f32,
     end_age01: f32,
     life_ms: f32,
-    seed: u32,
+    seed: u64,
 ) -> [f32; 3] {
     if samples.len() < 2 || life_ms <= 0.0 {
         return [0.0, 0.0, 0.0];
@@ -56,7 +64,7 @@ pub fn integrate_velocity_graph(
 }
 
 #[inline]
-pub fn sample_vel_graph_at_age(samples: &[FxElemVec3Range], age01: f32, seed: u32) -> [f32; 3] {
+pub fn sample_vel_graph_at_age(samples: &[FxElemVec3Range], age01: f32, seed: u64) -> [f32; 3] {
     sample_lerp(samples, age01, seed)
 }
 
@@ -70,7 +78,7 @@ fn clamp01(x: f32) -> f32 {
     }
 }
 
-fn sample_lerp(samples: &[FxElemVec3Range], age01: f32, seed: u32) -> [f32; 3] {
+fn sample_lerp(samples: &[FxElemVec3Range], age01: f32, seed: u64) -> [f32; 3] {
     let last = samples.len() - 1;
     let t = clamp01(age01);
     let seg = t * last as f32;

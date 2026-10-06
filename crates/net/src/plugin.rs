@@ -42,6 +42,7 @@ impl Plugin for NetPlugin {
             .world()
             .get_resource::<crate::MasterLaunchIntent>()
             .is_some_and(crate::MasterLaunchIntent::enabled);
+        app.init_resource::<crate::AccountSaveReceipt>();
         app.insert_resource(self.role)
             .init_resource::<PresentedSnapshot>()
             .init_resource::<LocalPresentClient>()

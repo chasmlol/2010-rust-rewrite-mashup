@@ -24,6 +24,7 @@ pub struct XModelSurfaceDraw {
     pub is_scope: bool,
 
     pub scene_entnum: Option<u32>,
+    pub body_client: Option<u32>,
 
     /// World-space bounding sphere of the object this surface belongs to.
     /// `None` is "unbounded": the surface is admitted to every shadow

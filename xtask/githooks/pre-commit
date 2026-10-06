@@ -38,8 +38,7 @@ if command -v rustfmt >/dev/null; then
   tmpdir="$(mktemp -d)"
   cleanup() { rm -rf "$tmpdir"; }
   trap cleanup EXIT
-  mapfile -t unstaged < <(git diff --name-only --diff-filter=ACMR || true)
-  for rel in "${unstaged[@]}"; do
+  while IFS= read -r rel; do
     [[ -n "$rel" && "$rel" == *.rs ]] || continue
     wt="$ROOT/$rel"
     [[ -f "$wt" ]] || continue
@@ -53,7 +52,7 @@ if command -v rustfmt >/dev/null; then
     if cmp -s "$idx" "$wt"; then
       dirt+=("$rel")
     fi
-  done
+  done < <(git diff --name-only --diff-filter=ACMR || true)
   if ((${#dirt[@]} > 0)); then
     printf '%s\n' \
       'pre-commit: unstaged .rs files match rustfmt(index) — likely cargo fmt --all / -p.' \

@@ -68,7 +68,7 @@ pub(super) async fn walk_prepared_match(
         xmodel_walk,
         s1_common_bytes,
         teamsets,
-        film_visions: mut common_film_visions,
+        film_visions: common_film_visions,
         mut weapons,
         mut fpv_meshes,
         mut world_weapons,
@@ -141,25 +141,22 @@ pub(super) async fn walk_prepared_match(
                     &progress,
                     shared_surfaces,
                     material_seed,
-                    &mut common_film_visions,
+                    &common_film_visions,
                 ),
                 Some(asset_core::AssetNamespace::from_zone_game(game)),
             )
         }
         Err(gap) => {
-            drop(material_seed);
-            (
-                LoadedWorld::with_gap(
-                    WorldDrawPolicy::default(),
-                    PreparedCapability::PreparedWorld,
-                    gap,
-                    Some("assets::session_load::load_prepared_match/zone_open"),
-                ),
-                None,
-            )
+            return (MatchLoadOutcome::Refused(gap), Some(common));
         }
     };
 
+    let Some(map_family) = map_namespace else {
+        return (
+            MatchLoadOutcome::Refused("map family missing".into()),
+            Some(common),
+        );
+    };
     let LoadedWorld {
         scripts: map_scripts,
         mut world,
@@ -175,6 +172,7 @@ pub(super) async fn walk_prepared_match(
         mut report,
         gaps,
     } = loaded;
+    world.source_namespace = map_namespace;
     report.append(&mut common_report);
 
     if facts.team_settings.allies.is_none() && facts.team_settings.axis.is_none() {
@@ -218,7 +216,11 @@ pub(super) async fn walk_prepared_match(
 
     if matches!(
         map_namespace,
-        Some(asset_core::AssetNamespace::T5 | asset_core::AssetNamespace::Iw5)
+        Some(
+            asset_core::AssetNamespace::T5
+                | asset_core::AssetNamespace::Iw5
+                | asset_core::AssetNamespace::T6
+        )
     ) && !foreign_faction_rows(&mut iw4_scripts, &facts.team_settings)
     {
         report.push(format!(
@@ -226,7 +228,7 @@ pub(super) async fn walk_prepared_match(
         ));
     }
     let map_scripts = match map_namespace {
-        Some(asset_core::AssetNamespace::T5) => {
+        Some(asset_core::AssetNamespace::T5 | asset_core::AssetNamespace::T6) => {
             let scripts = t5_map_under_iw4_rules(&map_scripts, &zone_name, &facts);
             report.push(format!(
                 "map script: maps/mp/{zone_name} written from the T5 map's declarations; T5 map scripts left out"
@@ -237,6 +239,10 @@ pub(super) async fn walk_prepared_match(
     };
     let mut scripts = iw4_scripts;
     scripts.overlay(map_scripts);
+    scripts.insert_source(
+        "iw4l_t6/equipment",
+        crate::map_scripts::T6_EQUIPMENT.to_owned(),
+    );
     report.push(format!(
         "GSC source assets: {} (map overrides common_mp)",
         scripts.len()
@@ -281,6 +287,10 @@ pub(super) async fn walk_prepared_match(
             xanims.name_at(*index).unwrap_or("<unknown>")
         ));
     }
+    let t6_alt_raises = weapons.time_t6_alternate_raises(&xanims);
+    report.push(format!(
+        "T6 alternate raises timed by their clips: {t6_alt_raises}"
+    ));
     let (note_actions, inline_note_actions) = weapons.resolve_notetrack_actions(&xanims);
     report.push(format!(
         "weapon notetrack actions linked: {note_actions} ({inline_note_actions} T5 inline)"
@@ -311,16 +321,6 @@ pub(super) async fn walk_prepared_match(
     fpv_meshes.set_map_namespace(map_namespace);
     weapons.resolve_fpv_mesh_edges(&fpv_meshes);
     weapons.resolve_fpv_hands(&fpv_meshes, &bodies);
-    let assembly_started = std::time::Instant::now();
-    let assemblies = weapons.resolve_fpv_assemblies(&fpv_meshes, &xanims);
-    report.push(format!(
-        "FPV assemblies: built={} kit sides linked={} refused={} clip track tables={} elapsed_ms={:.1}",
-        assemblies.built,
-        assemblies.linked,
-        assemblies.refused,
-        assemblies.clip_tables,
-        assembly_started.elapsed().as_secs_f64() * 1000.0,
-    ));
 
     world_weapons.seal_identity();
     weapons.resolve_world_model_edges(&world_weapons);
@@ -332,30 +332,6 @@ pub(super) async fn walk_prepared_match(
         world_model_edges.unresolved,
         world_model_edges.absent,
     ));
-    let dependency_gaps = weapons.dependency_gaps();
-    let selectable_gap_ids: std::collections::BTreeSet<_> = dependency_gaps
-        .iter()
-        .map(|gap| gap.id)
-        .filter(|&id| weapons.describe_configuration(id).is_some())
-        .collect();
-    report.push(format!(
-        "weapon dependency audit: {} gaps in {} definitions; selectable={}",
-        dependency_gaps.len(),
-        dependency_gaps
-            .iter()
-            .map(|gap| gap.id)
-            .collect::<std::collections::BTreeSet<_>>()
-            .len(),
-        selectable_gap_ids.len(),
-    ));
-    for gap in &dependency_gaps {
-        report.push(format!(
-            "weapon dependency gap: {} {} `{}`",
-            weapons.name_of(gap.id),
-            gap.kind,
-            gap.name
-        ));
-    }
     report.push(format!(
         "FPV map fanout: map={map_fpv_n} added={map_fpv_added} merged={} map_ns={map_namespace:?}",
         fpv_meshes.len()
@@ -553,7 +529,7 @@ pub(super) async fn walk_prepared_match(
     }
     if let Ok(path) = &zone_ff {
         let stage = progress.begin_scoped(StageId::Images, "tracers", None);
-        let decoded = asset_material::material_images::decode_color_or_2d_for_keys(
+        let decoded = asset_material::material_images::decode_images_for_keys(
             path,
             &mut global,
             common_tracers.material_keys(),
@@ -562,9 +538,7 @@ pub(super) async fn walk_prepared_match(
         );
         stage.finish_from(&decoded);
         match decoded {
-            Ok(n) => report.push(format!(
-                "tracer beam images after absorb: {n} TS_COLOR_MAP/TS_2D decoded"
-            )),
+            Ok(n) => report.push(format!("tracer beam images after absorb: {n} decoded")),
             Err(error) => report.push(format!("tracer beam images after absorb: {error}")),
         }
     }
@@ -627,6 +601,42 @@ pub(super) async fn walk_prepared_match(
         &mut projectile_meshes,
         &mut report,
     );
+    // Bind rigs and tracks to the finished mesh publication, after material linking.
+    let fpv_meshes = fpv_meshes.publish();
+    let assembly_started = std::time::Instant::now();
+    let assemblies = weapons.resolve_fpv_assemblies(&fpv_meshes, &xanims);
+    report.push(format!(
+        "FPV assemblies: built={} kit sides linked={} refused={} clip track tables={} elapsed_ms={:.1}",
+        assemblies.built,
+        assemblies.linked,
+        assemblies.refused,
+        assemblies.clip_tables,
+        assembly_started.elapsed().as_secs_f64() * 1000.0,
+    ));
+    let dependency_gaps = weapons.dependency_gaps();
+    let selectable_gap_ids: std::collections::BTreeSet<_> = dependency_gaps
+        .iter()
+        .map(|gap| gap.id)
+        .filter(|&id| weapons.describe_configuration(id).is_some())
+        .collect();
+    report.push(format!(
+        "weapon dependency audit: {} gaps in {} definitions; selectable={}",
+        dependency_gaps.len(),
+        dependency_gaps
+            .iter()
+            .map(|gap| gap.id)
+            .collect::<std::collections::BTreeSet<_>>()
+            .len(),
+        selectable_gap_ids.len(),
+    ));
+    for gap in &dependency_gaps {
+        report.push(format!(
+            "weapon dependency gap: {} {} `{}`",
+            weapons.name_of(gap.id),
+            gap.kind,
+            gap.name
+        ));
+    }
     report.push(
         "fx color maps handoff: n=0 bytes=0 (Bound GPU bind at spawn; no CPU clone sidecar; stub_aliases=0)"
             .into(),
@@ -706,7 +716,7 @@ pub(super) async fn walk_prepared_match(
         );
     }
     let mut fx = std::mem::take(&mut world.fx).publish();
-    fx.set_map_namespace(map_namespace.unwrap_or(asset_core::AssetNamespace::Iw4));
+    fx.set_map_namespace(map_family);
     let xanims = xanims.publish();
     let destructible_death =
         crate::stamp_match_destructible_death(&xanims, &world.map_xmodel_scene_assets);
@@ -730,7 +740,7 @@ pub(super) async fn walk_prepared_match(
         },
         clip: clip.map(Arc::new),
         weapons: Arc::new(weapons.publish()),
-        fpv_meshes: fpv_meshes.publish(),
+        fpv_meshes,
         bodies: Arc::new(bodies.publish()),
         world_weapons: world_weapons.publish(),
         projectile_meshes: projectile_meshes.publish(),
@@ -769,7 +779,7 @@ fn resolve_world_lights(
     });
     let (ordinal, source) = asset_world::resolve_outdoor_image(
         draw.outdoor_image_name.as_deref(),
-        map_namespace.unwrap_or(asset_core::AssetNamespace::Iw4),
+        map_namespace?,
         global,
     );
     draw.outdoor_image = ordinal;
@@ -1033,7 +1043,7 @@ fn decode_fx_colour_maps(
     if !missing.is_empty() {
         if let Ok(path) = zone_ff {
             let stage = progress.begin_scoped(StageId::Images, "fx_elem", None);
-            let decoded = asset_material::material_images::decode_color_or_2d_for_keys(
+            let decoded = asset_material::material_images::decode_images_for_keys(
                 path,
                 global,
                 missing,
@@ -1042,9 +1052,7 @@ fn decode_fx_colour_maps(
             );
             stage.finish_from(&decoded);
             match decoded {
-                Ok(n) => report.push(format!(
-                    "fx elem 2d images after absorb: {n} TS_COLOR_MAP/TS_2D decoded"
-                )),
+                Ok(n) => report.push(format!("fx elem 2d images after absorb: {n} decoded")),
                 Err(error) => report.push(format!("fx elem 2d images after absorb: {error}")),
             }
         }
@@ -1104,7 +1112,7 @@ fn census_image_working_set(
     world: &PreparedWorld,
     global: &asset_material::MaterialDefinitions,
     map_ids: &[Option<usize>],
-    fpv_meshes: &FpvMeshBuild,
+    fpv_meshes: &asset_model::FpvMeshCatalog,
     tracers: &asset_game::TracerCatalog,
     report: &mut Vec<String>,
 ) {

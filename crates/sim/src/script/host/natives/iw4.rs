@@ -23,7 +23,7 @@ pub(crate) fn register(registry: &mut NativeRegistry) {
     registry.register(Function, "setdvar", |world, _, args| {
         let name = dvar_name(args)?;
         let value = dvar_value(args)?;
-        runtime(world).dvars.insert(name, value);
+        set_dvar(world, &name, &value);
         Ok(Value::Undefined)
     });
     registry.register(Function, "setdvarifuninitialized", |world, _, args| {
@@ -45,7 +45,11 @@ pub(crate) fn register(registry: &mut NativeRegistry) {
     });
     registry.register(Function, "issplitscreen", |_, _, _| Ok(Value::Int(0)));
     registry.register(Function, "tolower", |_, _, args| {
-        Ok(Value::String(string(args, 0)?.to_ascii_lowercase().into()))
+        Ok(Value::byte_string(
+            &super::super::args::byte_string(args, 0)?
+                .as_bytes()
+                .to_ascii_lowercase(),
+        ))
     });
     registry.register(Function, "precachestring", |world, _, args| {
         let Some(Value::LocalizedString(text)) = args.first() else {
@@ -77,16 +81,15 @@ pub(crate) fn register(registry: &mut NativeRegistry) {
         "precacheleaderboards" => "leaderboards",
         "precachelocationselector" => "locationselector",
     }
-    macro_rules! presented {
-        ($($name:literal),* $(,)?) => {$(
-            registry.register(Function, $name, |world, _, args| {
-                runtime(world).presented.insert($name, args.to_vec());
-                Ok(Value::Undefined)
-            });
-        )*};
-    }
     registry.register(Function, "setexpfog", super::scene_effects::set_exp_fog);
-    presented!["setthermalbodymaterial"];
+    registry.register(Function, "setthermalbodymaterial", |world, _, args| {
+        let material = string(args, 0)?;
+        if material.len() > u16::MAX as usize {
+            return Err("thermal body material exceeds snapshot text capacity".into());
+        }
+        runtime(world).engine.thermal_body_material = material;
+        Ok(Value::Undefined)
+    });
     registry.register(Function, "getmapcustom", |world, _, args| {
         let key = string(args, 0)?;
         Ok(Value::string(
@@ -132,10 +135,85 @@ pub(crate) fn precache(world: &mut World, kind: &'static str, name: String) -> R
     Ok(index)
 }
 
+pub(crate) fn register_local_presentation_dvars(world: &mut World, local: Option<crate::ClientId>) {
+    let mut runtime = runtime(world);
+    runtime.local_presentation_dvars = true;
+    if runtime.local_presentation_client != local {
+        runtime.pending_local_dvars.clear();
+    }
+    runtime.local_presentation_client = local;
+    for setting in [
+        crate::TargetBoxDvar::Scale,
+        crate::TargetBoxDvar::MinSize,
+        crate::TargetBoxDvar::SpawnDelay,
+        crate::TargetBoxDvar::SpawnFade,
+    ] {
+        let name = setting.name().to_ascii_lowercase();
+        let value = runtime
+            .dvars
+            .get(&name)
+            .and_then(|value| setting.parse(value))
+            .unwrap_or_else(|| setting.default_value());
+        runtime.dvars.insert(name, value.to_string());
+    }
+}
+
 pub(crate) fn set_dvar(world: &mut World, name: &str, value: &str) {
-    runtime(world)
+    let name = name.to_ascii_lowercase();
+    let mut runtime = runtime(world);
+    let value = if runtime.local_presentation_dvars
+        && let Some(setting) = crate::TargetBoxDvar::named(&name)
+    {
+        let Some(value) = setting.parse(value) else {
+            return;
+        };
+        value.to_string()
+    } else {
+        value.to_owned()
+    };
+    runtime.dvars.insert(name, value);
+}
+
+pub(crate) fn deliver_local_presentation_dvars(world: &mut World) {
+    if !world
+        .resource::<crate::step::StepRequest>()
+        .reason
+        .advances_authority_world()
+    {
+        return;
+    }
+    let Some(client) = world.resource::<Runtime>().local_presentation_client else {
+        return;
+    };
+    let commands = std::mem::take(&mut runtime(world).pending_local_dvars);
+    if crate::frame::FrameWorld::from_world(world)
+        .client_meta(client)
+        .is_none()
+    {
+        return;
+    }
+    // Targeted commands run after script globals, then become the local current values.
+    for (setting, value) in commands {
+        set_dvar(world, setting.name(), &value);
+    }
+    let values: Vec<_> = world
+        .resource::<Runtime>()
         .dvars
-        .insert(name.to_ascii_lowercase(), value.to_owned());
+        .iter()
+        .filter(|(name, _)| crate::TargetBoxDvar::named(name).is_some())
+        .map(|(name, value)| (name.clone(), value.clone()))
+        .collect();
+    let mut frame = crate::frame::FrameWorld::from_world(world);
+    let dvars = &mut frame.client_meta_mut(client).client_dvars;
+    for (name, value) in values {
+        match dvars
+            .iter_mut()
+            .find(|(key, _)| key.eq_ignore_ascii_case(&name))
+        {
+            Some(row) => row.1 = value,
+            None => dvars.push((name, value)),
+        }
+    }
 }
 
 fn runtime(world: &mut World) -> bevy_ecs::world::Mut<'_, Runtime> {
@@ -177,16 +255,23 @@ pub(crate) fn atoi(text: &str) -> i32 {
         Some(b'+') => (false, &text[1..]),
         _ => (false, text),
     };
+    let limit = if negative {
+        i32::MAX as u32 + 1
+    } else {
+        i32::MAX as u32
+    };
     let value = digits
         .bytes()
         .take_while(u8::is_ascii_digit)
-        .fold(0i32, |n, d| {
-            n.wrapping_mul(10).wrapping_add(i32::from(d - b'0'))
+        .fold(0u32, |n, d| {
+            n.saturating_mul(10)
+                .saturating_add(u32::from(d - b'0'))
+                .min(limit)
         });
     if negative {
-        value.wrapping_neg()
+        (-i64::from(value)) as i32
     } else {
-        value
+        value as i32
     }
 }
 

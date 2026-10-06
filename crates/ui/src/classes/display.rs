@@ -1,6 +1,4 @@
-use asset_core::AssetNamespace;
-
-use crate::{ClassLoadoutCatalog, ClassPickerFolder, pretty_weapon_name};
+use crate::{ClassLoadoutCatalog, ClassPickerFolder};
 
 pub fn localized(loc: &asset_game::LocalizeCatalog, key: &str, fallback: &str) -> String {
     loc.text(key.trim_start_matches('@'))
@@ -28,26 +26,18 @@ pub fn label(
     {
         return text.to_owned();
     }
-    loc.text(&format!(
-        "PERKS_{}",
-        key.trim_start_matches("specialty_").to_uppercase()
-    ))
-    .map(str::to_owned)
-    .unwrap_or_else(|| {
-        pretty_weapon_name(
-            key.rsplit_once('+')
-                .map_or(key, |(_, attachment)| attachment),
-        )
-    })
+    if let Some(presentation) = catalog.presentation.get(key) {
+        return loc
+            .text(presentation.fallback_name_key())
+            .unwrap_or(presentation.fallback_label())
+            .to_owned();
+    }
+    key.to_owned()
 }
 
 pub fn preview_image(key: &str, catalog: &ClassLoadoutCatalog) -> String {
-    let Some(preview) = catalog.previews.get(key) else {
-        return String::new();
-    };
-    if preview.image.is_empty() || asset_core::AssetKey::parse(&preview.image).is_ok() {
-        return preview.image.clone();
-    }
-    let ns = asset_core::AssetKey::parse(key).map_or(AssetNamespace::Iw4, |key| key.namespace);
-    format!("{}:material/{}", ns.as_str(), preview.image)
+    catalog
+        .previews
+        .get(key)
+        .map_or_else(String::new, |preview| preview.image.clone())
 }

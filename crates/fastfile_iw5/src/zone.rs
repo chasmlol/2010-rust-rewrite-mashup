@@ -327,6 +327,7 @@ pub struct AttachmentGeometry {
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct WeaponGeometry {
+    pub overlay_material_names: [Option<Ptr>; 4],
     pub name: Option<Ptr>,
     pub alternate_weapon_name: Option<Ptr>,
     pub alternate_raise_time_ms: i32,
@@ -343,6 +344,8 @@ pub struct WeaponGeometry {
     pub gun_xmodel_name: Option<Ptr>,
 
     pub hand_xmodel_name: Option<Ptr>,
+    pub rocket_model_name: Option<Ptr>,
+    pub projectile_model_name: Option<Ptr>,
 
     pub world_model_name: Option<Ptr>,
 

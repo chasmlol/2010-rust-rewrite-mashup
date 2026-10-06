@@ -112,3 +112,34 @@ pub fn lower_pass_to_validated_wgsl(
     validate_wgsl(&lowered.source)?;
     Ok(lowered)
 }
+
+pub(crate) fn dxbc_alpha_tests() -> Vec<(String, String)> {
+    MATERIAL_ALPHA_TESTS
+        .iter()
+        .enumerate()
+        .map(|(index, test)| {
+            let operator = match test.func {
+                d3d9_sm3::CompareFunc::Never => return (index, Some("discard;".to_owned())),
+                d3d9_sm3::CompareFunc::Always => return (index, Some(String::new())),
+                d3d9_sm3::CompareFunc::Less => "<",
+                d3d9_sm3::CompareFunc::Equal => "==",
+                d3d9_sm3::CompareFunc::LessEqual => "<=",
+                d3d9_sm3::CompareFunc::Greater => ">",
+                d3d9_sm3::CompareFunc::NotEqual => "!=",
+                d3d9_sm3::CompareFunc::GreaterEqual => ">=",
+                d3d9_sm3::CompareFunc::Unknown(_) => return (index, None),
+            };
+            (
+                index,
+                Some(format!(
+                    "if !(round(clamp(dx_colour.a, 0.0, 1.0) * {:.1}) {operator} {:.1}) {{ discard; }}",
+                    d3d9_sm3::abi::ALPHA_REF_SCALE,
+                    f32::from(test.reference)
+                )),
+            )
+        })
+        .filter_map(|(index, test)| {
+            Some((d3d9_sm3::pass_fragment_alpha_test_entry(index), test?))
+        })
+        .collect()
+}

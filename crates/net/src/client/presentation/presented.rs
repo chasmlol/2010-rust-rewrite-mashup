@@ -60,6 +60,11 @@ pub struct PresentedSnapshot {
 }
 
 impl PresentedSnapshot {
+    pub fn weapon_epoch(&self) -> Option<u32> {
+        self.snapshot()
+            .map(|snapshot| snapshot.meta.world_objects.map_round_epoch)
+    }
+
     pub fn clear(&mut self) {
         self.inner = None;
         self.previous_inner = None;

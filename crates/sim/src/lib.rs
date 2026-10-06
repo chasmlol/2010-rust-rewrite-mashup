@@ -17,12 +17,22 @@ pub mod hudelem;
 pub mod identities;
 pub mod input;
 mod item;
+mod local_profile;
+pub use item::ITEM_USE_HOLD_MS;
+pub use local_profile::LocalPlayerProfile;
 mod mantle_xanim;
 pub mod voxel;
 pub mod match_state;
 mod missile;
 mod missile_guidance;
 pub use missile_guidance::{MissileGuide, MissileTarget};
+mod penetration;
+mod persistent_data;
+mod persistent_defaults;
+pub use persistent_data::{
+    AccountId, AccountSnapshot, PLAYER_DATA_BUFFER_BYTES, PersistentDataError, PersistentDataStore,
+};
+pub use persistent_defaults::PlayerDataDefaults;
 mod presence;
 mod remote_missile;
 pub mod script;
@@ -31,6 +41,8 @@ pub use weapon_lock::WeaponLock;
 pub mod player_anim_script;
 pub mod rules;
 mod score;
+mod skill_rating;
+pub use skill_rating::{SKILL_RATING_BYTES, SkillRating, SkillRatingError, SkillRatings};
 pub mod script_gaps;
 mod script_player;
 mod smodel_grid;
@@ -86,23 +98,24 @@ pub use hudelem::{
     hud_elem_update_client, rebase_hud_archival,
 };
 pub use identities::{
-    ActionSequence, DamageSource, EventSequence, LifeSequence, MatchPhase, MatchRng, PelletId,
-    ProjectileId, RNG_DOMAIN_SCHEME, RngDomain, ScriptModelId, ShotId,
+    ActionSequence, DamageSource, EventSequence, FireCause, LifeSequence, MatchPhase, MatchRng,
+    PelletId, PendingBrass, ProjectileId, RNG_DOMAIN_SCHEME, RngDomain, ScriptModelId, ShotId,
 };
 pub use input::{
-    ActionRequestId, ClassId, ClientAction, MENU_RESPONSE_BYTES, SpawnPick, TickInput,
-    action_request_id, menu_response_field, menu_response_text,
+    ActionRequestId, ClassId, ClientAction, CommandSequence, MENU_RESPONSE_BYTES, PlayerCommand,
+    SpawnPick, TickInput, action_request_id, menu_response_field, menu_response_text,
 };
 pub use mantle_xanim::MantleXAnimBind;
 pub use match_state::{
     ClassDef, ClassRejectReason, ClientLifecycle, ClientSnapshotMeta,
     ConfigurationChangeRejectReason, DroppedItemAmmo, EntityEventPayload, EntityEventRecord,
     EventAudience, EventRecord, GiveRejectReason, HealthRegenCensus, InputReceipt,
-    ItemPickupRecord, KillcamHud, LoadoutSpec, LocationSelection, MENU_COMMAND_TAIL,
-    MatchEndReason, MenuCommand, MenuCommandKind, PelletFxRecord, PersonalClass, RadarMode,
-    RemoteMissile, RngDebugMeta, SIM_EVENT_ROSTER, ScriptBlur, ScriptControls, ScriptDepthOfField,
-    ScriptDvars, ScriptSeat, SimEvent, SimEventRow, SnapshotMeta, UNRELIABLE_SIM_EVENT_COUNT,
-    ViewEffects, VisionChange, is_postfx_dvar, sim_event_is_reliable,
+    ItemPickupRecord, KillcamHud, LinkedWeaponView, LoadoutSpec, LocationSelection,
+    MENU_COMMAND_TAIL, MatchEndReason, MenuCommand, MenuCommandKind, PelletFxRecord, PersonalClass,
+    RadarMode, RemoteMissile, RngDebugMeta, SIM_EVENT_ROSTER, ScriptBlur, ScriptControls,
+    ScriptDepthOfField, ScriptDvars, ScriptSeat, SimEvent, SimEventRow, SnapshotMeta,
+    TargetBoxDvar, UNRELIABLE_SIM_EVENT_COUNT, ViewEffects, VisionChange, is_postfx_dvar,
+    sim_event_is_reliable,
 };
 pub use player_anim_script::{
     AnimConditions, AnimScriptCommand, AnimScriptCondition, AnimScriptItem, PlayerAnimScript,
@@ -122,11 +135,17 @@ pub use sound_alias_cs::{
     hud_string_in_occupied, name_in_occupied,
 };
 pub use spawn::{
-    AuthoredSpawnPoint, HostGameModeSelection, MatchBootstrap, SPAWN_BAD_DIST, SPAWN_IDEAL_DIST,
-    SpawnAttemptReport, SpawnDecision, SpawnReject, host_game_mode_kind, pick_ffa_spawn,
-    spawn_candidate_indices, spawn_candidate_indices_for,
+    AuthoredSpawnPoint, HostCheats, HostGameModeSelection, MatchBootstrap, SPAWN_BAD_DIST,
+    SPAWN_IDEAL_DIST, SpawnAttemptReport, SpawnDecision, SpawnReject, host_game_mode_kind,
+    pick_ffa_spawn, spawn_candidate_indices, spawn_candidate_indices_for,
 };
 pub use step::phase_materialize_entity_dobjs;
+
+pub const WEAPON_MODEL_PREFIX: &str = "#weapon:";
+
+pub fn weapon_model_attachment(model: &str) -> Option<u32> {
+    model.strip_prefix(WEAPON_MODEL_PREFIX)?.parse().ok()
+}
 pub use world::{
     ClientId, HitvolDumpRow, PendingLocalSound, PendingPlayerCardEvent, PendingPlayerCardKind,
     PendingPrint, PlayerKitCollision, SimBrush, SimClipBsp, SimClipCmodels, SimClipMesh,
@@ -149,9 +168,18 @@ pub use time_scale::ScriptSlowMotion;
 mod objectives;
 pub use objectives::{
     CompassObjective, CompassVehicle, ObjectiveMatch, ObjectiveState, ScriptEffect,
+    VehicleHudTarget,
 };
 
 pub use world::{SimContent, SimContentBuilder, WeaponSetup};
 
 mod script_audio;
 pub use script_audio::{ScriptAmbient, ScriptAudioCommand};
+
+pub use input::PlayerProfile;
+
+mod tick_result;
+pub use tick_result::{
+    ActionOutcome, ActionResult, FireCommandOutcome, FireCommandRefusal, FireCommandResult,
+    TickEffects, TickResult,
+};

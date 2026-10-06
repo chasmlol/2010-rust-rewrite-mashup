@@ -1,0 +1,671 @@
+#include maps\mp\_utility;
+#include common_scripts\utility;
+
+main()
+{
+	level.t6Fx = [];
+	level.t6Fx[ "betty_explosion" ] = loadfx( "weapon/bouncing_betty/fx_betty_explosion" );
+	level.t6Fx[ "betty_destroyed" ] = loadfx( "weapon/bouncing_betty/fx_betty_destroyed" );
+	level.t6Fx[ "betty_launch" ] = loadfx( "weapon/bouncing_betty/fx_betty_launch_dust" );
+	level.t6Fx[ "betty_friendly" ] = loadfx( "weapon/bouncing_betty/fx_betty_light_green" );
+	level.t6Fx[ "betty_enemy" ] = loadfx( "weapon/bouncing_betty/fx_betty_light_red" );
+	level.t6Fx[ "trophy_flash" ] = loadfx( "weapon/trophy_system/fx_trophy_flash_lng" );
+	level.t6Fx[ "trophy_detonation" ] = loadfx( "weapon/trophy_system/fx_trophy_radius_detonation" );
+	level.t6Fx[ "trophy_friendly" ] = loadfx( "weapon/trophy_system/fx_trophy_light_friendly" );
+	level.t6Fx[ "trophy_enemy" ] = loadfx( "weapon/trophy_system/fx_trophy_light_enemy" );
+	level.t6Fx[ "trophy_deploy" ] = loadfx( "weapon/trophy_system/fx_trophy_deploy_impact" );
+	level.t6Fx[ "shock_friendly" ] = loadfx( "weapon/grenade/fx_prox_grenade_scan_grn" );
+	level.t6Fx[ "shock_enemy" ] = loadfx( "weapon/grenade/fx_prox_grenade_scan_red" );
+	level.t6Fx[ "shock_warning" ] = loadfx( "weapon/grenade/fx_prox_grenade_wrn_red" );
+	level.t6Fx[ "shock_player" ] = loadfx( "weapon/grenade/fx_prox_grenade_impact_player_spwner" );
+	level.t6Fx[ "sensor_friendly" ] = loadfx( "weapon/sensor_grenade/fx_sensor_exp_scan_friendly" );
+	level.t6Fx[ "sensor_enemy" ] = loadfx( "weapon/sensor_grenade/fx_sensor_exp_scan_enemy" );
+	level.t6Fx[ "c4_friendly" ] = loadfx( "weapon/c4/fx_c4_light_green" );
+	level.t6Fx[ "c4_enemy" ] = loadfx( "weapon/c4/fx_c4_light_red" );
+	level.t6Fx[ "emp_fried" ] = loadfx( "weapon/emp/fx_emp_explosion_equip" );
+	level.t6Fx[ "disabled_spark" ] = loadfx( "weapon/grenade/fx_spark_disabled_weapon" );
+	level.t6Fx[ "equipment_explode" ] = loadfx( "explosions/fx_exp_equipment" );
+	level.t6Fx[ "equipment_explode_lg" ] = loadfx( "explosions/fx_exp_equipment_lg" );
+	level.t6Fx[ "fizzle" ] = loadfx( "misc/fx_equip_tac_insert_exp" );
+	level.t6Fx[ "emp_explosion" ] = loadfx( "explosions/fx_flashbang" );
+	precacheShader( "compassping_enemy" );
+
+	level.t6PingIds = [];
+	for ( id = 31; id >= 24; id-- )
+		level.t6PingIds[ level.t6PingIds.size ] = id;
+
+	level thread onPlayerConnect();
+}
+
+onPlayerConnect()
+{
+	for ( ;; )
+	{
+		level waittill( "connected", player );
+		player.t6Objects = [];
+		player thread onPlayerSpawned();
+		player thread deleteObjectsOnDisconnect();
+	}
+}
+
+onPlayerSpawned()
+{
+	self endon( "disconnect" );
+
+	for ( ;; )
+	{
+		self waittill( "spawned_player" );
+
+		level.claymoreDetectionGracePeriod = 0.6;
+
+		self deleteObjects();
+
+		if ( isDefined( self.t6lethal ) && self hasWeapon( self.t6lethal ) )
+			self setWeaponAmmoClip( self.t6lethal, 1 );
+		if ( isDefined( self.t6tactical ) && self hasWeapon( self.t6tactical ) )
+			self setWeaponAmmoClip( self.t6tactical, 1 );
+
+		self thread watchEquipment();
+	}
+}
+
+deleteObjects()
+{
+	if ( !isDefined( self.t6Objects ) )
+		return;
+
+	foreach ( object in self.t6Objects )
+	{
+		if ( isDefined( object ) )
+			object delete();
+	}
+	self.t6Objects = [];
+}
+
+deleteObjectsOnDisconnect()
+{
+	self waittill( "disconnect" );
+	self deleteObjects();
+}
+
+watchEquipment()
+{
+	self endon( "death" );
+	self endon( "disconnect" );
+
+	for ( ;; )
+	{
+		self waittill( "grenade_fire", grenade, weapName );
+
+		if ( !isDefined( grenade ) )
+			continue;
+
+		switch ( weapName )
+		{
+			case "bouncingbetty_mp":
+				grenade thread bettyThink( self );
+				break;
+			case "proximity_grenade_mp":
+				grenade thread shockChargeThink( self );
+				break;
+			case "trophy_system_mp":
+				grenade thread trophyThink( self );
+				break;
+			case "sensor_grenade_mp":
+				grenade thread sensorThink( self );
+				break;
+			case "emp_grenade_mp":
+				grenade thread empGrenadeThink( self );
+				break;
+			case "c4_mp":
+				if ( isDefined( self.t6lethal ) && self.t6lethal == weapName )
+					grenade thread plantedLights( self, "c4" );
+				break;
+		}
+	}
+}
+
+addObject( owner )
+{
+	owner.t6Objects = array_removeUndefined( owner.t6Objects );
+	owner.t6Objects[ owner.t6Objects.size ] = self;
+	self.owner = owner;
+	self.team = owner.team;
+	self.t6Equipment = true;
+}
+
+isEnemyOf( owner, player )
+{
+	if ( !isDefined( owner ) )
+		return true;
+	if ( player == owner )
+		return false;
+	if ( level.teamBased )
+		return player.team != owner.team;
+	return true;
+}
+
+waitTillPlanted()
+{
+	self endon( "death" );
+	self waittill( "missile_stuck" );
+}
+
+isStunned()
+{
+	return isDefined( self.t6StunnedUntil ) && getTime() < self.t6StunnedUntil;
+}
+
+waitTillDamaged( owner, health )
+{
+	self endon( "death" );
+	self setCanDamage( true );
+	self.maxhealth = 100000;
+	self.health = self.maxhealth;
+	taken = 0;
+
+	for ( ;; )
+	{
+		self waittill( "damage", damage, attacker, direction, point, type );
+
+		if ( !isPlayer( attacker ) )
+			continue;
+		if ( !maps\mp\gametypes\_weapons::friendlyFireCheck( owner, attacker ) )
+			continue;
+		if ( damage < 5 && isDefined( type ) && isSubStr( type, "MOD_GRENADE" ) )
+		{
+			self.t6StunnedUntil = getTime() + 1000;
+			continue;
+		}
+
+		if ( isDefined( type ) && type == "MOD_MELEE" )
+			taken = health;
+		else
+			taken += damage;
+
+		if ( taken >= health )
+			return attacker;
+	}
+}
+
+enemyDestroyable( owner, hint )
+{
+	self endon( "death" );
+	self waitTillPlanted();
+
+	trigger = spawn( "script_origin", self.origin );
+	self thread deleteOnDeath( trigger );
+	trigger setCursorHint( "HINT_NOICON" );
+	trigger setHintString( hint );
+	trigger thread keepEnemyUsable( owner );
+
+	for ( ;; )
+	{
+		trigger waittill( "trigger", player );
+
+		if ( !isEnemyOf( owner, player ) )
+			continue;
+
+		playFx( level.t6Fx[ "fizzle" ], self.origin );
+		playSoundAtPos( self.origin, "dst_tac_insert_break" );
+		self delete();
+		return;
+	}
+}
+
+keepEnemyUsable( owner )
+{
+	self endon( "death" );
+
+	for ( ;; )
+	{
+		self makeEnemyUsable( owner );
+		level waittill_either( "joined_team", "player_spawned" );
+	}
+}
+
+plantedLights( owner, name )
+{
+	self waitTillPlanted();
+	self thread teamLights( owner, name, ( 0, 0, 0 ) );
+}
+
+teamLights( owner, name, offset )
+{
+	self endon( "death" );
+	wait 0.05;
+
+	origin = self.origin + offset;
+	up = anglesToUp( self.angles );
+	forward = anglesToForward( self.angles );
+	friendly = spawnFx( level.t6Fx[ name + "_friendly" ], origin, forward, up );
+	enemy = spawnFx( level.t6Fx[ name + "_enemy" ], origin, forward, up );
+	triggerFx( friendly );
+	triggerFx( enemy );
+	self thread deleteOnDeath( friendly );
+	self thread deleteOnDeath( enemy );
+
+	for ( ;; )
+	{
+		friendly hide();
+		enemy hide();
+		foreach ( player in level.players )
+		{
+			if ( isEnemyOf( owner, player ) )
+				enemy showToPlayer( player );
+			else
+				friendly showToPlayer( player );
+		}
+		level waittill_either( "joined_team", "player_spawned" );
+	}
+}
+
+deleteOnDeath( ent )
+{
+	self waittill( "death" );
+	wait 0.05;
+	if ( isDefined( ent ) )
+		ent delete();
+}
+
+destroyed( fx )
+{
+	if ( !isDefined( fx ) )
+		fx = "equipment_explode";
+	playFx( level.t6Fx[ fx ], self.origin );
+	playSoundAtPos( self.origin, "dst_equipment_destroy" );
+	self delete();
+}
+
+waitForTarget( owner, radius, stillToo )
+{
+	self endon( "death" );
+
+	area = spawn( "trigger_radius", self.origin + ( 0, 0, 0 - radius ), 0, radius, radius * 2 );
+	self thread deleteOnDeath( area );
+	traceOrigin = self.origin + anglesToUp( self.angles );
+
+	for ( ;; )
+	{
+		area waittill( "trigger", ent );
+
+		if ( !isPlayer( ent ) || !isReallyAlive( ent ) )
+			continue;
+		if ( ent == owner )
+			continue;
+		if ( !maps\mp\gametypes\_weapons::friendlyFireCheck( owner, ent, 0 ) )
+			continue;
+		if ( !stillToo && lengthSquared( ent getVelocity() ) < 10 )
+			continue;
+		if ( self isStunned() )
+			continue;
+		if ( ent damageConeTrace( traceOrigin, self ) > 0 )
+			return ent;
+	}
+}
+
+bettyThink( owner )
+{
+	self endon( "death" );
+	self addObject( owner );
+	self thread bettyDestroyedWatch( owner );
+	self waitTillPlanted();
+	self thread teamLights( owner, "betty", ( 0, 0, 0 ) );
+	wait 0.1;
+
+	self waitForTarget( owner, 192, false );
+	self playSound( "wpn_claymore_alert" );
+	wait 0.6;
+
+	mover = spawn( "script_model", self.origin );
+	mover.angles = self.angles;
+	mover setModel( "tag_origin" );
+	mover attach( self.weaponmodel, "tag_origin" );
+	mover thread bettyJumpAndExplode( owner, self.origin );
+	self delete();
+}
+
+bettyJumpAndExplode( owner, origin )
+{
+	explodePos = origin + ( 0, 0, 65 );
+	self moveTo( explodePos, 0.65, 0.65, 0 );
+	self rotateVelocity( ( 0, 750, 32 ), 0.65, 0, 0.65 );
+	playFx( level.t6Fx[ "betty_launch" ], origin );
+	self playSound( "fly_betty_jump" );
+	wait 0.65;
+
+	self playSound( "fly_betty_explo" );
+	wait 0.05;
+
+	if ( isDefined( owner ) )
+		self radiusDamage( explodePos, 256, 210, 70, owner, "MOD_EXPLOSIVE", "bouncingbetty_mp" );
+	else
+		self radiusDamage( explodePos, 256, 210, 70, undefined, "MOD_EXPLOSIVE", "bouncingbetty_mp" );
+	playFx( level.t6Fx[ "betty_explosion" ], explodePos );
+	self hide();
+	wait 0.2;
+	self delete();
+}
+
+bettyDestroyedWatch( owner )
+{
+	attacker = self waitTillDamaged( owner, 1 );
+	if ( !isDefined( self ) )
+		return;
+
+	origin = self.origin;
+	playFx( level.t6Fx[ "betty_destroyed" ], origin );
+	playSoundAtPos( origin, "dst_equipment_destroy" );
+	self radiusDamage( origin, 128, 110, 10, owner, "MOD_EXPLOSIVE", "bouncingbetty_mp" );
+	self delete();
+}
+
+shockChargeThink( owner )
+{
+	self endon( "death" );
+	self addObject( owner );
+	self thread shockOnExplode( owner );
+	self thread shockDestroyedWatch( owner );
+	self waitTillPlanted();
+	self thread teamLights( owner, "shock", ( 0, 0, 0 ) );
+	wait 0.1;
+
+	self waitForTarget( owner, 150, true );
+	playFx( level.t6Fx[ "shock_warning" ], self.origin );
+	wait 0.1;
+	self detonate( owner );
+}
+
+shockDestroyedWatch( owner )
+{
+	self waitTillDamaged( owner, 1 );
+	if ( isDefined( self ) )
+		self detonate( owner );
+}
+
+shockOnExplode( owner )
+{
+	self waittill( "explode", origin );
+
+	foreach ( player in level.players )
+	{
+		if ( !isReallyAlive( player ) || !isEnemyOf( owner, player ) )
+			continue;
+		if ( distanceSquared( player.origin, origin ) > 200 * 200 )
+			continue;
+		if ( !bulletTracePassed( origin + ( 0, 0, 4 ), player getEye(), false, player ) )
+			continue;
+
+		player thread shocked( owner, origin );
+	}
+}
+
+shocked( owner, origin )
+{
+	self notify( "t6_shocked" );
+	self endon( "t6_shocked" );
+	self endon( "death" );
+	self endon( "disconnect" );
+
+	self shellShock( "concussion_grenade_mp", 1.5 );
+	playFx( level.t6Fx[ "shock_player" ], self getEye() - ( 0, 0, 20 ) );
+	self playSound( "wpn_taser_mine_zap" );
+
+	for ( i = 0; i < 4; i++ )
+	{
+		wait 0.15;
+		if ( !isDefined( owner ) )
+			return;
+		self [[ level.callbackPlayerDamage ]]( owner, owner, 1, 0, "MOD_GRENADE_SPLASH", "proximity_grenade_mp", origin, vectorNormalize( self.origin - origin ), "none", 0 );
+	}
+
+	wait 0.85;
+	self shellShock( "concussion_grenade_mp", 0.6 );
+}
+
+trophyThink( owner )
+{
+	self endon( "death" );
+	self addObject( owner );
+	self thread trophyDamageWatch( owner );
+	self thread enemyDestroyable( owner, "Press ^3[{+activate}]^7 to destroy Trophy System" );
+	self waitTillPlanted();
+	playFx( level.t6Fx[ "trophy_deploy" ], self.origin );
+	self playLoopSound( "wpn_trophy_spin" );
+	self thread teamLights( owner, "trophy", anglesToUp( self.angles ) * 15 );
+	wait 0.1;
+
+	self.ammo = 2;
+	eye = self.origin + ( 0, 0, 29 );
+
+	for ( ;; )
+	{
+		wait 0.05;
+
+		if ( self isStunned() )
+			continue;
+
+		target = self trophyTarget( owner, eye );
+		if ( !isDefined( target ) )
+			continue;
+
+		position = target.origin;
+		playFx( level.t6Fx[ "trophy_flash" ], self.origin + ( 0, 0, 15 ), position - self.origin, anglesToUp( self.angles ) );
+		playFx( level.t6Fx[ "trophy_detonation" ], position );
+		self playSound( "wpn_trophy_alert" );
+
+		if ( isDefined( target.enemyTrigger ) && isDefined( target.playerSpawnPos ) )
+			target maps\mp\perks\_perkfunctions::deleteTI( target );
+		else
+			target delete();
+
+		self radiusDamage( position, 128, 105, 10, owner );
+
+		self.ammo--;
+		if ( self.ammo <= 0 )
+		{
+			self destroyed( "equipment_explode_lg" );
+			return;
+		}
+	}
+}
+
+trophyTarget( owner, eye )
+{
+	missiles = getEntArray( "grenade", "classname" );
+	missiles = array_combine( missiles, getEntArray( "rocket", "classname" ) );
+
+	foreach ( missile in missiles )
+	{
+		if ( missile == self )
+			continue;
+		if ( isDefined( missile.weaponname ) && ( missile.weaponname == "claymore_mp" || missile.weaponname == "flare_mp" ) )
+			continue;
+		if ( isDefined( missile.nativename ) && missile.nativename == "tactical_insertion_mp" )
+			continue;
+
+		missileOwner = missile.owner;
+		if ( !isDefined( missileOwner ) )
+			missileOwner = getMissileOwner( missile );
+		if ( !isDefined( missileOwner ) || !isPlayer( missileOwner ) || !isEnemyOf( owner, missileOwner ) )
+			continue;
+
+		if ( distanceSquared( missile.origin, self.origin ) >= 512 * 512 )
+			continue;
+		if ( !bulletTracePassed( missile.origin, eye, false, self ) )
+			continue;
+
+		return missile;
+	}
+
+	foreach ( player in level.players )
+	{
+		stick = player.setSpawnPoint;
+		if ( !isDefined( stick ) || !isEnemyOf( owner, player ) )
+			continue;
+		if ( distanceSquared( stick.origin, self.origin ) >= 512 * 512 )
+			continue;
+		if ( !bulletTracePassed( stick.origin + ( 0, 0, 4 ), eye, false, self ) )
+			continue;
+
+		return stick;
+	}
+
+	return undefined;
+}
+
+trophyDamageWatch( owner )
+{
+	self waitTillDamaged( owner, 20 );
+	if ( isDefined( self ) )
+		self destroyed( "equipment_explode_lg" );
+}
+
+sensorThink( owner )
+{
+	self endon( "death" );
+	self addObject( owner );
+	self thread sensorDamageWatch( owner );
+	self thread enemyDestroyable( owner, "Press ^3[{+activate}]^7 to destroy Sensor Grenade" );
+	self waitTillPlanted();
+	self playLoopSound( "fly_sensor_nade_lp" );
+	self thread teamLights( owner, "sensor", ( 0, 0, 0 ) );
+
+	for ( ;; )
+	{
+		origin = self.origin + ( 0, 0, 4 );
+
+		foreach ( player in level.players )
+		{
+			if ( !isDefined( owner ) )
+				return;
+			if ( !isReallyAlive( player ) || !isEnemyOf( owner, player ) )
+				continue;
+			if ( distanceSquared( player.origin, origin ) >= 750 * 750 )
+				continue;
+			trace = bulletTrace( origin, player.origin + ( 0, 0, 12 ), false, player );
+			if ( trace[ "fraction" ] != 1 )
+				continue;
+
+			thread sensorPing( owner, player.origin );
+		}
+
+		wait 1.0;
+	}
+}
+
+sensorPing( owner, position )
+{
+	if ( !level.t6PingIds.size )
+		return;
+
+	id = level.t6PingIds[ 0 ];
+	level.t6PingIds = array_remove( level.t6PingIds, id );
+
+	objective_add( id, "active", position, "compassping_enemy" );
+	if ( level.teamBased )
+		objective_team( id, owner.team );
+	else
+		objective_team( id, owner );
+
+	wait 1.0;
+
+	objective_delete( id );
+	level.t6PingIds[ level.t6PingIds.size ] = id;
+}
+
+sensorDamageWatch( owner )
+{
+	self waitTillDamaged( owner, 1 );
+	if ( isDefined( self ) )
+		self destroyed();
+}
+
+empGrenadeThink( owner )
+{
+	self waittill( "explode", origin );
+
+	playFx( level.t6Fx[ "emp_explosion" ], origin );
+
+	foreach ( player in level.players )
+	{
+		if ( !isReallyAlive( player ) )
+			continue;
+		if ( distanceSquared( player.origin, origin ) >= 512 * 512 )
+			continue;
+
+		if ( player == owner )
+			player thread empJammed( 1 );
+		else if ( isEnemyOf( owner, player ) )
+		{
+			player [[ level.callbackPlayerDamage ]]( owner, owner, 1, 0, "MOD_GRENADE_SPLASH", "emp_grenade_mp", origin, vectorNormalize( player.origin - origin ), "none", 0 );
+			player thread empJammed( 12 );
+		}
+	}
+
+	foreach ( player in level.players )
+	{
+		if ( !isEnemyOf( owner, player ) )
+			continue;
+
+		equipment = [];
+		if ( isDefined( player.t6Objects ) )
+			equipment = array_combine( equipment, player.t6Objects );
+		if ( isDefined( player.c4array ) )
+			equipment = array_combine( equipment, player.c4array );
+		if ( isDefined( player.claymorearray ) )
+			equipment = array_combine( equipment, player.claymorearray );
+
+		foreach ( object in equipment )
+		{
+			if ( isDefined( object ) && distanceSquared( object.origin, origin ) < 512 * 512 )
+				object thread empFried();
+		}
+	}
+}
+
+empFried()
+{
+	self endon( "death" );
+	self.t6StunnedUntil = getTime() + 2000;
+	self.disabled = true;
+	playFx( level.t6Fx[ "emp_fried" ], self.origin + ( 0, 0, 5 ) );
+	playFx( level.t6Fx[ "disabled_spark" ], self.origin );
+	self playSound( "dst_disable_spark" );
+	wait 1.1;
+	self delete();
+}
+
+empJammed( duration )
+{
+	self notify( "t6_emp_jammed" );
+	self endon( "t6_emp_jammed" );
+	self endon( "death" );
+	self endon( "disconnect" );
+
+	self shellShock( "flashbang_mp", 1 );
+	self setEMPJammed( true );
+	self thread empClearOnDeath();
+	wait duration;
+	self notify( "t6_emp_over" );
+	self empClear();
+}
+
+empClearOnDeath()
+{
+	self endon( "t6_emp_jammed" );
+	self endon( "t6_emp_over" );
+	self endon( "disconnect" );
+	self waittill( "death" );
+	self empClear();
+}
+
+empClear()
+{
+	if ( level.teamBased && isDefined( level.teamEMPed ) && level.teamEMPed[ self.team ] )
+		return;
+	if ( !level.teamBased && isDefined( level.empPlayer ) && level.empPlayer != self )
+		return;
+
+	self setEMPJammed( false );
+}

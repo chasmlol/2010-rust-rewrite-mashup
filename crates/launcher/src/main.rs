@@ -8,7 +8,40 @@ mod first_run;
 #[global_allocator]
 static PROCESS_ALLOCATOR: diag::ProcessCountingAllocator = diag::ProcessCountingAllocator;
 
+const LICENSES: [(&str, &str); 5] = [
+    ("LICENSE", include_str!("../../../LICENSE")),
+    ("NOTICE", include_str!("../../../NOTICE")),
+    (
+        "OFL-Oxanium.txt",
+        include_str!("../../ui/assets/OFL-Oxanium.txt"),
+    ),
+    (
+        "OFL-FiraMono.txt",
+        include_str!("../../console/assets/OFL-FiraMono.txt"),
+    ),
+    (
+        "THIRD-PARTY-LICENSES.txt",
+        include_str!("../../../THIRD-PARTY-LICENSES.txt"),
+    ),
+];
+
 fn main() {
+    if std::env::args_os()
+        .nth(1)
+        .is_some_and(|arg| arg == "licenses")
+    {
+        for (name, text) in LICENSES {
+            println!("==> {name} <==\n\n{text}\n");
+        }
+        return;
+    }
+    let mut args = match updater::startup().unwrap_or_else(|e| diag::exit_launch_error(&e)) {
+        Some(args) => args,
+        None => return,
+    };
+    if args.is_empty() {
+        args.push("menu".into());
+    }
     bootstrap::bench::arm();
     prepare_process_root().unwrap_or_else(|e| {
         diag::exit_launch_error(&e);
@@ -25,10 +58,10 @@ fn main() {
     }
     let artifacts = ensure_artifacts_dir().unwrap_or_else(|e| diag::exit_launch_error(&e));
     announce_log(diag::init_log(&artifacts));
-    let (mode, acceptance) =
+    let (mode, acceptance, cheats) =
         bootstrap::parse_cli(args.into_iter()).unwrap_or_else(|e| diag::exit_launch_error(&e));
     let games = games_root_from_env().unwrap_or_else(|e| diag::exit_launch_error(&e));
-    bootstrap::launch(games, artifacts, mode, acceptance);
+    bootstrap::launch(games, artifacts, mode, acceptance, cheats);
 }
 
 fn prepare_process_root() -> Result<(), String> {

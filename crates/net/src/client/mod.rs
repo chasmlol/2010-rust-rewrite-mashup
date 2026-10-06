@@ -1,3 +1,4 @@
+pub mod fire_verdict;
 pub mod frame_census;
 pub mod frame_clock;
 pub mod input;

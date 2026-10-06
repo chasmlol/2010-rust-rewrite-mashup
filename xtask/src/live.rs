@@ -77,31 +77,20 @@ pub fn live_gate(root: &Path, recipe: Option<String>, trace: Option<PathBuf>) ->
     let path = match resolve_trace(root, trace.as_deref()) {
         Ok(path) => path,
         Err(error) => {
-            println!("{error}");
             println!("  make lifecycle-{}", recipe.label());
-            return false;
+            return crate::scenario::harness_failure(&error);
         }
     };
     let rows = match load(root, &path) {
         Ok(rows) => rows,
         Err(error) => {
-            println!("{error}");
-            return false;
+            return crate::scenario::harness_failure(&error);
         }
     };
     let claims = check(recipe, &rows);
     let mut ok = true;
     for claim in &claims {
-        println!(
-            "\n[{}] {} — {}",
-            claim.id,
-            claim.title,
-            if claim.passed { "green" } else { "RED" }
-        );
-        for line in &claim.evidence {
-            println!("  {line}");
-        }
-        ok &= claim.passed;
+        ok &= claim.report();
     }
     ok
 }

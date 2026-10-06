@@ -78,3 +78,13 @@ pub(crate) fn string(args: &[Value], index: usize) -> Result<String, String> {
             .ok_or_else(|| format!("parameter {} cannot be cast to string", index + 1)),
     }
 }
+
+pub(crate) fn byte_string(
+    args: &[Value],
+    index: usize,
+) -> Result<crate::script::ScriptString, String> {
+    match arg(args, index)? {
+        Value::String(text) => Ok(text.clone()),
+        _ => string(args, index).map(Into::into),
+    }
+}

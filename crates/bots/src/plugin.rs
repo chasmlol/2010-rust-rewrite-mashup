@@ -115,7 +115,8 @@ impl Plugin for BotsPlugin {
                     boot_bots,
                     apply_bot_tp,
                 )
-                    .chain(),
+                    .chain()
+                    .after(ClientSet::Load),
             )
             .add_systems(
                 Update,
@@ -144,7 +145,7 @@ fn reset_roster_on_match_torn_down(
     }
     *roster = BotRoster::default();
     *nav = BotNav::default();
-    ready.0 = false;
+    *ready = BotNavigationReady::default();
 }
 
 fn drain_bot_add_queue(
@@ -152,6 +153,7 @@ fn drain_bot_add_queue(
     mut roster: ResMut<BotRoster>,
     local: Res<LocalPresentClient>,
     world: Option<Res<AuthorityWorld>>,
+    hub: Option<Res<net::UdpAuthorityHub>>,
 ) {
     let requests = queue.drain();
     if requests.is_empty() {
@@ -160,6 +162,9 @@ fn drain_bot_add_queue(
     let mut taken = vec![local.0];
     if let Some(world) = world.as_ref() {
         taken.extend(world.0.clients_scoreboard().into_iter().map(|(id, _)| id));
+    }
+    if let Some(hub) = hub.as_ref() {
+        taken.extend(hub.connections.clients().map(sim::ClientId));
     }
     for request in requests {
         let count = request.count;
@@ -200,13 +205,30 @@ fn boot_bots(
     mut actions: ResMut<ClientActionInbox>,
     mut request_ids: ResMut<net::ActionRequestIds>,
     installed: Option<Res<HasWorld>>,
+    world: Option<ResMut<AuthorityWorld>>,
 ) {
+    let Some(mut world) = world else {
+        return;
+    };
     if !installed.is_some_and(|installed| installed.0) {
         return;
     }
     let seed = roster.seed;
     for bot in &mut roster.bots {
         if bot.joined {
+            continue;
+        }
+        if world.0.gsc_realm() == Some(sim::script::Realm::Iw4)
+            && let Err(error) = world
+                .0
+                .persistent_data_mut()
+                .admit_temporary(bot.id, bot.account)
+        {
+            diag::warn!(
+                Sim,
+                "bots: client {} account admission failed: {error:?}",
+                bot.id.0
+            );
             continue;
         }
         let index = default_class_index(seed, bot.id, bot.class_picks);
@@ -231,11 +253,7 @@ fn boot_bots(
                 bot.id,
                 ClientAction::SetName {
                     request_id: name_request,
-                    name: entity_iw4::pack_client_state_name(if bot.brain.is_none() {
-                        "dummy"
-                    } else {
-                        "bot"
-                    }),
+                    name: entity_iw4::pack_client_state_name(bot.name),
                 },
             ),
         ];
@@ -494,12 +512,14 @@ fn prepare_navigation(
     world: Option<Res<AuthorityWorld>>,
     installed: Option<Res<HasWorld>>,
     role: Res<RuntimeRole>,
+    generation: Res<frame::WorldGeneration>,
     mut nav: ResMut<BotNav>,
     mut ready: ResMut<BotNavigationReady>,
     load: Option<Res<assets::MapLoadProcess>>,
 ) {
+    ready.0 = frame::WorldReadiness::new(*generation, frame::ReadinessState::Pending);
     if !matches!(*role, RuntimeRole::Listen | RuntimeRole::Dedicated) {
-        ready.0 = true;
+        ready.0.state = frame::ReadinessState::Ready;
         return;
     }
     if !installed.is_some_and(|installed| installed.0) {
@@ -508,7 +528,9 @@ fn prepare_navigation(
     let Some(world) = world else {
         return;
     };
-    ready.0 = refresh_nav(&world.0, &mut nav, load.as_deref());
+    if refresh_nav(&world.0, &mut nav, load.as_deref()) {
+        ready.0.state = frame::ReadinessState::Ready;
+    }
 }
 
 fn refresh_nav(world: &SimWorld, nav: &mut BotNav, load: Option<&assets::MapLoadProcess>) -> bool {

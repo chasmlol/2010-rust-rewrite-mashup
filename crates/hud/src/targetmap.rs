@@ -368,9 +368,12 @@ pub(crate) fn update_targetmap(
     let (mut menu, _) = inherit_shared_vis(menu);
     menu.items
         .retain(|item| !item.background.to_ascii_lowercase().contains("stencil"));
+    let Some(map_namespace) = hud_images.map_namespace() else {
+        return;
+    };
     let scene = Scene {
         compass: &drawable,
-        map_namespace: hud_images.map_namespace(),
+        map_namespace,
         selection,
         cursor: *cursor,
         origin: [ps.origin[0], ps.origin[1]],

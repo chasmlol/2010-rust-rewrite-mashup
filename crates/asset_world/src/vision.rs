@@ -173,3 +173,92 @@ pub fn parse_film_vision_rawfile(
         glow_bloom_intensity: glow.4,
     }))
 }
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct T6FilmGrade {
+    pub controls: [[f32; 4]; 14],
+}
+
+fn vector4(value: &str) -> Option<[f32; 4]> {
+    let values: Vec<f32> = value
+        .trim()
+        .trim_matches('"')
+        .split_whitespace()
+        .map(str::parse)
+        .collect::<Result<_, _>>()
+        .ok()?;
+    values.try_into().ok()
+}
+
+pub fn parse_t6_film_grade(source: &str) -> Option<T6FilmGrade> {
+    let mut enable = false;
+    let mut fields = std::collections::HashMap::new();
+    for line in source.lines().map(str::trim) {
+        let Some(split) = line.find(char::is_whitespace) else {
+            continue;
+        };
+        let key = line[..split].to_ascii_lowercase();
+        let value = line[split..].trim();
+        if key == "r_filmenable" {
+            enable = value
+                .trim_matches('"')
+                .parse::<f32>()
+                .is_ok_and(|v| v != 0.0);
+        } else if let Some(name) = key.strip_prefix("vc_") {
+            fields.insert(name.to_owned(), vector4(value)?);
+        }
+    }
+    if !enable {
+        return None;
+    }
+    let field = |name: &str| fields.get(name).copied();
+    let (mut rs, mut re) = (field("rs")?, field("re")?);
+    const EPSILON: f32 = 1.0 / 4096.0;
+    if re[0] <= rs[0] {
+        re[0] = rs[0] + EPSILON;
+    }
+    if re[1] <= rs[1] {
+        rs[1] = re[1] - EPSILON;
+    }
+    if re[2] <= rs[2] {
+        rs[2] = re[2] - EPSILON;
+    }
+    if rs[3] <= re[2] {
+        rs[3] = re[2] + EPSILON;
+    }
+    if re[3] <= rs[3] {
+        re[3] = rs[3] + EPSILON;
+    }
+    let scale = [
+        1.0 / (rs[0] - re[0]),
+        1.0 / (re[1] - rs[1]),
+        1.0 / (re[2] - rs[2]),
+        1.0 / (rs[3] - re[3]),
+    ];
+    let bias = [
+        -scale[0] * re[0],
+        -scale[1] * rs[1],
+        -scale[2] * rs[2],
+        -scale[3] * re[3],
+    ];
+    let fsm = field("fsm")?;
+    let weight = 1.0 / (fsm[0] + fsm[1] + fsm[2]);
+    Some(T6FilmGrade {
+        controls: [
+            scale,
+            bias,
+            field("smr")?,
+            field("mmr")?,
+            field("hmr")?,
+            field("smg")?,
+            field("mmg")?,
+            field("hmg")?,
+            field("smb")?,
+            field("mmb")?,
+            field("hmb")?,
+            field("fgm")?,
+            [fsm[0] * weight, fsm[1] * weight, fsm[2] * weight, fsm[3]],
+            field("fbm")?,
+        ],
+    })
+}

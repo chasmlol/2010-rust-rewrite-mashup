@@ -1,10 +1,10 @@
-use assets::{PreparedLocalizedStrings, PreparedWeapons};
+use assets::{BoundWeapons, PreparedLocalizedStrings};
 
 use crate::gaps::{GapCause, HudGap, HudPresentationGaps};
 
 pub(crate) fn localized_weapon_name(
     viewmodel_index: u32,
-    weapons: Option<&PreparedWeapons>,
+    weapons: Option<&BoundWeapons<'_>>,
     strings: Option<&PreparedLocalizedStrings>,
     gaps: &mut HudPresentationGaps,
 ) -> Option<String> {
@@ -12,7 +12,7 @@ pub(crate) fn localized_weapon_name(
         gaps.raise(GapCause::NameNoWeaponCatalog);
         return None;
     };
-    let Some(key) = weapons.0.display_name_key_of(viewmodel_index) else {
+    let Some(key) = weapons.registry().display_name_key_of(viewmodel_index) else {
         gaps.raise(GapCause::NameNoDisplayNameKey { viewmodel_index });
         return None;
     };
@@ -21,10 +21,28 @@ pub(crate) fn localized_weapon_name(
         gaps.raise(GapCause::NoStringTable);
         return None;
     };
-    match strings.0.text(key) {
+    let text = match weapons.registry().identity_namespace_of(viewmodel_index) {
+        Some(namespace) => strings.0.text_in(namespace, key),
+        None => strings.0.text(key),
+    };
+    match text {
         Some(text) => {
             gaps.clear(HudGap::LocalizedText);
-            Some(text.to_owned())
+            let mut name = text.to_owned();
+            for key in weapons
+                .registry()
+                .attachment_caption_keys_of(viewmodel_index)
+            {
+                let caption = match weapons.registry().identity_namespace_of(viewmodel_index) {
+                    Some(namespace) => strings.0.text_in(namespace, key),
+                    None => strings.0.text(key),
+                };
+                if let Some(caption) = caption {
+                    name.push(' ');
+                    name.push_str(caption);
+                }
+            }
+            Some(name)
         }
         None => {
             gaps.raise(GapCause::LocalizedRowMissing {

@@ -11,12 +11,15 @@ pub fn update_admission(
     mut signon: ResMut<SignonState>,
     mut admission: ResMut<ClientAdmission>,
     role: Res<RuntimeRole>,
-    hold: Option<Res<AuthorityLoadHold>>,
+    mut hold: Option<ResMut<AuthorityLoadHold>>,
     has_world: Option<Res<HasWorld>>,
     scene: Option<Res<WorldScene>>,
     audio: Option<Res<audio::AudioReady>>,
     mut live: Option<ResMut<LiveWorldIdentity>>,
     headless: Option<Res<frame::Headless>>,
+    generation: Res<frame::WorldGeneration>,
+    navigation: Option<Res<frame::BotNavigationReady>>,
+    mut policy: ResMut<crate::SessionReadinessPolicy>,
     minecraft: Option<Res<frame::MinecraftUi>>,
 ) {
     if let (Some(live), Some(installed)) = (live.as_mut(), admission.core.installed())
@@ -25,30 +28,74 @@ pub fn update_admission(
     {
         live.load_key = installed;
     }
-    let audio_ready = audio.is_none_or(|ready| ready.0);
-    // Local Skate data belongs to map preparation, so the first J press does
-    // not perform loading after the player has entered the game.
-    let skate_ready =
-        *role != RuntimeRole::Listen || skate.is_none_or(|skate| !skate.preload_pending);
-    let minecraft_ready = minecraft.is_none_or(|ui| !ui.loading_world);
-    let presentation_ready = headless.is_some()
-        || (scene.is_some_and(|scene| scene.spawned)
-            && audio_ready
-            && skate_ready
-            && minecraft_ready);
-    if presentation_ready && let Some(live) = live.as_ref() {
-        admission.core.apply_presentation(live.load_key);
+    let installed = has_world.is_some_and(|world| world.0)
+        && live.as_ref().is_some_and(|live| {
+            generation.0 == Some(live.load_key.local_load_request_id)
+                && admission.core.installed() == Some(live.load_key)
+        });
+    let mut decision = crate::readiness::decide_readiness(
+        *role,
+        headless.is_some(),
+        *generation,
+        installed,
+        navigation.as_ref().map(|report| report.0),
+        scene.as_ref().map(|scene| scene.readiness),
+        audio.as_ref().map(|report| report.0),
+    );
+    let mashup_ready = headless.is_some()
+        || ((*role != RuntimeRole::Listen || skate.is_none_or(|skate| !skate.preload_pending))
+            && minecraft.is_none_or(|ui| !ui.loading_world));
+    decision.presentation &= mashup_ready;
+    decision.advancement &= mashup_ready;
+    if let Some(hold) = hold.as_mut() {
+        hold.0 = !decision.advancement;
     }
-    let world_installed = has_world.is_some_and(|world| world.0);
-    let authority_ready = !hold.is_some_and(|hold| hold.0);
-    admission
-        .core
-        .apply_local_authority_ready(authority_ready && world_installed);
-    let admitted = match *role {
-        RuntimeRole::Client => admission.core.class_select_allowed(),
-        RuntimeRole::Listen | RuntimeRole::Dedicated => admission.core.local_class_select_allowed(),
-        RuntimeRole::Replay => presentation_ready,
+    if let Some(live) = live.as_ref() {
+        admission
+            .core
+            .apply_presentation(live.load_key, decision.presentation);
+        admission
+            .core
+            .apply_local_authority_ready(live.load_key, decision.advancement);
+        if let Some(failure) = decision.failure {
+            let failure = net::SessionFail {
+                stage: net::FailStage::Load,
+                source: failure.source().to_owned(),
+                match_key: live.load_key.match_key,
+            };
+            admission.core.apply_fail(failure.clone());
+            signon.phase = SignonPhase::Failed(net::SignonFailReason::Transport {
+                source: failure.source,
+                stage: failure.stage,
+                match_key: failure.match_key,
+            });
+        }
+    }
+    let admitted = installed
+        && decision.presentation
+        && !signon.phase.is_failed()
+        && match *role {
+            RuntimeRole::Client => admission.core.class_select_allowed(),
+            RuntimeRole::Listen | RuntimeRole::Dedicated => {
+                admission.core.local_class_select_allowed()
+            }
+            RuntimeRole::Replay => !signon.phase.is_failed(),
+        };
+    *policy = crate::SessionReadinessPolicy {
+        load_key: live
+            .as_ref()
+            .filter(|_| installed)
+            .map(|live| live.load_key),
+        generation: *generation,
+        advancement_allowed: decision.advancement,
+        presentation_allowed: decision.presentation,
+        admission_allowed: admitted,
+        input_allowed: admitted && matches!(*role, RuntimeRole::Listen | RuntimeRole::Client),
     };
+    let presentation_ready = decision.presentation;
+    let audio_ready = audio
+        .as_ref()
+        .is_some_and(|report| report.0.ready_for(*generation));
     if signon.admitted != admitted {
         signon.admitted = admitted;
         diag::info!(
@@ -111,11 +158,12 @@ pub fn drive_class_select_screen(
 }
 
 pub fn register_admission(app: &mut App) {
-    app.add_systems(
-        Update,
-        update_admission
-            .in_set(ClientSet::Present)
-            .before(crate::local_arm::arm_local_from_presented),
-    )
-    .add_systems(Update, drive_class_select_screen.in_set(ClientSet::Ui));
+    app.init_resource::<crate::SessionReadinessPolicy>()
+        .add_systems(
+            Update,
+            update_admission
+                .in_set(ClientSet::Present)
+                .before(crate::local_arm::arm_local_from_presented),
+        )
+        .add_systems(Update, drive_class_select_screen.in_set(ClientSet::Ui));
 }

@@ -166,14 +166,18 @@ pub(crate) fn update_iris(
         hide_letterbox(&mut letterbox);
         return;
     };
-    let Some(facts) = weapons.0.facts_of(viewmodel_index) else {
+    let Some(facts) = weapons
+        .snapshot_weapon(presented.weapon_epoch(), viewmodel_index)
+        .ok()
+        .and_then(|weapon| weapon.hud_facts())
+    else {
         gaps.clear(HudGap::AdsOverlay);
         hide_overlay(&mut overlay);
         hide_letterbox(&mut letterbox);
         return;
     };
 
-    let hud_iris = weapons.0.overlay_is_hud_iris(viewmodel_index);
+    let hud_iris = weapons.registry().overlay_is_hud_iris(viewmodel_index);
     let weap = WeaponAdsOverlayFacts {
         ads_zoom_in_frac: facts.ads_zoom_in_frac,
         ads_zoom_out_frac: facts.ads_zoom_out_frac,
@@ -224,10 +228,10 @@ pub(crate) fn update_iris(
         hide_letterbox(&mut letterbox);
         return;
     }
-    let Some(image_name) = weapons.0.overlay_image_of(viewmodel_index) else {
+    let Some(image_name) = weapons.registry().overlay_image_of(viewmodel_index) else {
         gaps.raise(GapCause::AdsOverlayNamesNoImage {
             material: weapons
-                .0
+                .registry()
                 .overlay_material_of(viewmodel_index)
                 .map(str::to_owned),
         });
@@ -237,8 +241,8 @@ pub(crate) fn update_iris(
     };
 
     let weapon_ns = weapons
-        .0
-        .namespace_of(viewmodel_index)
+        .registry()
+        .component_namespace_of(viewmodel_index, asset_game::WeaponComponent::OverlayImage)
         .unwrap_or(crate::images::HUD_CHROME_NAMESPACE);
     let Some(handle) = hud_images.get(weapon_ns, image_name, &mut images) else {
         gaps.raise(GapCause::AdsOverlayImageMissing {

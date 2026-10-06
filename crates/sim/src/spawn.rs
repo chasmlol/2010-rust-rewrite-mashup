@@ -80,6 +80,9 @@ pub fn host_game_mode_kind() -> GameModeKind {
         .unwrap_or(GameModeKind::FreeForAll)
 }
 
+#[derive(bevy_ecs::prelude::Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct HostCheats(pub bool);
+
 #[derive(bevy_ecs::prelude::Resource, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct HostGameModeSelection(GameModeKind);
 
@@ -224,6 +227,14 @@ fn lerp3(a: [f32; 3], b: [f32; 3], f: f32) -> [f32; 3] {
 struct SpawnClip<'a>(&'a FrameWorld<'a>);
 
 impl CollisionBackend for SpawnClip<'_> {
+    fn penetrations(
+        &self,
+        input: GroundTraceInput,
+        contacts: &mut movement_iw4::recovery::ContactBuffer,
+    ) -> movement_iw4::recovery::Coverage {
+        self.0.penetrations(input, contacts)
+    }
+
     fn trace(&self, input: GroundTraceInput) -> Trace {
         self.0.trace_clip(
             input.start,
@@ -242,8 +253,11 @@ pub(crate) fn ground_spawn(world: &FrameWorld, feet: [f32; 3]) -> Result<[f32; 3
     // A Minecraft world's spawn is at map origin; the stand-in map's own
     // spawn points may be buried in its terrain.
     if crate::voxel::active() {
-        let _ = feet;
         return Ok([0.0, 0.0, 0.0]);
+    }
+    let at_feet = world.trace_clip(feet, feet, PLAYER_MINS, PLAYER_MAXS, MASK_PLAYER_SOLID);
+    if at_feet.startsolid != 0 || at_feet.allsolid != 0 {
+        return recover_spawn(world, feet);
     }
     let up_end = [feet[0], feet[1], feet[2] + PLACE_SPAWN_UP];
     let up = world.trace_clip(feet, up_end, PLAYER_MINS, PLAYER_MAXS, MASK_PLAYER_SOLID);
@@ -266,14 +280,22 @@ pub(crate) fn ground_spawn(world: &FrameWorld, feet: [f32; 3]) -> Result<[f32; 3
     let landed = lerp3(raised, down_end, down.fraction);
     let stuck = world.trace_clip(landed, landed, PLAYER_MINS, PLAYER_MAXS, MASK_PLAYER_SOLID);
     if stuck.startsolid != 0 || stuck.allsolid != 0 {
-        if let Some(fixed) =
-            SpawnClip(world).correct_solid(landed, PLAYER_MINS, PLAYER_MAXS, MASK_PLAYER_SOLID)
-        {
-            return Ok(fixed.origin);
-        }
-        return Err(SpawnReject::StartSolid);
+        return recover_spawn(world, landed);
     }
     Ok(landed)
+}
+
+fn recover_spawn(world: &FrameWorld, origin: [f32; 3]) -> Result<[f32; 3], SpawnReject> {
+    let fixed = SpawnClip(world)
+        .correct_solid(origin, PLAYER_MINS, PLAYER_MAXS, MASK_PLAYER_SOLID)
+        .ok_or(SpawnReject::StartSolid)?;
+    if fixed.trace.startsolid != 0 || fixed.trace.allsolid != 0 {
+        return Err(SpawnReject::StartSolid);
+    }
+    if !fixed.trace.fraction.is_finite() || fixed.trace.fraction >= 1.0 {
+        return Err(SpawnReject::NoGroundHit);
+    }
+    Ok(fixed.origin)
 }
 
 fn try_spawn_order(

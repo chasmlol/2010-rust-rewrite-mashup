@@ -1,17 +1,16 @@
 use fx_iw4::{
-    FX_RAND_CH_DELAY, FX_RAND_CH_LIFE, FX_TRAIL_ELEM_POOL_CAPACITY, FX_TRAIL_ELEM_RUNTIME_STRIDE,
-    FX_TRAIL_POOL_CAPACITY, FX_TRAIL_RUNTIME_STRIDE, FxOrientFrame, FxOrientSpawnParams,
-    FxTrailSplit, collide_substep_schedule, collision_reflect_base_vel_delta,
-    compress_basis_from_axis, elem_dies_on_touch, elem_gravity_accel_z_sampled,
-    elem_skips_position_update, elem_update_has_velocity_graph, elem_uses_collision,
-    elem_uses_vel_local, elem_uses_vel_world, get_orientation, get_velocity_at_time,
-    impact_child_speed_allows, integrate_velocity_graph, orientation_pos_from_world,
-    orientation_pos_to_world, random_table_u16, sample_life_span_msec, sample_reflection_factor,
-    spawn_origin_world, status_is_unique_done, trace_mask, trail_elem_base_vel_z_pack,
-    trail_elem_handle_for_slot, trail_elem_keep, trail_elem_norm_ages, trail_handle_for_slot,
-    trail_random_seed, trail_split_interpolant_msec, trail_split_interpolant_t,
-    trail_split_lerp_axis, trail_split_lerp_origin, trail_split_skips_update, trail_split_window,
-    vec3_length_sq,
+    FX_TRAIL_ELEM_POOL_CAPACITY, FX_TRAIL_ELEM_RUNTIME_STRIDE, FX_TRAIL_POOL_CAPACITY,
+    FX_TRAIL_RUNTIME_STRIDE, FxOrientFrame, FxOrientSpawnParams, FxRandomChannel, FxTrailSplit,
+    collide_substep_schedule, collision_reflect_base_vel_delta, compress_basis_from_axis,
+    elem_dies_on_touch, elem_gravity_accel_z_sampled, elem_skips_position_update,
+    elem_update_has_velocity_graph, elem_uses_collision, elem_uses_vel_local, elem_uses_vel_world,
+    get_orientation, get_velocity_at_time, impact_child_speed_allows, integrate_velocity_graph,
+    orientation_pos_from_world, orientation_pos_to_world, sample_life_span_msec,
+    sample_reflection_factor, sample_u16, spawn_origin_world, status_is_unique_done, trace_mask,
+    trail_elem_base_vel_z_pack, trail_elem_handle_for_slot, trail_elem_keep, trail_elem_norm_ages,
+    trail_handle_for_slot, trail_random_seed, trail_split_interpolant_msec,
+    trail_split_interpolant_t, trail_split_lerp_axis, trail_split_lerp_origin,
+    trail_split_skips_update, trail_split_window, vec3_length_sq,
 };
 
 use crate::def::FxElemDefInfo;
@@ -223,7 +222,7 @@ fn trail_apply_get_graph_delta(
     vel_local: &[fx_iw4::FxElemVec3Range],
     vel_world: &[fx_iw4::FxElemVec3Range],
     orient: fx_iw4::FxOrientation,
-    seed: u32,
+    seed: u64,
 ) -> [f32; 3] {
     let mut stored = origin;
     if elem_uses_vel_local(flags) && vel_local.len() >= 2 {
@@ -254,7 +253,7 @@ fn trail_update_elem_motion(
     vel_local: &[fx_iw4::FxElemVec3Range],
     vel_world: &[fx_iw4::FxElemVec3Range],
     orient: fx_iw4::FxOrientation,
-    seed: u32,
+    seed: u64,
 ) -> ([f32; 3], f32) {
     let after = trail_apply_get_graph_delta(
         origin, flags, age0, age1, life_ms, vel_local, vel_world, orient, seed,
@@ -274,7 +273,7 @@ fn apply_trail_sample_position(
     msec_now: i32,
     now: &FxOrientFrame,
     alt: &FxOrientFrame,
-    random_seed: u16,
+    random_seed: u64,
     vel_local: &[fx_iw4::FxElemVec3Range],
     vel_world: &[fx_iw4::FxElemVec3Range],
     on_trail_trace: &mut impl FnMut(
@@ -298,7 +297,7 @@ fn apply_trail_sample_position(
     let life = sample_life_span_msec(
         def.life_base,
         def.life_amp,
-        random_table_u16(seed, FX_RAND_CH_LIFE),
+        sample_u16(seed, FxRandomChannel::Life),
     );
     let ages = trail_elem_norm_ages(prev_msec, msec_now, elem.msec_begin, life);
     let life_f = life as f32;
@@ -490,12 +489,12 @@ pub fn update_trail(
 
     let mut msec_begin = elem_def.delay_base.wrapping_add(msec);
     if elem_def.delay_amp != 0 {
-        let delay_rand = random_table_u16(seed, FX_RAND_CH_DELAY);
+        let delay_rand = sample_u16(seed, FxRandomChannel::Delay);
         msec_begin =
             msec_begin.wrapping_add(sample_life_span_msec(0, elem_def.delay_amp, delay_rand));
     }
 
-    let life_rand = random_table_u16(seed, FX_RAND_CH_LIFE);
+    let life_rand = sample_u16(seed, FxRandomChannel::Life);
     let life_ms = sample_life_span_msec(elem_def.life_base, elem_def.life_amp, life_rand);
 
     let within_life = host.msec_now < life_ms.wrapping_add(msec_begin);
@@ -749,7 +748,7 @@ pub fn apply_partial_last_trail_spawn_dist(
                         let life = sample_life_span_msec(
                             def.life_base,
                             def.life_amp,
-                            random_table_u16(seed, FX_RAND_CH_LIFE),
+                            sample_u16(seed, FxRandomChannel::Life),
                         );
                         trail_elem_keep(msec_now, elem.msec_begin, life)
                     }

@@ -2,10 +2,23 @@ use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Clone, Debug, Default)]
 pub struct ScriptSources {
-    sources: BTreeMap<String, Result<Vec<u8>, String>>,
+    sources: BTreeMap<String, ScriptSource>,
     tables: BTreeMap<String, ScriptTable>,
+    schemas: BTreeMap<String, std::sync::Arc<structured_data_iw4::DefinitionSet>>,
     entities: Option<String>,
     configs: BTreeMap<String, String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ScriptSourceOrigin {
+    Packaged,
+    BuiltIn,
+}
+
+#[derive(Clone, Debug)]
+struct ScriptSource {
+    bytes: Result<Vec<u8>, String>,
+    origin: ScriptSourceOrigin,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -23,8 +36,12 @@ impl ScriptSources {
     pub fn read(&self, module: &str) -> Result<Vec<u8>, String> {
         self.sources
             .get(module)
-            .cloned()
+            .map(|source| source.bytes.clone())
             .unwrap_or_else(|| Err(format!("missing script asset {module}.gsc")))
+    }
+
+    pub fn origin(&self, module: &str) -> Option<ScriptSourceOrigin> {
+        self.sources.get(module).map(|source| source.origin)
     }
 
     pub fn len(&self) -> usize {
@@ -36,7 +53,7 @@ impl ScriptSources {
 
     pub(crate) fn asset_names(&self) -> BTreeSet<String> {
         let mut names = BTreeSet::new();
-        for source in self.sources.values().filter_map(|s| s.as_ref().ok()) {
+        for source in self.sources.values().filter_map(|s| s.bytes.as_ref().ok()) {
             quoted_names(source, &mut names);
         }
         if let Some(entities) = &self.entities {
@@ -46,6 +63,19 @@ impl ScriptSources {
             names.extend(table.cells.iter().cloned());
         }
         names
+    }
+
+    pub fn schemas(&self) -> &BTreeMap<String, std::sync::Arc<structured_data_iw4::DefinitionSet>> {
+        &self.schemas
+    }
+
+    pub(crate) fn capture_schema(
+        &mut self,
+        name: String,
+        schema: structured_data_iw4::DefinitionSet,
+    ) {
+        self.schemas
+            .insert(normalize(&name), std::sync::Arc::new(schema));
     }
 
     pub fn tables(&self) -> &BTreeMap<String, ScriptTable> {
@@ -89,7 +119,13 @@ impl ScriptSources {
             }
             bytes
         });
-        self.sources.insert(module.to_owned(), source);
+        self.sources.insert(
+            module.to_owned(),
+            ScriptSource {
+                bytes: source,
+                origin: ScriptSourceOrigin::Packaged,
+            },
+        );
     }
 
     pub(crate) fn capture_table(&mut self, table: &asset_game::CapturedStringTable) {
@@ -129,8 +165,13 @@ impl ScriptSources {
     }
 
     pub(crate) fn insert_source(&mut self, module: &str, source: String) {
-        self.sources
-            .insert(normalize(module), Ok(source.into_bytes()));
+        self.sources.insert(
+            normalize(module),
+            ScriptSource {
+                bytes: Ok(source.into_bytes()),
+                origin: ScriptSourceOrigin::BuiltIn,
+            },
+        );
     }
 
     pub(crate) fn set_entities(&mut self, entities: String) {
@@ -140,6 +181,7 @@ impl ScriptSources {
     pub(crate) fn overlay(&mut self, other: Self) {
         self.sources.extend(other.sources);
         self.tables.extend(other.tables);
+        self.schemas.extend(other.schemas);
         self.configs.extend(other.configs);
         if other.entities.is_some() {
             self.entities = other.entities;

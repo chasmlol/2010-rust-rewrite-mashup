@@ -12,6 +12,7 @@ enum Capture {
     Iw4(SoundCatalog),
     Iw5(Iw5SoundCapture),
     T5(T5SoundCapture),
+    T6(Option<SoundCatalog>),
 }
 
 pub struct ZoneSoundCapture {
@@ -33,6 +34,7 @@ impl ZoneSoundCapture {
             }
             ZoneGame::Iw5 => Capture::Iw5(Iw5SoundCapture::for_zone(path)),
             ZoneGame::T5 => Capture::T5(T5SoundCapture::for_zone(path)),
+            ZoneGame::T6 => Capture::T6(None),
         };
         Self {
             path: path.to_path_buf(),
@@ -76,6 +78,11 @@ impl ZoneSoundCapture {
                 self.note_partial(&walk);
                 Ok(capture.finish())
             }
+            Capture::T6(Some(catalog)) => {
+                self.note_partial(&walk);
+                Ok(catalog)
+            }
+            Capture::T6(None) => Err("no T6 aliases were read".to_owned()),
         }
     }
 
@@ -135,6 +142,12 @@ impl ZoneSoundCapture {
         }
     }
 
+    pub fn set_t6(&mut self, catalog: SoundCatalog) {
+        if let Capture::T6(slot) = &mut self.capture {
+            *slot = Some(catalog);
+        }
+    }
+
     pub fn t5(&mut self) -> Option<&mut T5SoundCapture> {
         match (&mut self.capture, &self.stopped) {
             (Capture::T5(capture), None) => Some(capture),
@@ -161,8 +174,9 @@ fn is_sound_source(path: &Path, game: ZoneGame) -> bool {
             "common_mp",
             "localized_common_mp",
         ],
-        ZoneGame::Iw5 => &["common_mp", "localized_common_mp"],
+        ZoneGame::Iw5 => &["code_post_gfx_mp", "common_mp", "localized_common_mp"],
         ZoneGame::T5 => &["code_post_gfx_mp", "common_mp", "localized_common_mp"],
+        ZoneGame::T6 => &["common_mp"],
     };
     names.iter().any(|name| stem.eq_ignore_ascii_case(name))
 }
@@ -265,6 +279,15 @@ pub fn ensure_zone_sound(path: &Path) -> (Stored, ZoneSoundOrigin) {
             }
             None => break,
         }
+    }
+    if crate::zone_game_for_path(path) == Some(ZoneGame::T6) {
+        return (
+            Err(format!(
+                "{}: T6 sounds come from the common walk, which has not run",
+                path.display()
+            )),
+            ZoneSoundOrigin::AudioOnly,
+        );
     }
     slots.insert(key.clone(), Slot::Capturing);
     drop(slots);
@@ -461,6 +484,22 @@ macro_rules! forward_t5_sound {
             Ok(())
         }
 
+        fn capture_snd_groups(
+            &mut self,
+            s: &fastfile_t5::ZoneStream<'_>,
+            rows: fastfile_t5::Ptr,
+            count: usize,
+        ) -> fastfile_t5::Result<()> {
+            if let Some(sound) = self.sound.as_mut()
+                && let Some(capture) = sound.t5()
+            {
+                let result =
+                    fastfile_t5::AssetLinkSink::capture_snd_groups(capture, s, rows, count);
+                sound.guard(result);
+            }
+            Ok(())
+        }
+
         fn capture_loaded_sound(
             &mut self,
             s: &fastfile_t5::ZoneStream<'_>,
@@ -587,6 +626,7 @@ impl ZoneSoundCapture {
             Capture::Iw4(catalog) => catalog,
             Capture::Iw5(capture) => capture.catalog_mut(),
             Capture::T5(capture) => capture.catalog_mut(),
+            Capture::T6(_) => return,
         };
         catalog.ingest_rawfile(name, data, zlib_compressed);
     }

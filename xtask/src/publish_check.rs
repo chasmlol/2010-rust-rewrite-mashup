@@ -49,15 +49,9 @@ const EXEMPT: &[&str] = &[
     "xtask/src/publish_check.rs",
 ];
 
-/// The one crate allowed to hold tests; see its README for the policy.
-const APPROVED_TESTS: &str = "crates/approved_tests/";
-
 fn stray_test(rel: &str, text: &str) -> Option<(usize, &'static str)> {
-    if rel.starts_with(APPROVED_TESTS) {
-        return None;
-    }
     if rel.split('/').rev().skip(1).any(|part| part == "tests") {
-        return Some((0, "tests/ directory outside crates/approved_tests"));
+        return Some((0, "tests/ directory"));
     }
     if !rel.ends_with(".rs") {
         return None;
@@ -70,7 +64,7 @@ fn stray_test(rel: &str, text: &str) -> Option<(usize, &'static str)> {
             || line
                 .strip_prefix("mod tests")
                 .is_some_and(|rest| rest.starts_with([' ', '{', ';']) || rest.is_empty());
-        hit.then_some((n + 1, "test outside crates/approved_tests"))
+        hit.then_some((n + 1, "cargo test"))
     })
 }
 
@@ -505,14 +499,14 @@ pub fn run_cli(root: &Path) -> Res<()> {
     }
     if !tests.is_empty() {
         return Err(format!(
-            "{} test(s) outside crates/approved_tests; only owner-approved \
-             scenarios are permanent, everything else is deleted before a push",
+            "{} cargo test(s) in the tracked tree; the only permanent tests are \
+             the owner-approved scenarios in crates/approved_tests",
             tests.len()
         ));
     }
     println!(
-        "publish-check: clean — nothing but the product is tracked, no test outside \
-         crates/approved_tests, and no retail offsets in the {scanned} text file(s) read"
+        "publish-check: clean — nothing but the product is tracked, no cargo test, \
+         and no retail offsets in the {scanned} text file(s) read"
     );
     Ok(())
 }

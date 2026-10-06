@@ -5,10 +5,9 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use bevy::audio::{PlaybackSettings, Volume};
 use bevy::prelude::*;
 
-use crate::pcm::PcmAudio;
+use crate::media::{LivePan, PcmBuffer, RenderMedia};
 use crate::playback::{AmbientListener, world_oneshot_channel_gains};
 
 /// One sound to play.
@@ -32,7 +31,7 @@ const MIX_GAIN: f32 = 2.5;
 pub struct McSoundQueue(pub Vec<McSoundRequest>);
 
 #[derive(Resource, Default)]
-struct McSoundCache(HashMap<String, Option<PcmAudio>>);
+struct McSoundCache(HashMap<String, Option<PcmBuffer>>);
 
 pub(crate) fn register(app: &mut App) {
     app.init_resource::<McSoundQueue>()
@@ -43,21 +42,29 @@ pub(crate) fn register(app: &mut App) {
 fn play_minecraft_sounds(
     mut queue: ResMut<McSoundQueue>,
     mut cache: ResMut<McSoundCache>,
-    mut commands: Commands,
-    mut pcm_assets: ResMut<Assets<PcmAudio>>,
+    runtime: Res<crate::AudioRuntime>,
+    epoch: Res<crate::backend::MatchEpoch>,
+    silent: Option<Res<crate::AudioSilent>>,
     listeners: Query<&Transform, With<AmbientListener>>,
 ) {
+    if silent.is_some() {
+        queue.0.clear();
+        return;
+    }
     if queue.0.is_empty() {
         return;
     }
-    let pose = listeners.iter().next().map(|t| (t.translation, t.rotation * Vec3::X));
+    let pose = listeners
+        .iter()
+        .next()
+        .map(|t| (t.translation, t.rotation * Vec3::X));
     for request in std::mem::take(&mut queue.0) {
         let pcm = cache.0.entry(request.key.clone()).or_insert_with(|| {
             let decoded = crate::pcm::decode_audio_bytes(&request.bytes);
-            if decoded.is_none() {
+            if decoded.is_err() {
                 diag::warn!(Audio, "minecraft sound `{}` did not decode", request.key);
             }
-            decoded
+            decoded.ok()
         });
         let Some(pcm) = pcm.as_ref() else {
             continue;
@@ -68,22 +75,29 @@ fn play_minecraft_sounds(
             (Some(at), Some((ear, right))) => {
                 let reach = 16.0 * request.volume.max(1.0) * request.block;
                 let falloff = (1.0 - (at - ear).length() / reach).clamp(0.0, 1.0);
-                (request.volume.min(1.0) * falloff, world_oneshot_channel_gains(ear, right, at, 1.0))
+                (
+                    request.volume.min(1.0) * falloff,
+                    world_oneshot_channel_gains(ear, right, at, 1.0),
+                )
             }
-            _ => (request.volume.min(1.0), (std::f32::consts::FRAC_1_SQRT_2, std::f32::consts::FRAC_1_SQRT_2)),
+            _ => (
+                request.volume.min(1.0),
+                (
+                    std::f32::consts::FRAC_1_SQRT_2,
+                    std::f32::consts::FRAC_1_SQRT_2,
+                ),
+            ),
         };
         if gain <= 0.001 {
             continue;
         }
-        let live = pcm.with_live_pan();
-        if let Some(live_pan) = live.live_pan() {
-            live_pan.set(pan.0, pan.1);
-        }
-        commands.spawn((
-            AudioPlayer(pcm_assets.add(live)),
-            PlaybackSettings::DESPAWN
-                .with_volume(Volume::Linear((gain * MIX_GAIN).max(0.0)))
-                .with_speed(request.pitch.clamp(0.5, 2.0)),
-        ));
+        let mut media = RenderMedia::from_buffer(pcm.clone());
+        media.pan = Some(LivePan::new(pan.0, pan.1));
+        runtime.play_pcm(
+            media,
+            (gain * MIX_GAIN).max(0.0),
+            request.pitch.clamp(0.5, 2.0),
+            epoch.0,
+        );
     }
 }

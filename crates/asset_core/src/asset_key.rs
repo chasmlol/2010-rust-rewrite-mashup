@@ -1,39 +1,4 @@
-use crate::ZoneGame;
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
-pub enum AssetNamespace {
-    #[default]
-    Iw4,
-    T5,
-    Iw5,
-}
-
-impl AssetNamespace {
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Iw4 => "iw4",
-            Self::T5 => "t5",
-            Self::Iw5 => "iw5",
-        }
-    }
-
-    pub fn from_zone_game(game: ZoneGame) -> Self {
-        match game {
-            ZoneGame::Iw4 => Self::Iw4,
-            ZoneGame::T5 => Self::T5,
-            ZoneGame::Iw5 => Self::Iw5,
-        }
-    }
-
-    pub fn parse(token: &str) -> Option<Self> {
-        match token {
-            "iw4" => Some(Self::Iw4),
-            "t5" => Some(Self::T5),
-            "iw5" => Some(Self::Iw5),
-            _ => None,
-        }
-    }
-}
+pub use crate::family::FamilyId as AssetNamespace;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum AssetKind {

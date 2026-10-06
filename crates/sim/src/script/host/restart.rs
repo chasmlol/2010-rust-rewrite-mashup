@@ -13,6 +13,8 @@ pub(crate) struct RestartPlan {
     pub tables: Arc<BTreeMap<String, StringTable>>,
     pub keys: Arc<BTreeMap<String, KeyType>>,
     pub entries: Vec<String>,
+    pub schemas: BTreeMap<String, Arc<structured_data_iw4::DefinitionSet>>,
+    pub player_data_defaults: Option<Arc<crate::PlayerDataDefaults>>,
 }
 
 impl std::fmt::Debug for RestartPlan {
@@ -100,7 +102,7 @@ pub(crate) fn restart_level(world: &mut World, tick: crate::Tick) {
     };
     let game: Vec<(Arc<str>, Detached)> = runtime
         .objects
-        .get(&2)
+        .get(&1)
         .into_iter()
         .flatten()
         .filter_map(|(id, value)| Some((symbol_name(runtime, *id)?, detach(runtime, value, 0)?)))
@@ -115,6 +117,9 @@ pub(crate) fn restart_level(world: &mut World, tick: crate::Tick) {
         })
         .collect();
     let dvars = runtime.dvars.clone();
+    let local_presentation_dvars = runtime.local_presentation_dvars;
+    let local_presentation_client = runtime.local_presentation_client;
+    let pending_local_dvars = runtime.pending_local_dvars.clone();
     let weapon_bridge = runtime.weapon_bridge.clone();
     let personal_classes = runtime.personal_classes.clone();
     let next_presence = runtime.next_spawned_presence;
@@ -157,23 +162,29 @@ pub(crate) fn restart_level(world: &mut World, tick: crate::Tick) {
         }
     }
 
+    let match_data = std::mem::take(&mut world.resource_mut::<Runtime>().engine.match_data);
     reset(world);
-    let plan = (*plan).clone();
-    let entries = plan.entries.clone();
-    if let Err(fault) = install_level(world, program, plan) {
+    {
+        let mut runtime = world.resource_mut::<Runtime>();
+        runtime.dvars = dvars;
+        runtime.local_presentation_dvars = local_presentation_dvars;
+        runtime.local_presentation_client = local_presentation_client;
+        runtime.pending_local_dvars = pending_local_dvars;
+        runtime.engine.match_data = match_data;
+    }
+    if let Err(fault) = install_level(world, program, (*plan).clone()) {
         world.resource_mut::<Runtime>().fault = Some(fault);
         return;
     }
     let mut runtime = world.resource_mut::<Runtime>();
     runtime.last_tick = Some(tick);
-    runtime.dvars = dvars;
     runtime.weapon_bridge = weapon_bridge;
     runtime.personal_classes = personal_classes;
     runtime.next_spawned_presence = next_presence;
     runtime.restored_pers = pers;
     for (name, value) in game {
         match attach(&mut runtime, value) {
-            Ok(value) => runtime.set_object_field(2, &name, value),
+            Ok(value) => runtime.set_object_field(1, &name, value),
             Err(message) => {
                 runtime.fault = Some(Fault::at(
                     &Location {
@@ -189,10 +200,10 @@ pub(crate) fn restart_level(world: &mut World, tick: crate::Tick) {
         }
     }
     drop(runtime);
-    for entry in entries {
+    for entry in &plan.entries {
         if let Err(fault) = run_now(
             world,
-            &entry,
+            entry,
             Value::level(),
             Vec::new(),
             i64::from(crate::level_time_ms(tick)),

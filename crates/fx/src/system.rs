@@ -4,8 +4,8 @@ use fx_iw4::{
     FX_SPARK_FOUNTAIN_CLUSTER_CAPACITY, FX_SPARK_FOUNTAIN_HANDLE_NONE,
     FX_SPARK_FOUNTAIN_MESH_CAPACITY, FX_SPAWN_BOLT_NONE, FX_SPOT_LIGHT_LIMIT,
     FX_STATUS_REF_COUNT_MASK_IW4, FX_TRAIL_ELEM_POOL_CAPACITY, FX_TRAIL_POOL_CAPACITY,
-    FxOrientFrame, bolt_alloc, bolt_init_next_index, effect_handle_for_slot,
-    effect_random_seed_from_msec, status_is_unique_done,
+    FxOrientFrame, bolt_alloc, bolt_init_next_index, effect_handle_for_slot, effect_random_key,
+    status_is_unique_done,
 };
 
 use crate::elem::{FX_ELEM_HANDLE_NONE, FxElemSlot};
@@ -58,7 +58,7 @@ pub struct FxEffectSlot {
 
     pub first_trail_handle: u16,
 
-    pub random_seed: u16,
+    pub random_seed: u64,
 
     pub own_handle: u16,
 
@@ -176,7 +176,7 @@ pub struct PendingRunnerSpawn {
     pub catalog_index: u16,
     pub def_index: u8,
     pub msec_begin: i32,
-    pub random_seed: u32,
+    pub random_seed: u64,
     pub origin: [f32; 3],
     pub axis: [[f32; 3]; 3],
 
@@ -189,7 +189,7 @@ pub struct PendingSoundSpawn {
     pub catalog_index: u16,
     pub def_index: u8,
     pub msec_begin: i32,
-    pub random_seed: u32,
+    pub random_seed: u64,
     pub origin: [f32; 3],
 }
 
@@ -199,7 +199,7 @@ pub struct PendingDecalSpawn {
     pub catalog_index: u16,
     pub def_index: u8,
     pub msec_begin: i32,
-    pub random_seed: u32,
+    pub random_seed: u64,
     pub origin: [f32; 3],
 
     pub bolt: u8,
@@ -888,7 +888,7 @@ impl FxSystemHost {
             first_sorted_elem_handle: FX_ELEM_HANDLE_NONE,
             first_trail_handle: FX_ELEM_HANDLE_NONE,
 
-            random_seed: effect_random_seed_from_msec(msec),
+            random_seed: effect_random_key(u64::from(alloc as u32), msec),
             own_handle: handle,
             packed_lighting: [0xff; 3],
             packed_lighting_src: FxPackedLightingSrc::White,

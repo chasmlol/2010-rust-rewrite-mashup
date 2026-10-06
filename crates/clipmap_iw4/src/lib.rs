@@ -4,6 +4,7 @@
 extern crate alloc;
 
 mod area_entities;
+mod capsule_query;
 mod cmodel;
 mod layouts;
 mod mesh;
@@ -18,7 +19,7 @@ pub use area_entities::{
     AREA_SECTOR_COUNT, AreaBounds, AreaEntityLink, AreaEntityWorld, AreaEntityWorldError,
     AreaSector,
 };
-pub use cmodel::{ClipCmodel, clip_handle_to_model, transformed_capsule_trace};
+pub use cmodel::{ClipCmodel, CmodelTransform, clip_handle_to_model, transformed_capsule_trace};
 pub use layouts::{
     Cbrush, Cbrushside, Cleaf, CleafBrushNode, ClipMaterial, Cmodel, Cnode, CollisionAabbTree,
     CollisionPartition,
@@ -224,6 +225,52 @@ pub fn collect_leaf_hits<B: BrushView>(map: &ClipMapRef<'_, B>, ext: &TraceExten
     });
     hits.finish();
     hits
+}
+
+pub fn position_leaf_hits<B: BrushView>(
+    map: &ClipMapRef<'_, B>,
+    ext: &TraceExtents,
+) -> Option<LeafHits> {
+    if ext.start != ext.end || map.nodes.is_empty() || map.leaves.is_empty() {
+        return None;
+    }
+    let walk = TreeWalk::new(ext);
+    let mut hits = LeafHits::default();
+    let mut seen = alloc::vec![false; map.nodes.len()];
+    let mut stack = alloc::vec![0_i32];
+    while let Some(id) = stack.pop() {
+        if id < 0 {
+            let leaf = map.leaves.get((!id) as usize)?;
+            let first = leaf.first_brush as usize;
+            let last = first.checked_add(usize::from(leaf.num_brushes))?;
+            map.leafbrushes.get(first..last)?;
+            hits.visit_leaf(leaf, map.leafbrushes);
+            continue;
+        }
+        let index = id as usize;
+        let node = map.nodes.get(index)?;
+        if seen[index]
+            || !node.plane.iter().all(|x| x.is_finite())
+            || node.plane[..3].iter().all(|&x| x == 0.0)
+        {
+            return None;
+        }
+        seen[index] = true;
+        let offset = walk.plane_offset([node.plane[0], node.plane[1], node.plane[2]]);
+        let distance = plane_dist(node.plane, walk.start);
+        if !offset.is_finite() || !distance.is_finite() {
+            return None;
+        }
+        if distance >= offset {
+            stack.push(node.children[0]);
+        } else if distance <= -offset {
+            stack.push(node.children[1]);
+        } else {
+            stack.extend(node.children);
+        }
+    }
+    hits.finish();
+    Some(hits)
 }
 
 pub fn trace_selected_brushes_with_glass<B: BrushView>(

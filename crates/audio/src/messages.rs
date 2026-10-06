@@ -6,6 +6,7 @@ pub const SND_ENT_LOCAL: u32 = u32::MAX;
 
 #[derive(Clone, Debug)]
 pub struct PlayAlias {
+    pub event: Option<crate::AudioEvent>,
     pub namespace: AssetNamespace,
     pub alias: String,
 
@@ -33,6 +34,7 @@ pub enum AliasCommand {
 
 #[derive(Message, Clone, Debug)]
 pub struct Footstep {
+    pub event: Option<crate::AudioEvent>,
     pub alias: &'static str,
     pub fallback: &'static str,
     pub origin_inches: Option<[f32; 3]>,
@@ -41,6 +43,7 @@ pub struct Footstep {
 
 #[derive(Message, Clone, Debug)]
 pub struct WeaponSound {
+    pub event: Option<crate::AudioEvent>,
     pub namespace: AssetNamespace,
     pub alias: String,
     pub origin_inches: Option<[f32; 3]>,
@@ -49,10 +52,17 @@ pub struct WeaponSound {
 
 #[derive(Message, Clone, Debug)]
 pub struct BoundWeaponSound {
+    pub event: Option<crate::AudioEvent>,
     pub bank_revision: u64,
     pub index: usize,
     pub origin_inches: Option<[f32; 3]>,
     pub snd_ent: Option<u32>,
+}
+
+#[derive(Clone, Debug)]
+pub struct ViewmodelNotetrack {
+    pub event: crate::AudioEvent,
+    pub name: String,
 }
 
 #[derive(Message, Clone, Debug)]
@@ -61,11 +71,13 @@ pub struct ViewmodelNotetracks {
     pub client: sim::ClientId,
     pub life: sim::LifeSequence,
     pub weapon: u32,
-    pub names: Vec<String>,
+    pub records: Vec<ViewmodelNotetrack>,
+    pub discarded: u64,
 }
 
 #[derive(Message, Clone, Debug)]
 pub struct LandSound {
+    pub event: Option<crate::AudioEvent>,
     pub alias: &'static str,
     pub fallback: &'static str,
     pub origin_inches: Option<[f32; 3]>,

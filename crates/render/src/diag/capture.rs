@@ -173,16 +173,12 @@ fn arm_write_drain_at_exit() {
     if ARMED.swap(true, Ordering::SeqCst) {
         return;
     }
-    unsafe extern "C" {
-        fn atexit(callback: extern "C" fn()) -> i32;
-    }
-    extern "C" fn drain_writes() {
+    diag::exit::at_exit(|| {
         let until = std::time::Instant::now() + exit_drain_budget();
         while WRITES_IN_FLIGHT.load(Ordering::Relaxed) > 0 && std::time::Instant::now() < until {
             std::thread::sleep(std::time::Duration::from_millis(2));
         }
-    }
-    let _ = unsafe { atexit(drain_writes) };
+    });
 }
 
 #[cfg(not(unix))]

@@ -97,11 +97,21 @@ pub const CLASS_CATALOG_DEATHSTREAKS: [&str; 4] = [
     "specialty_finalstand",
 ];
 
+pub use weapon_iw4::IW4_CAMOS;
+
+pub fn iw4_camo_index(name: &str) -> u8 {
+    IW4_CAMOS
+        .iter()
+        .position(|camo| camo.eq_ignore_ascii_case(name))
+        .map_or(0, |index| index as u8)
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct PersonalClass {
     pub weapons: [u32; 4],
     pub perks: [u32; 3],
     pub deathstreak: u8,
+    pub camos: [u8; 2],
 }
 
 impl PersonalClass {
@@ -112,6 +122,7 @@ impl PersonalClass {
         let mut def = ClassDef::primary_secondary(id, revision, self.weapons[0], self.weapons[1]);
         def.lethal = self.weapons[2];
         def.tactical = self.weapons[3];
+        def.camos = self.camos;
         def.perks = self.perks;
         def.deathstreak = if self.deathstreak == 0 {
             String::new()
@@ -138,6 +149,7 @@ pub struct ClassDef {
     pub perks: [u32; 3],
 
     pub deathstreak: String,
+    pub camos: [u8; 2],
     pub locked: bool,
 }
 
@@ -154,6 +166,7 @@ impl ClassDef {
             tactical: 0,
             perks: [0; 3],
             deathstreak: String::new(),
+            camos: [0; 2],
             locked: false,
         }
     }

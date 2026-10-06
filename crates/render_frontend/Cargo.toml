@@ -20,6 +20,7 @@ anim_iw4.workspace = true
 audio.workspace = true
 bevy.workspace = true
 d3d9_sm3.workspace = true
+dxbc_sm5.workspace = true
 d3d9_state.workspace = true
 diag.workspace = true
 dpvs_iw4.workspace = true

@@ -1,0 +1,28 @@
+[
+  {
+    "name": "options_community_servers",
+    "base": "pc_options_video",
+    "fields": {"handlers": {"open": [{"Script": "focusFirst; setFocus community_server;"}], "close": [], "esc": [{"Script": "close self;"}]}},
+    "item_overrides": [
+      {"name": "video_resolution", "fields": {"vis_exp": "0"}},
+      {"name": "video_resolution_label", "fields": {"vis_exp": "0"}},
+      {"name": "video_brightness", "fields": {"vis_exp": "0"}},
+      {"name": "video_brightness_label", "fields": {"vis_exp": "0"}},
+      {"name": "video_display_mode", "fields": {"vis_exp": "0"}},
+      {"name": "video_display_mode_label", "fields": {"vis_exp": "0"}},
+      {"name": "video_advanced", "fields": {"vis_exp": "0"}},
+      {"name": "video_fov", "fields": {"vis_exp": "0"}},
+      {"name": "video_fov_label", "fields": {"vis_exp": "0"}},
+      {"name": "video_title", "fields": {"text_key": "Community Servers"}},
+      {"name": "video_third_person", "fields": {"vis_exp": "0"}},
+      {"name": "video_third_person_label", "fields": {"vis_exp": "0"}}
+    ],
+    "item_copies": [
+      {"name": "video_display_mode", "fields": {"name": "community_server", "vis_exp": "1", "disabled_exp": "op 38 s:75695f636f6d6d756e6974795f6c6f636b6564 op 1", "item_type": 12, "static_flags": 0, "dvar": "ui_community_server", "choices": [], "text_key": "", "text_exp": "", "rect": {"x": 232, "y": 28, "w": 344, "h": 20}, "handlers": {"action": [{"Script": "play mouse_click;"}], "focus": [{"Script": "play mouse_over; setItemColor self backcolor 0 0 0 1;"}], "leave_focus": [{"Script": "setItemColor self backcolor 0 0 0 0;"}]}}},
+      {"name": "video_display_mode_label", "fields": {"name": "community_server_label", "vis_exp": "1", "text_key": "Server", "rect": {"x": 232, "y": 28, "w": 344, "h": 20}}},
+      {"name": "video_display_mode", "fields": {"name": "community_server_apply", "vis_exp": "1", "disabled_exp": "op 38 s:75695f636f6d6d756e6974795f6170706c795f64697361626c6564 op 1", "item_type": 1, "static_flags": 0, "dvar": "", "choices": [], "text_key": "Apply & Restart", "text_exp": "", "rect": {"x": 232, "y": 68, "w": 344, "h": 20}, "handlers": {"action": [{"Script": "play mouse_click; setdvar ui_community_apply 1;"}], "focus": [{"Script": "play mouse_over; setItemColor self backcolor 0 0 0 1;"}], "leave_focus": [{"Script": "setItemColor self backcolor 0 0 0 0;"}]}}},
+      {"name": "video_display_mode_label", "fields": {"name": "ui_community_current", "vis_exp": "1", "text_key": "", "text_exp": "op 38 s:75695f636f6d6d756e6974795f63757272656e74 op 1", "text_scale": 0.25, "fore_color": [0.75, 0.75, 0.75, 1], "rect": {"x": 248, "y": 104, "w": 344, "h": 20}, "text_align_mode": 8, "text_align_x": 0, "text_align_y": 0}},
+      {"name": "video_display_mode_label", "fields": {"name": "ui_community_hint", "vis_exp": "1", "text_key": "", "text_exp": "op 38 s:75695f636f6d6d756e6974795f68696e74 op 1", "text_scale": 0.25, "fore_color": [0.75, 0.75, 0.75, 1], "rect": {"x": 248, "y": 128, "w": 344, "h": 20}, "text_align_mode": 8, "text_align_x": 0, "text_align_y": 0}}
+    ]
+  }
+]

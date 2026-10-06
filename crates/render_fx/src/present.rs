@@ -17,12 +17,11 @@ use fx::{
     update as fx_update,
 };
 use fx_iw4::{
-    FX_ELEM_ATLAS_OFF, FX_ELEM_ATLAS_SIZE, FX_RAND_CH_COLOR, FX_RAND_CH_SCALE, FX_RAND_CH_SIZE0,
-    FxElemType, apply_lighting_frac_bgra, build_cloud, clamp_elem_rotation_time, cull_cloud,
-    cull_elem_light, effect_def_needs_lighting_sample, elem_light_color_bgr,
-    elem_uses_lighting_frac, evaluate_rotation_total, evaluate_scale, evaluate_size0,
-    evaluate_size1, get_elem_angles_axis, get_velocity_at_time, random_table_f32, sprite_atlas_uv,
-    vec3_normalize, vis_blocker_add_prepared,
+    FX_ELEM_ATLAS_OFF, FX_ELEM_ATLAS_SIZE, FxElemType, FxRandomChannel, apply_lighting_frac_bgra,
+    build_cloud, clamp_elem_rotation_time, cull_cloud, cull_elem_light,
+    effect_def_needs_lighting_sample, elem_light_color_bgr, elem_uses_lighting_frac,
+    evaluate_rotation_total, evaluate_scale, evaluate_size0, evaluate_size1, get_elem_angles_axis,
+    get_velocity_at_time, sample_f32, sprite_atlas_uv, vec3_normalize, vis_blocker_add_prepared,
 };
 use math_iw4::angle_vectors;
 use sim::SimWorld;
@@ -539,7 +538,7 @@ fn record_spawn_decal(
     {
         host.last_decal_vis =
             Some(fx_iw4::elem_visual_index(elem.view.visual_count, req.random_seed) as u8);
-        let rand_size = random_table_f32(req.random_seed, FX_RAND_CH_SIZE0);
+        let rand_size = sample_f32(req.random_seed, FxRandomChannel::Size);
         host.last_decal_size0 = evaluate_size0(
             elem.vis_samples.as_slice(),
             elem.view.vis_state_interval_count,
@@ -554,7 +553,7 @@ fn record_spawn_decal(
             elem.view.initial_rotation,
             1.0,
         );
-        let rand_color = random_table_f32(req.random_seed, FX_RAND_CH_COLOR);
+        let rand_color = sample_f32(req.random_seed, FxRandomChannel::Color);
         host.last_decal_color = evaluate_color_rgba(
             elem.vis_samples.as_slice(),
             elem.view.vis_state_interval_count,
@@ -972,9 +971,9 @@ fn tick_fx_pass(
         |q: FxSparkFillQuery<'_>| {
             let effect = catalog_lookup(catalog, q.catalog_index)?;
             let elem = effect.elems.get(q.def_index as usize)?;
-            let rand_size = random_table_f32(q.elem_random_seed, FX_RAND_CH_SIZE0);
-            let rand_scale = random_table_f32(q.elem_random_seed, FX_RAND_CH_SCALE);
-            let rand_color = random_table_f32(q.elem_random_seed, FX_RAND_CH_COLOR);
+            let rand_size = sample_f32(q.elem_random_seed, FxRandomChannel::Size);
+            let rand_scale = sample_f32(q.elem_random_seed, FxRandomChannel::Scale);
+            let rand_color = sample_f32(q.elem_random_seed, FxRandomChannel::Color);
             let size0 = evaluate_size0(
                 elem.vis_samples.as_slice(),
                 elem.view.vis_state_interval_count,
@@ -1069,8 +1068,8 @@ pub fn build_fx_verts(
             gaps.no_material_visual = gaps.no_material_visual.saturating_add(1);
             return None;
         };
-        let rand_size = random_table_f32(ctx.elem_random_seed, FX_RAND_CH_SIZE0);
-        let rand_color = random_table_f32(ctx.elem_random_seed, FX_RAND_CH_COLOR);
+        let rand_size = sample_f32(ctx.elem_random_seed, FxRandomChannel::Size);
+        let rand_color = sample_f32(ctx.elem_random_seed, FxRandomChannel::Color);
         let Some(size0) = evaluate_size0(
             elem.vis_samples.as_slice(),
             elem.view.vis_state_interval_count,
@@ -1189,6 +1188,7 @@ pub fn build_fx_verts(
         }
         let (def_name, material_name) = sprite_names.as_ref().unwrap();
         Some(FxSpriteInstance {
+            viewmodel: false,
             origin: ctx.origin,
             size0,
             size1,
@@ -1244,8 +1244,8 @@ pub fn build_fx_verts(
             &catalog_name_n,
         )?;
         let elem = effect.elems.get(ctx.def_index as usize)?;
-        let rand_size = random_table_f32(ctx.elem_random_seed, FX_RAND_CH_SIZE0);
-        let rand_color = random_table_f32(ctx.elem_random_seed, FX_RAND_CH_COLOR);
+        let rand_size = sample_f32(ctx.elem_random_seed, FxRandomChannel::Size);
+        let rand_color = sample_f32(ctx.elem_random_seed, FxRandomChannel::Color);
         let size0 = evaluate_size0(
             elem.vis_samples.as_slice(),
             elem.view.vis_state_interval_count,
@@ -1302,7 +1302,7 @@ pub fn build_fx_verts(
             &catalog_name_n,
         )?;
         let elem = effect.elems.get(ctx.def_index as usize)?;
-        let rand_size = random_table_f32(ctx.elem_random_seed, FX_RAND_CH_SIZE0);
+        let rand_size = sample_f32(ctx.elem_random_seed, FxRandomChannel::Size);
         let size1 = evaluate_size1(
             elem.vis_samples.as_slice(),
             elem.view.vis_state_interval_count,
@@ -1319,9 +1319,9 @@ pub fn build_fx_verts(
             &catalog_name_n,
         )?;
         let elem = effect.elems.get(ctx.def_index as usize)?;
-        let rand_size = random_table_f32(ctx.elem_random_seed, FX_RAND_CH_SIZE0);
-        let rand_scale = random_table_f32(ctx.elem_random_seed, FX_RAND_CH_SCALE);
-        let rand_color = random_table_f32(ctx.elem_random_seed, FX_RAND_CH_COLOR);
+        let rand_size = sample_f32(ctx.elem_random_seed, FxRandomChannel::Size);
+        let rand_scale = sample_f32(ctx.elem_random_seed, FxRandomChannel::Scale);
+        let rand_color = sample_f32(ctx.elem_random_seed, FxRandomChannel::Color);
         let size0 = evaluate_size0(
             elem.vis_samples.as_slice(),
             elem.view.vis_state_interval_count,
@@ -1409,9 +1409,9 @@ pub fn build_fx_verts(
             &catalog_name_n,
         )?;
         let elem = effect.elems.get(ctx.def_index as usize)?;
-        let rand_size = random_table_f32(ctx.elem_random_seed, FX_RAND_CH_SIZE0);
-        let rand_scale = random_table_f32(ctx.elem_random_seed, FX_RAND_CH_SCALE);
-        let rand_color = random_table_f32(ctx.elem_random_seed, FX_RAND_CH_COLOR);
+        let rand_size = sample_f32(ctx.elem_random_seed, FxRandomChannel::Size);
+        let rand_scale = sample_f32(ctx.elem_random_seed, FxRandomChannel::Scale);
+        let rand_color = sample_f32(ctx.elem_random_seed, FxRandomChannel::Color);
         let size0 = evaluate_size0(
             elem.vis_samples.as_slice(),
             elem.view.vis_state_interval_count,
@@ -1505,7 +1505,7 @@ fn evaluate_fx_model_instance(
     let effect = catalog_lookup_draw(catalog, ctx.catalog_index, catalog_index_n, catalog_name_n)?;
     let elem = effect.elems.get(ctx.def_index as usize)?;
     let model_index = elem.model_edge(ctx.elem_random_seed)?.bound_index()?;
-    let rand_scale = random_table_f32(ctx.elem_random_seed, FX_RAND_CH_SCALE);
+    let rand_scale = sample_f32(ctx.elem_random_seed, FxRandomChannel::Scale);
     let scale = evaluate_scale(
         elem.vis_samples.as_slice(),
         elem.view.vis_state_interval_count,

@@ -24,10 +24,12 @@ impl AdsOverlayConvention {
         }
     }
 
-    pub const fn from_namespace(ns: crate::AssetNamespace) -> Self {
+    pub(crate) const fn from_namespace(ns: crate::AssetNamespace) -> Self {
         match ns {
             crate::AssetNamespace::T5 => Self::PlayAdsAnim,
-            crate::AssetNamespace::Iw4 | crate::AssetNamespace::Iw5 => Self::WeightIsFrac,
+            crate::AssetNamespace::Iw4 | crate::AssetNamespace::Iw5 | crate::AssetNamespace::T6 => {
+                Self::WeightIsFrac
+            }
         }
     }
 }
@@ -324,16 +326,16 @@ impl WeaponAnimations {
                 reload_start_time_ms,
                 reload_end_time_ms,
             )
-            .with_ads_overlay(AdsOverlayConvention::from_namespace(
+            .with_ads_overlay(
                 registry
-                    .namespace_of(index)
-                    .unwrap_or(crate::AssetNamespace::Iw4),
-            ))
+                    .fpv_facts_of(index)
+                    .map(|facts| facts.ads_overlay_convention())
+                    .unwrap_or_default(),
+            )
             .with_inherits_perks(
                 registry
-                    .facts_of(index)
-                    .map(|f| f.inherits_perks)
-                    .unwrap_or(false),
+                    .fpv_facts_of(index)
+                    .is_some_and(|facts| facts.inherits_perks),
             )
     }
 

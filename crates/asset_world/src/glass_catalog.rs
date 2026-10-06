@@ -126,7 +126,7 @@ fn fill_g_glass(out: &mut GlassZoneCensus, s: &ZoneStream<'_>) {
     }
 }
 
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct FxGlassReset {
     pub init_piece_states: Vec<[u8; FX_GLASS_INIT_PIECE_STATE]>,
     pub init_geo_data: Vec<[u8; FX_GLASS_GEOMETRY_DATA]>,

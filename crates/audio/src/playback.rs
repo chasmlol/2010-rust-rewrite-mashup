@@ -1,77 +1,25 @@
-use std::collections::HashMap;
-use std::f32::consts::FRAC_PI_4;
 use std::sync::Arc;
-use std::time::Instant;
 
-use asset_audio::{SoundCatalog, lerp_range, unit_random};
+use crate::runtime::AudioRuntime;
+use asset_audio::SoundCatalog;
 use asset_core::AssetNamespace;
-use asset_iw4::{SND_CURVE_MAX_KNOTS, has_free_voice};
-use assets::NamespaceSoundIwd;
-use bevy::{
-    audio::{AddAudioSource, AudioSink, AudioSinkPlayback, Volume},
-    prelude::*,
-};
+use bevy::prelude::*;
 use frame::{ClientSet, FxSoundPublished, MatchTornDown, SessionSwapApplied};
 use net::{LastAdoptedSnapshot, SvcLocalSound};
 
-use crate::ambient::SoundIwd;
-use crate::attenuation::distance_attenuation;
 use crate::backend::MatchEpoch;
-use crate::clip_store::{
-    ClipError, ClipKey, ClipStore, PendingOneshot, PendingStarts, clip_key_for_variant,
-    clip_keys_for_alias, deadline_for,
-};
+use crate::clip_store::CueFeedback;
 use crate::messages::{
     AliasCommand, BoundWeaponSound, Footstep, LandSound, PlayAlias, SND_ENT_LOCAL,
     ViewmodelNotetracks, WeaponSound,
 };
-use crate::pcm::{LoopingPcmAudio, PcmAudio};
-use crate::space::{distance_inches, transform_inches};
-use crate::start::{
-    SoundClass, StartDecision, StartDecisions, StartFailure, StartOutcome, SuppressReason,
-};
-use crate::voice::{VoiceLease, VoiceOccupancy, reclaim_finished_voices};
+use crate::start::{SoundClass, StartDecision, StartDecisions, StartFailure, StartOutcome};
 
 #[derive(Component, Default)]
 pub struct AmbientListener;
 
-#[derive(Component)]
-pub struct Channel3d {
-    pub origin_inches: [f32; 3],
-    pub dist_min: f32,
-    pub dist_max: f32,
-    pub knots: Arc<[[f32; 2]]>,
-    pub near_knots: Option<Arc<[[f32; 2]]>>,
-    pub priority: Option<asset_audio::VoicePriority>,
-    pub base_volume: f32,
-
-    pub live_pan: crate::pcm::LivePan,
-}
-
 #[derive(Resource, Clone)]
 pub struct SoundBank(pub Arc<SoundCatalog>);
-
-#[derive(Resource)]
-pub struct SoundPickState {
-    pub lcg: u32,
-    pub last_variant: HashMap<(AssetNamespace, String), usize>,
-}
-
-impl Default for SoundPickState {
-    fn default() -> Self {
-        Self {
-            lcg: 0x00a5_5a5a,
-            last_variant: HashMap::new(),
-        }
-    }
-}
-
-#[derive(Component)]
-pub struct AliasPlayback {
-    pub namespace: AssetNamespace,
-    pub snd_ent: Option<u32>,
-    pub alias: String,
-}
 
 #[derive(Resource, Default, Debug)]
 pub struct MissingAliasGaps {
@@ -95,72 +43,23 @@ impl MissingAliasGaps {
     }
 }
 
-#[derive(Resource, Default)]
-pub(crate) struct SharedPlayAssets {
-    dry: HashMap<ClipKey, Handle<PcmAudio>>,
-    curves: HashMap<String, Arc<[[f32; 2]]>>,
-    common_dry_reuses: usize,
-}
-
-impl SharedPlayAssets {
-    fn dry_handle(
-        &mut self,
-        pcm_assets: &mut Assets<PcmAudio>,
-        clip: &ClipKey,
-        pcm: PcmAudio,
-        clips: Option<&ClipStore>,
-    ) -> Handle<PcmAudio> {
-        if let Some(handle) = self.dry.get(clip) {
-            return handle.clone();
-        }
-        let handle = if let Some((handle, reused)) =
-            clips.and_then(|store| store.resident_dry_handle(clip, pcm_assets, &pcm))
-        {
-            if reused && self.common_dry_reuses == 0 {
-                diag::info!(Audio, "audio: first common dry handle reused: {clip:?}");
-            }
-            self.common_dry_reuses += usize::from(reused);
-            handle
-        } else {
-            pcm_assets.add(pcm)
-        };
-        self.dry.insert(clip.clone(), handle.clone());
-        handle
-    }
-
-    pub(crate) fn intern_curve(&mut self, name: &str, knots: &[(f32, f32)]) -> Arc<[[f32; 2]]> {
-        if let Some(existing) = self.curves.get(name) {
-            return Arc::clone(existing);
-        }
-        let packed: Vec<[f32; 2]> = knots
-            .iter()
-            .take(SND_CURVE_MAX_KNOTS)
-            .map(|&(x, y)| [x, y])
-            .collect();
-        let arc: Arc<[[f32; 2]]> = packed.into();
-        self.curves.insert(name.to_owned(), Arc::clone(&arc));
-        arc
-    }
-}
-
 pub(crate) struct PlayerSoundPlugin;
 
 impl Plugin for PlayerSoundPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<SoundPickState>()
-            .init_resource::<crate::clip_store::ResidentClipCache>()
+        app.init_resource::<crate::clip_store::ResidentClipCache>()
             .init_resource::<MissingAliasGaps>()
-            .init_resource::<SharedPlayAssets>()
             .init_resource::<StartDecisions>()
-            .init_resource::<PendingStarts>()
-            .init_resource::<VoiceOccupancy>()
+            .init_resource::<CueFeedback>()
             .init_resource::<crate::ambient::MapAmbientBooted>()
+            .init_resource::<crate::ambient::MapSources>()
             .init_resource::<crate::script_ambient::ScriptAmbientPlayback>()
+            .init_resource::<crate::destructible_loops::DestructibleSources>()
             .init_resource::<crate::ambient::SoundBankLoadAttempted>()
             .init_resource::<crate::ambient::ResidentSoundBank>()
             .init_resource::<crate::BobCycleTracker>()
-            .add_audio_source::<PcmAudio>()
-            .add_audio_source::<LoopingPcmAudio>()
+            .init_resource::<crate::shellshock::ShellshockSources>()
+            .init_resource::<crate::breath::BreathSources>()
             .add_message::<AliasCommand>()
             .add_message::<Footstep>()
             .add_message::<WeaponSound>()
@@ -170,41 +69,33 @@ impl Plugin for PlayerSoundPlugin {
             .add_message::<LandSound>()
             .add_systems(
                 Update,
+                play_weapon_sound_messages
+                    .in_set(ClientSet::Predict)
+                    .after(frame::OwnerEventsPublished)
+                    .after(crate::backend::publish_audio_context),
+            )
+            .add_systems(
+                Update,
                 (
                     crate::ambient::boot_map_ambient_once,
                     crate::script_ambient::update_script_ambient
                         .after(crate::ambient::boot_map_ambient_once),
-                    reclaim_finished_voices
-                        .before(drain_pending_oneshots)
-                        .before(play_alias_messages)
-                        .before(play_footstep_messages)
-                        .before(play_weapon_sound_messages)
-                        .before(play_bound_weapon_sounds)
-                        .before(play_land_sound_messages),
-                    drain_pending_oneshots
+                    collect_cue_decisions
                         .after(play_alias_messages)
                         .before(play_footstep_messages)
-                        .before(play_weapon_sound_messages)
                         .before(play_land_sound_messages),
                     apply_svc_local_sound
                         .before(play_alias_messages)
                         .run_if(resource_exists::<LastAdoptedSnapshot>),
                     crate::shellshock::update_shellshock_tinnitus.before(play_alias_messages),
                     crate::breath::update.before(play_alias_messages),
-                    play_alias_messages
-                        .after(FxSoundPublished)
-                        .after(crate::ambient::update_map_emitter_gain),
+                    play_alias_messages.after(FxSoundPublished),
                     play_footstep_messages,
                     crate::entity_events::play_viewmodel_notetrack_messages
-                        .before(play_weapon_sound_messages)
                         .before(play_bound_weapon_sounds),
-                    play_weapon_sound_messages,
-                    play_bound_weapon_sounds.after(drain_pending_oneshots),
+                    play_bound_weapon_sounds.after(collect_cue_decisions),
                     play_land_sound_messages,
-                    crate::destructible_loops::update
-                        .before(crate::ambient::update_map_emitter_gain),
-                    crate::ambient::update_map_emitter_gain,
-                    update_all_channels,
+                    crate::destructible_loops::update,
                 )
                     .in_set(ClientSet::Effects),
             )
@@ -227,66 +118,12 @@ impl Plugin for PlayerSoundPlugin {
 
 fn reset_clip_prep_on_match_torn_down(
     mut torn: MessageReader<MatchTornDown>,
-    mut pending: ResMut<PendingStarts>,
-    mut shared: ResMut<SharedPlayAssets>,
+    mut pending: ResMut<CueFeedback>,
 ) {
     if torn.read().count() == 0 {
         return;
     }
     pending.clear();
-    diag::info!(
-        Audio,
-        "audio: common dry handles reused this match={}",
-        shared.common_dry_reuses
-    );
-    *shared = SharedPlayAssets::default();
-}
-
-fn listener_pose(listeners: &Query<&Transform, With<AmbientListener>>) -> Option<(Vec3, Vec3)> {
-    let n = listeners.iter().len();
-    if n > 1 {
-        panic!("more than one ambient listener");
-    }
-    listeners
-        .iter()
-        .next()
-        .map(|t| (t.translation, t.rotation * Vec3::X))
-}
-
-fn update_all_channels(
-    listeners: Query<&Transform, With<AmbientListener>>,
-    mut channels: Query<(Entity, &Channel3d, &mut AudioSink)>,
-    mut occupancy: ResMut<VoiceOccupancy>,
-    settings: Res<frame::GameSettings>,
-) {
-    let Some((ear, right)) = listener_pose(&listeners) else {
-        return;
-    };
-    let ear_inches = transform_inches(ear);
-    for (entity, ch, mut sink) in &mut channels {
-        let dist = distance_inches(ear_inches, ch.origin_inches);
-        if let Some(priority) = &ch.priority {
-            occupancy.update_alias_priority(entity, priority.evaluate(Some(dist)));
-        }
-        let atten = if ch.knots.is_empty() {
-            0.0
-        } else {
-            let value = distance_attenuation(
-                &ch.knots,
-                ch.near_knots.as_deref(),
-                dist,
-                ch.dist_min,
-                ch.dist_max,
-            );
-            if value < 0.0 { 0.0 } else { value }
-        };
-        let emitter = Vec3::from_array(ch.origin_inches);
-        let (pan_l, pan_r) = world_oneshot_channel_gains(ear, right, emitter, 1.0);
-        ch.live_pan.set(pan_l, pan_r);
-        sink.set_volume(Volume::Linear(
-            (ch.base_volume * atten * settings.master_volume).max(0.0),
-        ));
-    }
 }
 
 fn apply_svc_local_sound(
@@ -308,6 +145,14 @@ fn apply_svc_local_sound(
             );
             continue;
         };
+        if crate::diagnostics::enabled() {
+            crate::diagnostics::emit(format!(
+                "audio diag: authority_local_sound alias={alias} stop={} index={} server_tick={:?}",
+                cmd.stop,
+                cmd.index,
+                adopted.next().map(|snapshot| snapshot.tick.0)
+            ));
+        }
         if cmd.stop {
             play.write(AliasCommand::Stop {
                 namespace,
@@ -316,6 +161,7 @@ fn apply_svc_local_sound(
             });
         } else {
             play.write(crate::AliasCommand::Play(PlayAlias {
+                event: None,
                 namespace,
                 alias,
                 fallback: None,
@@ -338,33 +184,17 @@ fn sound_entity(number: Option<u32>, local: sim::ClientId) -> Option<u32> {
 
 fn play_alias_messages(
     mut events: MessageReader<AliasCommand>,
-    mut commands: Commands,
-    mut pcm_assets: ResMut<Assets<PcmAudio>>,
-    mut shared: ResMut<SharedPlayAssets>,
-    mut pick: ResMut<SoundPickState>,
-    mut gaps: ResMut<MissingAliasGaps>,
-    mut clips: Option<ResMut<ClipStore>>,
-    mut pending: ResMut<PendingStarts>,
-    mut occupancy: ResMut<VoiceOccupancy>,
+    runtime: Res<AudioRuntime>,
+    mut pending: ResMut<CueFeedback>,
     mut decisions: ResMut<StartDecisions>,
     bank: Option<Res<SoundBank>>,
-    iwd: Option<Res<SoundIwd>>,
     epoch: Res<MatchEpoch>,
     local: Res<net::LocalPresentClient>,
-    listeners: Query<&Transform, With<AmbientListener>>,
 ) {
-    let pose = listener_pose(&listeners);
-    let iwd = iwd.as_deref().map(|s| s.0.as_ref());
     for command in events.read() {
         let (event, pitch_scale) = match command {
             AliasCommand::StopEntity { snd_ent } => {
-                pending.entries.retain(|entry| {
-                    entry.snd_ent != Some(*snd_ent)
-                        || entry.epoch != epoch.0
-                        || entry.class.scope() != crate::backend::AudioScope::Match
-                });
-                occupancy.take_sound_entity(*snd_ent);
-                crate::backend::stop_entity_match(&mut commands, *snd_ent, epoch.0);
+                runtime.stop_emitter_cues(*snd_ent, epoch.0);
                 continue;
             }
             AliasCommand::Play(event) => (event, 1.0),
@@ -375,129 +205,62 @@ fn play_alias_messages(
                 snd_ent,
             } => {
                 let snd_ent = sound_entity(*snd_ent, local.0);
-                pending.cancel_alias(*namespace, alias, snd_ent, epoch.0);
-                let (namespace, alias, snd_ent, epoch) =
-                    (*namespace, alias.clone(), snd_ent, epoch.0);
-                // Ordered after prior spawns, including ones queued by Play in
-                // this same message batch; a later Play remains a new voice.
-                commands.queue(move |world: &mut World| {
-                    let entities: Vec<_> = world
-                        .query::<(Entity, &AliasPlayback, &crate::backend::Voice)>()
-                        .iter(world)
-                        .filter(|(_, tag, voice)| {
-                            tag.namespace == namespace
-                                && tag.alias == alias
-                                && tag.snd_ent == snd_ent
-                                && voice.epoch == epoch
-                                && voice.scope == crate::backend::AudioScope::Match
-                        })
-                        .map(|(entity, _, _)| entity)
-                        .collect();
-                    for entity in entities {
-                        world.despawn(entity);
-                    }
-                });
+                runtime.stop_cue(*namespace, alias, snd_ent, epoch.0);
                 continue;
             }
         };
         let Some(bank) = bank.as_ref() else {
-            drop_without_bank(std::iter::once(event.alias.as_str()), &mut decisions);
+            drop_without_bank(
+                std::iter::once((event.alias.as_str(), event.event)),
+                &mut decisions,
+            );
             continue;
         };
-        let outcome = play_oneshot_recorded(
-            &mut commands,
-            &mut pcm_assets,
-            &mut shared,
+        play_oneshot_recorded(
             &bank.0,
-            iwd,
             event.namespace,
             &event.alias,
             None,
             event.origin_inches,
-            pose,
-            &mut pick,
-            clips.as_deref_mut(),
+            &runtime,
             &mut pending,
-            &mut occupancy,
             &mut decisions,
             sound_entity(event.snd_ent, local.0),
             SoundClass::World,
             epoch.0,
             pitch_scale,
-        );
-        finish_binding_start(
-            outcome,
-            &event.alias,
-            event.fallback.as_deref(),
-            |fb| {
-                play_oneshot_recorded(
-                    &mut commands,
-                    &mut pcm_assets,
-                    &mut shared,
-                    &bank.0,
-                    iwd,
-                    event.namespace,
-                    fb,
-                    None,
-                    event.origin_inches,
-                    pose,
-                    &mut pick,
-                    clips.as_deref_mut(),
-                    &mut pending,
-                    &mut occupancy,
-                    &mut decisions,
-                    sound_entity(event.snd_ent, local.0),
-                    SoundClass::World,
-                    epoch.0,
-                    pitch_scale,
-                )
-            },
-            &mut gaps,
+            event.fallback.iter().cloned().collect(),
+            event.event,
         );
     }
 }
 
 fn play_footstep_messages(
     mut events: MessageReader<Footstep>,
-    mut commands: Commands,
-    mut pcm_assets: ResMut<Assets<PcmAudio>>,
-    mut shared: ResMut<SharedPlayAssets>,
-    mut pick: ResMut<SoundPickState>,
+    runtime: Res<AudioRuntime>,
     mut gaps: ResMut<MissingAliasGaps>,
-    mut clips: Option<ResMut<ClipStore>>,
-    mut pending: ResMut<PendingStarts>,
-    mut occupancy: ResMut<VoiceOccupancy>,
+    mut pending: ResMut<CueFeedback>,
     mut decisions: ResMut<StartDecisions>,
     bank: Option<Res<SoundBank>>,
-    iwd: Option<Res<SoundIwd>>,
     epoch: Res<MatchEpoch>,
-    listeners: Query<&Transform, With<AmbientListener>>,
 ) {
     let Some(bank) = bank else {
-        drop_without_bank(events.read().map(|e| e.alias), &mut decisions);
+        drop_without_bank(events.read().map(|e| (e.alias, e.event)), &mut decisions);
         return;
     };
-    let pose = listener_pose(&listeners);
-    let iwd = iwd.as_deref().map(|s| s.0.as_ref());
     for event in events.read() {
         let outcome = play_surface_alias_chain(
-            &mut commands,
-            &mut pcm_assets,
-            &mut shared,
             &bank.0,
-            iwd,
             event.alias,
             event.fallback,
             event.origin_inches,
-            pose,
-            &mut pick,
-            clips.as_deref_mut(),
+            &runtime,
             &mut pending,
-            &mut occupancy,
             &mut decisions,
             event.snd_ent,
             SoundClass::World,
             epoch.0,
+            event.event,
         );
         if outcome.allows_binding_fallback() {
             gaps.record(event.alias);
@@ -508,45 +271,36 @@ fn play_footstep_messages(
 
 fn play_weapon_sound_messages(
     mut events: MessageReader<WeaponSound>,
-    mut commands: Commands,
-    mut pcm_assets: ResMut<Assets<PcmAudio>>,
-    mut shared: ResMut<SharedPlayAssets>,
-    mut pick: ResMut<SoundPickState>,
+    runtime: Res<AudioRuntime>,
     mut gaps: ResMut<MissingAliasGaps>,
-    mut clips: Option<ResMut<ClipStore>>,
-    mut pending: ResMut<PendingStarts>,
-    mut occupancy: ResMut<VoiceOccupancy>,
+    mut pending: ResMut<CueFeedback>,
     mut decisions: ResMut<StartDecisions>,
     bank: Option<Res<SoundBank>>,
-    iwd: Option<Res<SoundIwd>>,
     epoch: Res<MatchEpoch>,
-    listeners: Query<&Transform, With<AmbientListener>>,
 ) {
     let Some(bank) = bank else {
-        drop_without_bank(events.read().map(|e| e.alias.as_str()), &mut decisions);
+        drop_without_bank(
+            events.read().map(|e| (e.alias.as_str(), e.event)),
+            &mut decisions,
+        );
         return;
     };
-    let pose = listener_pose(&listeners);
-    let iwd = iwd.as_deref().map(|s| s.0.as_ref());
     for event in events.read() {
-        let outcome = play_alias_oneshot(
-            &mut commands,
-            &mut pcm_assets,
-            &mut shared,
+        let outcome = play_oneshot_recorded(
             &bank.0,
-            iwd,
             event.namespace,
             &event.alias,
+            None,
             event.origin_inches,
-            pose,
-            &mut pick,
-            clips.as_deref_mut(),
+            &runtime,
             &mut pending,
-            &mut occupancy,
             &mut decisions,
             event.snd_ent,
             SoundClass::Weapon,
             epoch.0,
+            1.0,
+            Vec::new(),
+            event.event,
         );
         if outcome.allows_binding_fallback() {
             gaps.record(&event.alias);
@@ -556,27 +310,18 @@ fn play_weapon_sound_messages(
 
 fn play_bound_weapon_sounds(
     mut events: MessageReader<BoundWeaponSound>,
-    mut commands: Commands,
-    mut pcm_assets: ResMut<Assets<PcmAudio>>,
-    mut shared: ResMut<SharedPlayAssets>,
-    mut pick: ResMut<SoundPickState>,
+    runtime: Res<AudioRuntime>,
     mut gaps: ResMut<MissingAliasGaps>,
-    mut clips: Option<ResMut<ClipStore>>,
-    mut pending: ResMut<PendingStarts>,
-    mut occupancy: ResMut<VoiceOccupancy>,
+    mut pending: ResMut<CueFeedback>,
     mut decisions: ResMut<StartDecisions>,
     bank: Option<Res<SoundBank>>,
-    iwd: Option<Res<SoundIwd>>,
     epoch: Res<MatchEpoch>,
     local: Res<net::LocalPresentClient>,
-    listeners: Query<&Transform, With<AmbientListener>>,
 ) {
     let Some(bank) = bank else {
         for _ in events.read() {}
         return;
     };
-    let pose = listener_pose(&listeners);
-    let iwd = iwd.as_deref().map(|s| s.0.as_ref());
     for event in events.read() {
         if event.bank_revision != bank.0.revision() {
             continue;
@@ -584,27 +329,24 @@ fn play_bound_weapon_sounds(
         let Some(alias) = bank.0.name_at(event.index) else {
             continue;
         };
-        let namespace = bank.0.namespace_of_alias(event.index);
+        let Some(namespace) = bank.0.namespace_of_alias(event.index) else {
+            continue;
+        };
         let outcome = play_oneshot_recorded(
-            &mut commands,
-            &mut pcm_assets,
-            &mut shared,
             &bank.0,
-            iwd,
             namespace,
             alias,
             Some(event.index),
             event.origin_inches,
-            pose,
-            &mut pick,
-            clips.as_deref_mut(),
+            &runtime,
             &mut pending,
-            &mut occupancy,
             &mut decisions,
             sound_entity(event.snd_ent, local.0),
             SoundClass::Weapon,
             epoch.0,
             1.0,
+            Vec::new(),
+            event.event,
         );
         if outcome.allows_binding_fallback() {
             gaps.record(alias);
@@ -614,45 +356,30 @@ fn play_bound_weapon_sounds(
 
 fn play_land_sound_messages(
     mut events: MessageReader<LandSound>,
-    mut commands: Commands,
-    mut pcm_assets: ResMut<Assets<PcmAudio>>,
-    mut shared: ResMut<SharedPlayAssets>,
-    mut pick: ResMut<SoundPickState>,
+    runtime: Res<AudioRuntime>,
     mut gaps: ResMut<MissingAliasGaps>,
-    mut clips: Option<ResMut<ClipStore>>,
-    mut pending: ResMut<PendingStarts>,
-    mut occupancy: ResMut<VoiceOccupancy>,
+    mut pending: ResMut<CueFeedback>,
     mut decisions: ResMut<StartDecisions>,
     bank: Option<Res<SoundBank>>,
-    iwd: Option<Res<SoundIwd>>,
     epoch: Res<MatchEpoch>,
-    listeners: Query<&Transform, With<AmbientListener>>,
 ) {
     let Some(bank) = bank else {
-        drop_without_bank(events.read().map(|e| e.alias), &mut decisions);
+        drop_without_bank(events.read().map(|e| (e.alias, e.event)), &mut decisions);
         return;
     };
-    let pose = listener_pose(&listeners);
-    let iwd = iwd.as_deref().map(|s| s.0.as_ref());
     for event in events.read() {
         let outcome = play_surface_alias_chain(
-            &mut commands,
-            &mut pcm_assets,
-            &mut shared,
             &bank.0,
-            iwd,
             event.alias,
             event.fallback,
             event.origin_inches,
-            pose,
-            &mut pick,
-            clips.as_deref_mut(),
+            &runtime,
             &mut pending,
-            &mut occupancy,
             &mut decisions,
             event.snd_ent,
             SoundClass::World,
             epoch.0,
+            event.event,
         );
         if outcome.allows_binding_fallback() {
             gaps.record(event.alias);
@@ -661,8 +388,11 @@ fn play_land_sound_messages(
     }
 }
 
-fn drop_without_bank<'a>(aliases: impl Iterator<Item = &'a str>, decisions: &mut StartDecisions) {
-    for alias in aliases {
+fn drop_without_bank<'a>(
+    aliases: impl Iterator<Item = (&'a str, Option<crate::AudioEvent>)>,
+    decisions: &mut StartDecisions,
+) {
+    for (alias, event) in aliases {
         if !crate::AudioSilent::active() {
             diag::warn!(
                 Audio,
@@ -670,9 +400,11 @@ fn drop_without_bank<'a>(aliases: impl Iterator<Item = &'a str>, decisions: &mut
             );
         }
         decisions.record(StartDecision {
+            event,
             namespace: AssetNamespace::Iw4,
             alias: alias.to_owned(),
             variant: None,
+            loaded_binding_origin: None,
             outcome: StartOutcome::Failed(StartFailure::BankMissing),
             secondary: None,
             detail: None,
@@ -680,83 +412,50 @@ fn drop_without_bank<'a>(aliases: impl Iterator<Item = &'a str>, decisions: &mut
     }
 }
 
-fn finish_binding_start(
-    outcome: StartOutcome,
-    alias: &str,
-    fallback: Option<&str>,
-    play_fallback: impl FnOnce(&str) -> StartOutcome,
-    gaps: &mut MissingAliasGaps,
-) {
-    if outcome.is_open() || !outcome.allows_binding_fallback() {
-        return;
-    }
-    if let Some(fb) = fallback {
-        let fb_out = play_fallback(fb);
-        if fb_out.is_open() {
-            return;
-        }
-        if fb_out.allows_binding_fallback() {
-            gaps.record(fb);
-        }
-    }
-    gaps.record(alias);
-}
-
 fn play_surface_alias_chain(
-    commands: &mut Commands,
-    pcm_assets: &mut Assets<PcmAudio>,
-    shared: &mut SharedPlayAssets,
-    bank: &SoundCatalog,
-    iwd: Option<&NamespaceSoundIwd>,
+    bank: &Arc<SoundCatalog>,
     alias: &str,
     fallback: &str,
     origin_inches: Option<[f32; 3]>,
-    listener: Option<(Vec3, Vec3)>,
-    pick: &mut SoundPickState,
-    mut clips: Option<&mut ClipStore>,
-    pending: &mut PendingStarts,
-    occupancy: &mut VoiceOccupancy,
+    runtime: &AudioRuntime,
+    pending: &mut CueFeedback,
     decisions: &mut StartDecisions,
     snd_ent: Option<u32>,
     class: SoundClass,
     epoch: u64,
+    event: Option<crate::AudioEvent>,
 ) -> StartOutcome {
-    let mut last = StartOutcome::Failed(StartFailure::MissingAlias);
-    for candidate in crate::aliases::surface_alias_candidates(alias, fallback) {
-        let outcome = play_alias_oneshot(
-            commands,
-            pcm_assets,
-            shared,
-            bank,
-            iwd,
-            AssetNamespace::Iw4,
-            candidate,
-            origin_inches,
-            listener,
-            pick,
-            clips.as_deref_mut(),
-            pending,
-            occupancy,
-            decisions,
-            snd_ent,
-            class,
-            epoch,
-        );
-        if outcome.is_open() || !outcome.allows_binding_fallback() {
-            return outcome;
-        }
-        last = outcome;
-    }
-    last
+    let candidates = crate::aliases::surface_alias_candidates(alias, fallback);
+    let Some(first) = candidates.first() else {
+        return StartOutcome::Failed(StartFailure::MissingAlias);
+    };
+    play_oneshot_recorded(
+        bank,
+        AssetNamespace::Iw4,
+        first,
+        None,
+        origin_inches,
+        runtime,
+        pending,
+        decisions,
+        snd_ent,
+        class,
+        epoch,
+        1.0,
+        candidates[1..]
+            .iter()
+            .map(|name| (*name).to_owned())
+            .collect(),
+        event,
+    )
 }
 
 pub fn world_oneshot_pan(ear: Vec3, listener_right: Vec3, emitter: Vec3) -> f32 {
-    let to = emitter - ear;
-    if to.length_squared() < 1e-8 {
-        0.0
-    } else {
-        to.normalize().dot(listener_right).clamp(-1.0, 1.0)
-    }
+    crate::spatial::pan(
+        ear.to_array(),
+        listener_right.to_array(),
+        emitter.to_array(),
+    )
 }
 
 pub fn world_oneshot_channel_gains(
@@ -765,870 +464,102 @@ pub fn world_oneshot_channel_gains(
     emitter: Vec3,
     atten: f32,
 ) -> (f32, f32) {
-    let pan = world_oneshot_pan(ear, listener_right, emitter);
-    let angle = (pan + 1.0) * FRAC_PI_4;
-    (atten * angle.cos(), atten * angle.sin())
+    crate::spatial::channel_gains(
+        ear.to_array(),
+        listener_right.to_array(),
+        emitter.to_array(),
+        atten,
+    )
 }
 
-fn drain_pending_oneshots(
-    mut pending: ResMut<PendingStarts>,
-    mut commands: Commands,
-    mut pcm_assets: ResMut<Assets<PcmAudio>>,
-    mut shared: ResMut<SharedPlayAssets>,
-    mut pick: ResMut<SoundPickState>,
-    mut occupancy: ResMut<VoiceOccupancy>,
+fn collect_cue_decisions(
+    mut pending: ResMut<CueFeedback>,
     mut decisions: ResMut<StartDecisions>,
-    mut clips: Option<ResMut<ClipStore>>,
-    bank: Option<Res<SoundBank>>,
-    iwd: Option<Res<SoundIwd>>,
-    epoch: Res<MatchEpoch>,
-    listeners: Query<&Transform, With<AmbientListener>>,
+    mut gaps: ResMut<MissingAliasGaps>,
 ) {
-    if pending.entries.is_empty() {
-        return;
-    }
-    let Some(bank) = bank else {
-        pending.clear();
-        return;
-    };
-    let Some(clips) = clips.as_mut() else {
-        return;
-    };
-    let pose = listener_pose(&listeners);
-    let iwd = iwd.as_deref().map(|s| s.0.as_ref());
-    let now = Instant::now();
-    let waiting = std::mem::take(&mut pending.entries);
-    for entry in waiting {
-        if entry.class.scope() == crate::backend::AudioScope::Match && entry.epoch != epoch.0 {
-            continue;
+    pending.cues.retain(|entry| {
+        let Some(decision) = entry.handle.completion() else {
+            return true;
+        };
+        if decision.outcome.allows_binding_fallback() {
+            gaps.record(&decision.alias);
         }
-        if now >= entry.deadline {
-            diag::warn!(
-                Audio,
-                "audio: alias `{}:{}` expired awaiting decode (typed gap)",
-                entry.namespace.as_str(),
-                entry.alias
-            );
-            decisions.record(StartDecision {
-                namespace: entry.namespace,
-                alias: entry.alias,
-                variant: Some(entry.variant),
-                outcome: StartOutcome::Failed(StartFailure::Expired),
-                secondary: None,
-                detail: None,
-            });
-            continue;
-        }
-        match clips.ready(&entry.clip) {
-            None => pending.entries.push(entry),
-            Some(Err(_)) => {
-                decisions.record(StartDecision {
-                    namespace: entry.namespace,
-                    alias: entry.alias,
-                    variant: Some(entry.variant),
-                    outcome: StartOutcome::Failed(StartFailure::DecodeFailed),
-                    secondary: None,
-                    detail: None,
-                });
-            }
-            Some(Ok(pcm)) => {
-                let started = submit_prepared_oneshot(
-                    &mut commands,
-                    &mut pcm_assets,
-                    &mut shared,
-                    &bank.0,
-                    iwd,
-                    entry.namespace,
-                    &entry.alias,
-                    entry.bound,
-                    entry.origin_inches,
-                    pose,
-                    &mut pick,
-                    Some(clips.as_mut()),
-                    &mut pending,
-                    &mut occupancy,
-                    entry.snd_ent,
-                    0,
-                    entry.class,
-                    entry.epoch,
-                    pcm,
-                    &entry.clip,
-                    entry.variant,
-                    entry.volume,
-                    entry.pitch,
-                    entry.layer.as_deref(),
-                );
-                if let Some((sec, sec_out)) = &started.secondary
-                    && !sec_out.is_open()
-                {
-                    diag::warn!(
-                        Audio,
-                        "audio: secondary `{sec}` of `{}:{}` result={sec_out}",
-                        entry.namespace.as_str(),
-                        entry.alias
-                    );
-                }
-                decisions.record(StartDecision {
-                    namespace: entry.namespace,
-                    alias: entry.alias,
-                    variant: started.variant,
-                    outcome: started.outcome,
-                    secondary: started.secondary,
-                    detail: started.detail,
-                });
-            }
-        }
-    }
+        decisions.record(decision);
+        false
+    });
 }
 
 pub(crate) fn play_alias_oneshot(
-    commands: &mut Commands,
-    pcm_assets: &mut Assets<PcmAudio>,
-    shared: &mut SharedPlayAssets,
-    bank: &SoundCatalog,
-    iwd: Option<&NamespaceSoundIwd>,
+    bank: &Arc<SoundCatalog>,
     namespace: AssetNamespace,
     alias: &str,
     origin_inches: Option<[f32; 3]>,
-    listener: Option<(Vec3, Vec3)>,
-    pick: &mut SoundPickState,
-    clips: Option<&mut ClipStore>,
-    pending: &mut PendingStarts,
-    occupancy: &mut VoiceOccupancy,
+    runtime: &AudioRuntime,
+    pending: &mut CueFeedback,
     decisions: &mut StartDecisions,
     snd_ent: Option<u32>,
     class: SoundClass,
     epoch: u64,
 ) -> StartOutcome {
     play_oneshot_recorded(
-        commands,
-        pcm_assets,
-        shared,
         bank,
-        iwd,
         namespace,
         alias,
         None,
         origin_inches,
-        listener,
-        pick,
-        clips,
+        runtime,
         pending,
-        occupancy,
         decisions,
         snd_ent,
         class,
         epoch,
         1.0,
+        Vec::new(),
+        None,
     )
 }
 
 #[allow(clippy::too_many_arguments)]
 fn play_oneshot_recorded(
-    commands: &mut Commands,
-    pcm_assets: &mut Assets<PcmAudio>,
-    shared: &mut SharedPlayAssets,
-    bank: &SoundCatalog,
-    iwd: Option<&NamespaceSoundIwd>,
+    bank: &Arc<SoundCatalog>,
     namespace: AssetNamespace,
     alias: &str,
     bound: Option<usize>,
     origin_inches: Option<[f32; 3]>,
-    listener: Option<(Vec3, Vec3)>,
-    pick: &mut SoundPickState,
-    clips: Option<&mut ClipStore>,
-    pending: &mut PendingStarts,
-    occupancy: &mut VoiceOccupancy,
+    runtime: &AudioRuntime,
+    pending: &mut CueFeedback,
     decisions: &mut StartDecisions,
     snd_ent: Option<u32>,
     class: SoundClass,
     epoch: u64,
     pitch_scale: f32,
+    fallbacks: Vec<String>,
+    event: Option<crate::AudioEvent>,
 ) -> StartOutcome {
-    let started = play_alias_oneshot_at(
-        commands,
-        pcm_assets,
-        shared,
-        bank,
-        iwd,
+    let handle = runtime.trigger_cue(crate::cue_execution::CueTrigger {
+        event,
+        bank: bank.clone(),
         namespace,
-        alias,
+        alias: alias.into(),
         bound,
         origin_inches,
-        listener,
-        pick,
-        clips,
-        pending,
-        occupancy,
-        snd_ent,
-        0,
+        emitter: snd_ent,
         class,
         epoch,
         pitch_scale,
-    );
-    if let Some((sec, sec_out)) = &started.secondary
-        && !sec_out.is_open()
-    {
-        diag::warn!(
-            Audio,
-            "audio: secondary `{sec}` of `{}:{alias}` result={sec_out}",
-            namespace.as_str()
-        );
-    }
-    let outcome = started.outcome.clone();
+        fallbacks,
+    });
+    let outcome = StartOutcome::Pending;
+    pending.push(handle);
     decisions.record(StartDecision {
+        event,
         namespace,
-        alias: alias.to_owned(),
-        variant: started.variant,
-        outcome: started.outcome,
-        secondary: started.secondary,
-        detail: started.detail,
+        alias: alias.into(),
+        variant: None,
+        loaded_binding_origin: None,
+        outcome: outcome.clone(),
+        secondary: None,
+        detail: None,
     });
     outcome
-}
-
-struct OneshotStart {
-    outcome: StartOutcome,
-    variant: Option<usize>,
-    secondary: Option<(String, StartOutcome)>,
-    detail: Option<String>,
-}
-
-impl OneshotStart {
-    fn failed(failure: StartFailure) -> Self {
-        Self {
-            outcome: StartOutcome::Failed(failure),
-            variant: None,
-            secondary: None,
-            detail: None,
-        }
-    }
-
-    fn with_variant(mut self, variant: usize) -> Self {
-        self.variant = Some(variant);
-        self
-    }
-}
-
-fn falloff_detail(dist: f32, dist_min: f32, dist_max: f32, atten: f32) -> String {
-    format!("dist={dist:.0} dist_min={dist_min:.0} dist_max={dist_max:.0} atten={atten:.3}")
-}
-
-fn prepare_voice(
-    commands: &mut Commands,
-    occupancy: &mut VoiceOccupancy,
-    bank: &SoundCatalog,
-    channel: Option<u32>,
-    snd_ent: Option<u32>,
-) -> Result<(), SuppressReason> {
-    let Some(ch) = channel else {
-        return Ok(());
-    };
-    let Some(info) = bank.ent_channel(ch) else {
-        return Ok(());
-    };
-    if info.is_restricted {
-        if let Some(ent) = snd_ent {
-            let stopped = occupancy.take_entity_channel(ent, ch);
-
-            for entity in stopped {
-                crate::backend::stop(commands, entity);
-            }
-        }
-    }
-    let voice_n = occupancy.voice_count(ch);
-    if !has_free_voice(voice_n, 0, info.max_voices) {
-        return Err(SuppressReason::VoiceLimit);
-    }
-    Ok(())
-}
-
-fn prepare_alias_voice(
-    commands: &mut Commands,
-    occupancy: &mut VoiceOccupancy,
-    namespace: AssetNamespace,
-    alias: &str,
-    row: Option<&asset_audio::CapturedAlias>,
-    snd_ent: Option<u32>,
-    priority: f32,
-) -> Result<(), SuppressReason> {
-    if namespace != AssetNamespace::T5 {
-        return Ok(());
-    }
-    let Some(row) = row else {
-        return Ok(());
-    };
-    let flags = row.flags.unwrap_or(0);
-    for (mode, count, per_entity) in [
-        ((flags >> 25) & 3, row.limit_count, false),
-        ((flags >> 27) & 3, row.entity_limit_count, true),
-    ] {
-        if let Some(count) = count
-            && let Some(entity) = occupancy.limit_alias(
-                namespace,
-                alias,
-                snd_ent,
-                (mode, count),
-                per_entity,
-                priority,
-            )?
-        {
-            crate::backend::stop(commands, entity);
-        }
-    }
-    Ok(())
-}
-
-fn voice_lease(
-    bank: &SoundCatalog,
-    channel: Option<u32>,
-    snd_ent: Option<u32>,
-) -> Option<VoiceLease> {
-    let ch = channel?;
-    bank.ent_channel(ch)?;
-    Some(VoiceLease {
-        channel: ch,
-        snd_ent,
-    })
-}
-
-fn track_voice(occupancy: &mut VoiceOccupancy, entity: Entity, lease: Option<VoiceLease>) {
-    if let Some(lease) = lease {
-        occupancy.track(entity, lease);
-    }
-}
-
-fn streamed_row_volume_pitch(
-    namespace: AssetNamespace,
-    row: &asset_audio::CapturedAlias,
-    rng: &mut u32,
-) -> (f32, f32) {
-    let t_vol = unit_random(rng);
-    let t_pitch = unit_random(rng);
-    let volume = if namespace != AssetNamespace::T5 && row.vol_min == 0.0 && row.vol_max == 0.0 {
-        1.0
-    } else {
-        lerp_range(row.vol_min, row.vol_max, t_vol)
-    };
-    let pitch = if row.pitch_min == 0.0 && row.pitch_max == 0.0 {
-        1.0
-    } else {
-        lerp_range(row.pitch_min, row.pitch_max, t_pitch)
-    };
-    (volume, pitch)
-}
-
-fn play_alias_oneshot_at(
-    commands: &mut Commands,
-    pcm_assets: &mut Assets<PcmAudio>,
-    shared: &mut SharedPlayAssets,
-    bank: &SoundCatalog,
-    iwd: Option<&NamespaceSoundIwd>,
-    namespace: AssetNamespace,
-    alias: &str,
-    bound: Option<usize>,
-    origin_inches: Option<[f32; 3]>,
-    listener: Option<(Vec3, Vec3)>,
-    pick: &mut SoundPickState,
-    mut clips: Option<&mut ClipStore>,
-    pending: &mut PendingStarts,
-    occupancy: &mut VoiceOccupancy,
-    snd_ent: Option<u32>,
-    depth: u8,
-    class: SoundClass,
-    epoch: u64,
-    pitch_scale: f32,
-) -> OneshotStart {
-    let avoid = pick
-        .last_variant
-        .get(&(namespace, alias.to_owned()))
-        .copied();
-    let picked = match bound {
-        Some(index) => bank.pick_loaded_outcome_at(index, &mut pick.lcg, avoid),
-        None => bank.pick_loaded_outcome(namespace, alias, &mut pick.lcg, avoid),
-    };
-    let Some(outcome) = picked else {
-        return OneshotStart::failed(StartFailure::MissingAlias);
-    };
-    let variant_index = outcome.variant_index;
-    let t5_secondary = if namespace == AssetNamespace::T5 {
-        let layer = match bound {
-            Some(index) => bank.sound_at(index),
-            None => bank.sound_in(namespace, alias),
-        }
-        .and_then(|sound| sound.aliases.get(variant_index))
-        .and_then(|row| row.secondary.as_deref());
-        play_secondary_layer(
-            commands,
-            pcm_assets,
-            shared,
-            bank,
-            iwd,
-            namespace,
-            layer,
-            origin_inches,
-            listener,
-            pick,
-            clips.as_deref_mut(),
-            pending,
-            occupancy,
-            snd_ent,
-            depth,
-            class,
-            epoch,
-        )
-    } else {
-        None
-    };
-
-    let loaded_name = outcome.picked.as_ref().map(|p| p.sound.name.as_str());
-    let loaded_ns = outcome
-        .picked
-        .as_ref()
-        .map(|p| AssetNamespace::from_zone_game(p.sound.game));
-    let Some(clip) = clip_key_for_variant(
-        bank,
-        namespace,
-        alias,
-        bound,
-        variant_index,
-        loaded_name,
-        loaded_ns,
-    ) else {
-        return OneshotStart::failed(StartFailure::NoPcm).with_variant(variant_index);
-    };
-    let (volume, pitch, layer) = if let Some(picked) = &outcome.picked {
-        (picked.volume, picked.pitch, picked.layer.clone())
-    } else {
-        let row = match bound {
-            Some(index) => bank.sound_at(index),
-            None => bank.sound_in(namespace, alias),
-        }
-        .and_then(|s| s.aliases.get(variant_index));
-        let (volume, pitch) = row
-            .map(|row| streamed_row_volume_pitch(namespace, row, &mut pick.lcg))
-            .unwrap_or((1.0, 1.0));
-        (volume, pitch, row.and_then(|r| r.secondary.clone()))
-    };
-    let pitch = pitch
-        * if pitch_scale.is_finite() && pitch_scale > 0.0 {
-            pitch_scale
-        } else {
-            1.0
-        };
-    let pcm = match take_or_pending_clip(
-        bank,
-        clips.as_deref_mut(),
-        pending,
-        clip.clone(),
-        namespace,
-        alias,
-        bound,
-        variant_index,
-        volume,
-        pitch,
-        origin_inches,
-        snd_ent,
-        layer.clone(),
-        class,
-        epoch,
-    ) {
-        ClipTake::Ready(pcm) => pcm,
-        ClipTake::Pending => {
-            return OneshotStart {
-                outcome: StartOutcome::Pending,
-                variant: Some(variant_index),
-                secondary: None,
-                detail: None,
-            };
-        }
-        ClipTake::Failed(failure) => {
-            return OneshotStart::failed(failure).with_variant(variant_index);
-        }
-    };
-    let mut started = submit_prepared_oneshot(
-        commands,
-        pcm_assets,
-        shared,
-        bank,
-        iwd,
-        namespace,
-        alias,
-        bound,
-        origin_inches,
-        listener,
-        pick,
-        clips,
-        pending,
-        occupancy,
-        snd_ent,
-        depth,
-        class,
-        epoch,
-        pcm,
-        &clip,
-        variant_index,
-        volume,
-        pitch,
-        layer.as_deref(),
-    );
-    if namespace == AssetNamespace::T5 {
-        started.secondary = t5_secondary;
-    }
-    started
-}
-
-enum ClipTake {
-    Ready(PcmAudio),
-    Pending,
-    Failed(StartFailure),
-}
-
-fn take_or_pending_clip(
-    bank: &SoundCatalog,
-    clips: Option<&mut ClipStore>,
-    pending: &mut PendingStarts,
-    clip: ClipKey,
-    namespace: AssetNamespace,
-    alias: &str,
-    bound: Option<usize>,
-    variant: usize,
-    volume: f32,
-    pitch: f32,
-    origin_inches: Option<[f32; 3]>,
-    snd_ent: Option<u32>,
-    layer: Option<String>,
-    class: SoundClass,
-    epoch: u64,
-) -> ClipTake {
-    if let Some(store) = clips {
-        store.request(clip.clone());
-        if let Some(layer) = layer.as_deref() {
-            for key in clip_keys_for_alias(bank, namespace, layer) {
-                store.request(key);
-            }
-        }
-        match store.ready(&clip) {
-            Some(Ok(pcm)) => ClipTake::Ready(pcm),
-            Some(Err(ClipError::Decode | ClipError::Read | ClipError::QueueClosed)) => {
-                ClipTake::Failed(StartFailure::DecodeFailed)
-            }
-            None => {
-                pending.push_oneshot(PendingOneshot {
-                    namespace,
-                    alias: alias.to_owned(),
-                    bound,
-                    variant,
-                    volume,
-                    pitch,
-                    origin_inches,
-                    snd_ent,
-                    clip,
-                    layer,
-                    class,
-                    epoch,
-                    deadline: deadline_for(class),
-                });
-                ClipTake::Pending
-            }
-        }
-    } else {
-        ClipTake::Failed(StartFailure::NoPcm)
-    }
-}
-
-fn submit_prepared_oneshot(
-    commands: &mut Commands,
-    pcm_assets: &mut Assets<PcmAudio>,
-    shared: &mut SharedPlayAssets,
-    bank: &SoundCatalog,
-    iwd: Option<&NamespaceSoundIwd>,
-    namespace: AssetNamespace,
-    alias: &str,
-    bound: Option<usize>,
-    origin_inches: Option<[f32; 3]>,
-    listener: Option<(Vec3, Vec3)>,
-    pick: &mut SoundPickState,
-    clips: Option<&mut ClipStore>,
-    pending: &mut PendingStarts,
-    occupancy: &mut VoiceOccupancy,
-    snd_ent: Option<u32>,
-    depth: u8,
-    class: SoundClass,
-    epoch: u64,
-    pcm: PcmAudio,
-    clip: &ClipKey,
-    variant_index: usize,
-    volume: f32,
-    pitch: f32,
-    layer: Option<&str>,
-) -> OneshotStart {
-    let sound = match bound {
-        Some(index) => bank.sound_at(index),
-        None => bank.sound_in(namespace, alias),
-    };
-    let row = sound.and_then(|s| s.aliases.get(variant_index));
-    let limit_name = sound.map_or(alias, |sound| sound.name.as_str());
-    let channel = sound.and_then(|s| s.ent_channel(variant_index));
-    let mut world_detail: Option<String> = None;
-    let positional = if namespace == AssetNamespace::T5 {
-        row.and_then(|row| row.flags)
-            .is_some_and(|flags| flags & 2 != 0)
-    } else {
-        channel
-            .and_then(|ch| bank.ent_channel(ch))
-            .is_none_or(|info| info.is_3d)
-    };
-    let distance = origin_inches
-        .filter(|_| positional)
-        .zip(listener)
-        .map(|(origin, (ear, _))| distance_inches(transform_inches(ear), origin));
-    let priority = row
-        .and_then(|row| row.voice_priority.as_ref())
-        .map_or(0.0, |priority| priority.evaluate(distance));
-    match origin_inches.filter(|_| positional) {
-        Some(pos) => {
-            let Some((ear, right)) = listener else {
-                diag::warn!(
-                    Audio,
-                    "audio: world alias `{alias}` has no listener (typed gap)"
-                );
-                return OneshotStart::failed(StartFailure::NoListener).with_variant(variant_index);
-            };
-            let Some(row) = row else {
-                return OneshotStart::failed(StartFailure::NoPcm).with_variant(variant_index);
-            };
-            let ear_inches = transform_inches(ear);
-            let dist = distance_inches(ear_inches, pos);
-            let Some(curve) = row.volume_falloff.as_ref() else {
-                diag::warn!(
-                    Audio,
-                    "audio: world alias `{alias}` has no falloff curve (typed gap)"
-                );
-                return OneshotStart::failed(StartFailure::NoFalloffCurve)
-                    .with_variant(variant_index);
-            };
-            let knots = shared.intern_curve(&curve.name, &curve.knots);
-            let near_knots = row
-                .near_falloff
-                .as_ref()
-                .map(|curve| shared.intern_curve(&curve.name, &curve.knots));
-            let atten = distance_attenuation(
-                &knots,
-                near_knots.as_deref(),
-                dist,
-                row.dist_min,
-                row.dist_max,
-            );
-            let emitter = Vec3::from_array(pos);
-            let (pan_l, pan_r) = world_oneshot_channel_gains(ear, right, emitter, 1.0);
-            if atten < 0.0 {
-                diag::warn!(
-                    Audio,
-                    "audio: world alias `{alias}` falloff curve `{}` failed evaluation (typed gap)",
-                    curve.name
-                );
-                return OneshotStart::failed(StartFailure::FalloffEval).with_variant(variant_index);
-            }
-            if atten == 0.0 {
-                return OneshotStart {
-                    outcome: StartOutcome::Suppressed(SuppressReason::Inaudible),
-                    variant: Some(variant_index),
-                    secondary: None,
-                    detail: Some(falloff_detail(dist, row.dist_min, row.dist_max, atten)),
-                };
-            }
-            if let Err(reason) = prepare_voice(commands, occupancy, bank, channel, snd_ent)
-                .and_then(|()| {
-                    prepare_alias_voice(
-                        commands,
-                        occupancy,
-                        namespace,
-                        limit_name,
-                        Some(row),
-                        snd_ent,
-                        priority,
-                    )
-                })
-            {
-                return OneshotStart {
-                    outcome: StartOutcome::Suppressed(reason),
-                    variant: Some(variant_index),
-                    secondary: None,
-                    detail: Some(falloff_detail(dist, row.dist_min, row.dist_max, atten)),
-                };
-            }
-            world_detail = Some(falloff_detail(dist, row.dist_min, row.dist_max, atten));
-            pick.last_variant
-                .insert((namespace, alias.to_owned()), variant_index);
-            let _ = shared.dry_handle(pcm_assets, clip, pcm.clone(), clips.as_deref());
-            let live = pcm.with_live_pan();
-            let live_pan = live.live_pan().expect("with_live_pan").clone();
-            live_pan.set(pan_l, pan_r);
-            let handle = pcm_assets.add(live);
-            let lease = voice_lease(bank, channel, snd_ent);
-            let entity = crate::backend::spawn_oneshot(
-                commands,
-                handle,
-                Volume::Linear((volume * atten).max(0.0)),
-                pitch,
-                epoch,
-                class.scope(),
-            );
-            {
-                let mut spawned = commands.entity(entity);
-                if let Some(channel) = channel {
-                    spawned.insert(crate::backend::SoundChannel(channel));
-                }
-                spawned.insert(AliasPlayback {
-                    namespace,
-                    snd_ent,
-                    alias: alias.to_owned(),
-                });
-                spawned.insert(Channel3d {
-                    origin_inches: pos,
-                    dist_min: row.dist_min,
-                    dist_max: row.dist_max,
-                    knots,
-                    near_knots,
-                    priority: row.voice_priority.clone(),
-                    base_volume: volume.max(0.0),
-                    live_pan,
-                });
-                if let Some(lease) = lease {
-                    spawned.insert(lease);
-                }
-            }
-            track_voice(occupancy, entity, lease);
-            if namespace == AssetNamespace::T5 {
-                let lease = occupancy.track_alias(entity, namespace, limit_name, snd_ent, priority);
-                commands.entity(entity).insert(lease);
-            }
-        }
-        None => {
-            if let Err(reason) = prepare_voice(commands, occupancy, bank, channel, snd_ent)
-                .and_then(|()| {
-                    prepare_alias_voice(
-                        commands, occupancy, namespace, limit_name, row, snd_ent, priority,
-                    )
-                })
-            {
-                return OneshotStart {
-                    outcome: StartOutcome::Suppressed(reason),
-                    variant: Some(variant_index),
-                    secondary: None,
-                    detail: None,
-                };
-            }
-            pick.last_variant
-                .insert((namespace, alias.to_owned()), variant_index);
-            let handle = shared.dry_handle(pcm_assets, clip, pcm, clips.as_deref());
-            let lease = voice_lease(bank, channel, snd_ent);
-            let entity = crate::backend::spawn_oneshot(
-                commands,
-                handle,
-                Volume::Linear(volume.max(0.0)),
-                pitch,
-                epoch,
-                class.scope(),
-            );
-            {
-                let mut spawned = commands.entity(entity);
-                if let Some(channel) = channel {
-                    spawned.insert(crate::backend::SoundChannel(channel));
-                }
-                spawned.insert(AliasPlayback {
-                    namespace,
-                    snd_ent,
-                    alias: alias.to_owned(),
-                });
-                if let Some(lease) = lease {
-                    spawned.insert(lease);
-                }
-            }
-            track_voice(occupancy, entity, lease);
-            if namespace == AssetNamespace::T5 {
-                let lease = occupancy.track_alias(entity, namespace, limit_name, snd_ent, priority);
-                commands.entity(entity).insert(lease);
-            }
-        }
-    }
-    let secondary = if namespace == AssetNamespace::T5 {
-        None
-    } else {
-        play_secondary_layer(
-            commands,
-            pcm_assets,
-            shared,
-            bank,
-            iwd,
-            namespace,
-            layer,
-            origin_inches,
-            listener,
-            pick,
-            clips,
-            pending,
-            occupancy,
-            snd_ent,
-            depth,
-            class,
-            epoch,
-        )
-    };
-    OneshotStart {
-        outcome: StartOutcome::Submitted,
-        variant: Some(variant_index),
-        secondary,
-        detail: world_detail,
-    }
-}
-
-fn play_secondary_layer(
-    commands: &mut Commands,
-    pcm_assets: &mut Assets<PcmAudio>,
-    shared: &mut SharedPlayAssets,
-    bank: &SoundCatalog,
-    iwd: Option<&NamespaceSoundIwd>,
-    namespace: AssetNamespace,
-    layer: Option<&str>,
-    origin_inches: Option<[f32; 3]>,
-    listener: Option<(Vec3, Vec3)>,
-    pick: &mut SoundPickState,
-    clips: Option<&mut ClipStore>,
-    pending: &mut PendingStarts,
-    occupancy: &mut VoiceOccupancy,
-    snd_ent: Option<u32>,
-    depth: u8,
-    class: SoundClass,
-    epoch: u64,
-) -> Option<(String, StartOutcome)> {
-    let Some(sec) = layer.filter(|s| !s.is_empty()) else {
-        return None;
-    };
-    if depth >= 10 {
-        return Some((sec.to_owned(), StartOutcome::Failed(StartFailure::NoPcm)));
-    }
-    let started = play_alias_oneshot_at(
-        commands,
-        pcm_assets,
-        shared,
-        bank,
-        iwd,
-        namespace,
-        sec,
-        None,
-        origin_inches,
-        listener,
-        pick,
-        clips,
-        pending,
-        occupancy,
-        snd_ent,
-        depth + 1,
-        class,
-        epoch,
-        1.0,
-    );
-    Some((sec.to_owned(), started.outcome))
 }

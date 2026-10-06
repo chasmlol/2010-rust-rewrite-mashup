@@ -11,13 +11,17 @@ diag.workspace = true
 fastfile_iw4.workspace = true
 fastfile_t5.workspace = true
 fastfile_iw5.workspace = true
+fastfile_t6.workspace = true
 miniz_oxide.workspace = true
+lzokay-native.workspace = true
 zip.workspace = true
 flate2.workspace = true
 dotenvy.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 lnk = "0.6.4"
+windows-sys = { version = "0.61", features = ["Win32_System_Registry"] }
+windows = { version = "0.62", features = ["Win32_System_Com", "Win32_UI_Shell"] }
 
 [lints]
 workspace = true

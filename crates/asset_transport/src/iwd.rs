@@ -310,23 +310,57 @@ fn read_pooled_entry(
         .as_mut()
         .expect("lease holds its reader until drop");
     let inflate_at = std::time::Instant::now();
-    let mut entry = archive
-        .by_name(entry_name)
-        .map_err(|error| {
-            format!("cannot open IWD entry {entry_name} in {archive_path:?}: {error}")
-        })?;
-    let want = limit.map_or(entry.size() as usize, |limit| {
-        limit.min(entry.size() as usize)
-    });
-    let mut bytes = Vec::with_capacity(want);
-    let read = match limit {
-        Some(limit) => entry.take(limit as u64).read_to_end(&mut bytes),
-        None => entry.read_to_end(&mut bytes),
-    };
-    read.map_err(|error| {
+    let mut entry = archive.by_name(entry_name).map_err(|error| {
+        format!("cannot open IWD entry {entry_name} in {archive_path:?}: {error}")
+    })?;
+    let bytes = read_entry_bytes(&mut entry, limit).map_err(|error| {
         format!("cannot read IWD entry {entry_name} in {archive_path:?}: {error}")
     })?;
     IWD_INFLATE_NS.fetch_add(inflate_at.elapsed().as_nanos() as u64, Ordering::Relaxed);
+    Ok(bytes)
+}
+
+fn read_entry_bytes<R: Read>(
+    entry: &mut zip::read::ZipFile<'_, R>,
+    limit: Option<usize>,
+) -> Result<Vec<u8>, String> {
+    let size = entry.size();
+    // Bound a prefix before converting the archive's u64 size to usize.
+    let want = limit.map_or(size, |limit| size.min(limit as u64));
+    let capacity = usize::try_from(want)
+        .map_err(|_| format!("IWD entry size {want} does not fit in memory"))?;
+    let mut bytes = Vec::new();
+    bytes
+        .try_reserve_exact(capacity)
+        .map_err(|error| format!("cannot allocate {want} bytes for IWD entry: {error}"))?;
+    entry
+        .by_ref()
+        .take(want)
+        .read_to_end(&mut bytes)
+        .map_err(|error| error.to_string())?;
+    if bytes.len() != capacity {
+        return Err(format!(
+            "IWD entry length mismatch: expected {want} bytes, read {}",
+            bytes.len()
+        ));
+    }
+    if want == size {
+        // Take stops at its limit without asking zip for EOF. Probe once to
+        // validate the CRC and reject extra data without growing the buffer.
+        let mut extra = [0u8; 1];
+        loop {
+            match entry.read(&mut extra) {
+                Ok(0) => break,
+                Ok(_) => {
+                    return Err(format!(
+                        "IWD entry length mismatch: expected {want} bytes, entry has additional data"
+                    ));
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(error) => return Err(error.to_string()),
+            }
+        }
+    }
     Ok(bytes)
 }
 
@@ -371,30 +405,49 @@ pub fn game_main_for_zone(zone_ff: &Path) -> Result<PathBuf, String> {
     ))
 }
 
-pub fn game_mains_under(games_root: &Path) -> Vec<PathBuf> {
-    let mut mains = Vec::new();
-    let mut stack = crate::discover::search_roots(games_root);
-    while let Some(dir) = stack.pop() {
-        let main = dir.join("main");
-        if main.is_dir() {
-            mains.push(main);
-        }
-        if let Ok(entries) = std::fs::read_dir(&dir) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.is_dir() {
-                    stack.push(path);
+pub fn game_mains_by_root(games_root: &Path) -> Vec<Vec<PathBuf>> {
+    crate::discover::search_roots(games_root)
+        .into_iter()
+        .map(|root| {
+            let mut mains = Vec::new();
+            let mut stack = vec![root];
+            while let Some(dir) = stack.pop() {
+                let main = dir.join("main");
+                if main.is_dir() {
+                    mains.push(main);
+                }
+                if let Ok(entries) = std::fs::read_dir(&dir) {
+                    for entry in entries.flatten() {
+                        let path = entry.path();
+                        if path.is_dir() {
+                            stack.push(path);
+                        }
+                    }
                 }
             }
+            mains.sort();
+            mains.dedup();
+            mains
+        })
+        .collect()
+}
+
+pub fn game_mains_under(games_root: &Path) -> Vec<PathBuf> {
+    let mut mains: Vec<PathBuf> = Vec::new();
+    for main in game_mains_by_root(games_root).into_iter().flatten() {
+        if !mains.contains(&main) {
+            mains.push(main);
         }
     }
-    mains.sort();
     mains
 }
 
 pub fn read_iwd_named(games_root: &Path, want: &str) -> Option<Vec<u8>> {
     let want = want.replace('\\', "/");
-    let mut stack = crate::discover::search_roots(games_root);
+    let mut stack: Vec<_> = crate::discover::search_roots(games_root)
+        .into_iter()
+        .rev()
+        .collect();
     while let Some(dir) = stack.pop() {
         let Ok(entries) = std::fs::read_dir(&dir) else {
             continue;
@@ -422,11 +475,10 @@ pub fn read_iwd_named(games_root: &Path, want: &str) -> Option<Vec<u8>> {
                 let Ok(mut entry) = archive.by_index(index) else {
                     continue;
                 };
-                if entry.name().replace('\\', "/").eq_ignore_ascii_case(&want) {
-                    let mut bytes = Vec::new();
-                    if entry.read_to_end(&mut bytes).is_ok() {
-                        return Some(bytes);
-                    }
+                if entry.name().replace('\\', "/").eq_ignore_ascii_case(&want)
+                    && let Ok(bytes) = read_entry_bytes(&mut entry, None)
+                {
+                    return Some(bytes);
                 }
             }
         }

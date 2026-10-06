@@ -56,7 +56,9 @@ impl ConsoleCommand {
         let mut chars = line.char_indices().peekable();
         while let Some((index, ch)) = chars.next() {
             match ch {
-                '\\' if quoted && chars.peek().is_some_and(|(_, c)| matches!(c, '\\' | '"')) => { chars.next(); }
+                '\\' if quoted && chars.peek().is_some_and(|(_, c)| matches!(c, '\\' | '"')) => {
+                    chars.next();
+                }
                 '"' => quoted = !quoted,
                 ';' if !quoted => {
                     if let Some(command) = Self::parse(&line[start..index]) {
@@ -80,18 +82,29 @@ fn command_words(line: &str) -> Vec<(String, bool)> {
     let mut words = Vec::new();
     let mut chars = line.chars().peekable();
     while chars.peek().is_some() {
-        while chars.peek().is_some_and(|c| c.is_whitespace()) { chars.next(); }
-        if chars.peek().is_none() { break; }
+        while chars.peek().is_some_and(|c| c.is_whitespace()) {
+            chars.next();
+        }
+        if chars.peek().is_none() {
+            break;
+        }
         let mut word = String::new();
         let mut quoted = false;
         let mut had_quote = false;
         while let Some(&ch) = chars.peek() {
-            if ch.is_whitespace() && !quoted { break; }
+            if ch.is_whitespace() && !quoted {
+                break;
+            }
             chars.next();
             match ch {
-                '"' => { quoted = !quoted; had_quote = true; }
+                '"' => {
+                    quoted = !quoted;
+                    had_quote = true;
+                }
                 '\\' if quoted && chars.peek().is_some_and(|c| matches!(c, '\\' | '"')) => {
-                    if let Some(ch) = chars.next() { word.push(ch); }
+                    if let Some(ch) = chars.next() {
+                        word.push(ch);
+                    }
                 }
                 _ => word.push(ch),
             }

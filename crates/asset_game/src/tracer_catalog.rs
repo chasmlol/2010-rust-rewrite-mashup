@@ -1,14 +1,14 @@
 use std::collections::HashMap;
 
-use asset_core::{AssetEdge, AssetEdgeCensus, AssetEdgeReason, MaterialSpace, ZoneOwner};
 use crate::asset_graph::AssetEdgeFromPtrs;
+use asset_core::{AssetEdge, AssetEdgeCensus, AssetEdgeReason, MaterialSpace, ZoneOwner};
 use fastfile_iw4::{Ptr, Result, TracerDefGeometry, ZoneStream};
 
 pub type TracerMaterial = AssetEdge<MaterialSpace>;
 
 pub type TracerMaterialReason = AssetEdgeReason;
 
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct OwnedTracerDef {
     pub namespace: crate::AssetNamespace,
     pub name: String,
@@ -74,7 +74,7 @@ pub struct TracerCatalog {
     published: TracerDefinitions,
     links: HashMap<Ptr, TracerLink>,
     last_captured: Option<usize>,
-    capture_ns: crate::AssetNamespace,
+    capture_ns: Option<crate::AssetNamespace>,
 }
 
 impl std::ops::Deref for TracerCatalog {
@@ -118,7 +118,7 @@ impl TracerCatalog {
     }
 
     pub fn set_capture_ns(&mut self, ns: crate::AssetNamespace) {
-        self.capture_ns = ns;
+        self.capture_ns = Some(ns);
     }
 
     pub fn bind_last_material(&mut self, name: String) {
@@ -128,7 +128,9 @@ impl TracerCatalog {
         let Some(index) = self.last_captured else {
             return;
         };
-        let ns = self.capture_ns;
+        let ns = self
+            .capture_ns
+            .expect("asset capture requires an explicit family");
         if let Some(def) = self.published.defs.get_mut(index) {
             def.material_hint = Some(name);
             def.material_namespace = ns;
@@ -166,7 +168,9 @@ impl TracerCatalog {
                 .map(str::to_owned)
         });
         let material = TracerMaterial::from_capture(geometry.material_slot, None);
-        let namespace = self.capture_ns;
+        let namespace = self
+            .capture_ns
+            .expect("asset capture requires an explicit family");
         let index = self.published.insert_owned(OwnedTracerDef {
             namespace,
             name,

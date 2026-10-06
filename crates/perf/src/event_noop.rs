@@ -20,6 +20,9 @@ pub fn player_tick(
 ) {
 }
 pub fn death(_: u32, _: Option<u32>, _: u8, _: u32) {}
+pub fn owner_shot(_: &str, _: u32, _: u32) {}
+pub fn net_leg(_: &str, _: u32, _: u32) {}
+pub fn net_path(_: &str, _: u64, _: u64, _: u64, _: u64, _: u64) {}
 pub fn projectile(_: u32) {}
 pub fn projectile_phase(_: u32, _: u32, _: &str, _: i32) {}
 pub fn truck(_: u32, _: Option<i64>, _: Option<i64>, _: Option<&str>, _: Option<&str>) {}
@@ -41,6 +44,7 @@ pub fn feel(
 pub fn corpse(_: i64, _: Option<f32>, _: Option<i64>, _: Option<&str>) {}
 pub fn item(_: i32, _: Option<i32>, _: Option<i32>, _: Option<&str>) {}
 pub fn pickup(_: i32) {}
+pub fn pickup_rejected(_: u32, _: i32, _: i32) {}
 pub fn remote(_: u32, _: i32, _: i32, _: [f32; 3], _: Option<[f32; 3]>, _: Option<&str>) {}
 pub fn lighting_fail() {}
 pub fn render_owner_plan(

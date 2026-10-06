@@ -33,7 +33,7 @@ pub struct MatchLoadRequest {
 
 #[derive(Resource)]
 struct MatchLoadTask {
-    task: Task<Option<PreparedMatchReady>>,
+    task: Task<Result<Option<PreparedMatchReady>, MapLoadFailed>>,
     request_id: u64,
     progress: LoadProgress,
 }
@@ -50,11 +50,12 @@ pub struct PreparedMatchReady {
     pub request_id: u64,
     pub load_key: frame::LocalLoadKey,
     pub zone: String,
-    pub prepared: PreparedMatch,
+    pub prepared: Option<PreparedMatch>,
 }
 
 #[derive(Resource)]
 pub struct PreparedMatchSound {
+    pub namespace: asset_core::AssetNamespace,
     pub load_key: frame::LocalLoadKey,
     pub zone: String,
     pub common_profile_id: u64,
@@ -72,6 +73,7 @@ fn start_match_load(
     abort: Option<Res<MatchLoadAbort>>,
     mut waiting_for_retirement: Local<Option<u64>>,
     mut inflight: ResMut<MatchLoadBusy>,
+    mut failed: MessageWriter<MapLoadFailed>,
 ) {
     let Some(request) = request else {
         return;
@@ -114,6 +116,22 @@ fn start_match_load(
         );
     }
     *waiting_for_retirement = None;
+    if let Some(error) = request
+        .zone_ff
+        .as_ref()
+        .err()
+        .or_else(|| request.common_mp.as_ref().err())
+    {
+        failed.write(MapLoadFailed {
+            request_id: request.request_id,
+            load_key: request.load_key,
+            zone: request.zone.clone(),
+            error: error.clone(),
+        });
+        commands.remove_resource::<MatchLoadRequest>();
+        inflight.0 = false;
+        return;
+    }
     let zone_ff = request.zone_ff.clone();
     let common_mp = request.common_mp.clone();
     let progress = request.progress.clone();
@@ -138,7 +156,7 @@ fn start_match_load(
         match load_prepared_match(zone_ff, common_mp, progress.clone()).await {
             MatchLoadOutcome::Ready(mut prepared) => {
                 if progress.is_canceled() {
-                    return None;
+                    return Ok(None);
                 }
                 prepared.sound = Some(match (games, sound_path) {
                     (Some(games), Ok(path)) => {
@@ -150,7 +168,10 @@ fn start_match_load(
                         let bank = asset_audio::compose_sound_bank(
                             sources,
                             &zone,
-                            asset_audio::namespace_for_zone(&games, &zone),
+                            prepared
+                                .prepared_map
+                                .namespace
+                                .expect("prepared map family"),
                             map,
                         );
                         prepared.sound_gaps = bank.gaps.len();
@@ -160,16 +181,22 @@ fn start_match_load(
                     _ => Err("no launch identity or map path to compose the sound bank".into()),
                 });
                 if progress.is_canceled() {
-                    return None;
+                    return Ok(None);
                 }
-                Some(PreparedMatchReady {
+                Ok(Some(PreparedMatchReady {
                     request_id,
                     load_key,
                     zone,
-                    prepared,
-                })
+                    prepared: Some(prepared),
+                }))
             }
-            MatchLoadOutcome::Canceled => None,
+            MatchLoadOutcome::Canceled => Ok(None),
+            MatchLoadOutcome::Refused(error) => Err(MapLoadFailed {
+                request_id,
+                load_key,
+                zone,
+                error,
+            }),
         }
     });
     inflight.0 = true;
@@ -250,6 +277,7 @@ fn poll_match_load(
     mut task: Option<ResMut<MatchLoadTask>>,
     mut inflight: ResMut<MatchLoadBusy>,
     abort: Option<Res<MatchLoadAbort>>,
+    mut failed: MessageWriter<MapLoadFailed>,
 ) {
     let Some(task) = task.as_deref_mut() else {
         return;
@@ -274,6 +302,18 @@ fn poll_match_load(
     inflight.0 = false;
     commands.remove_resource::<MatchLoadTask>();
     commands.remove_resource::<MatchLoadAccepted>();
+    let outcome = match outcome {
+        Ok(ready) => ready,
+        Err(error) => {
+            if !abort
+                .as_ref()
+                .is_some_and(|abort| abort.0 == error.request_id)
+            {
+                failed.write(error);
+            }
+            return;
+        }
+    };
     let Some(mut ready) = outcome else {
         diag::info!(
             World,
@@ -290,14 +330,21 @@ fn poll_match_load(
         );
         return;
     }
+    let Some(prepared) = ready.prepared.as_mut() else {
+        return;
+    };
+    let Some(namespace) = prepared.prepared_map.namespace else {
+        diag::error!(World, "prepared match has no family");
+        return;
+    };
     commands.insert_resource(PreparedMatchSound {
+        namespace,
         load_key: ready.load_key,
         zone: ready.zone.clone(),
-        common_profile_id: ready.prepared.materials.common_profile_id,
-        products_id: ready.prepared.materials.products_id,
-        gaps: ready.prepared.sound_gaps,
-        sound: ready
-            .prepared
+        common_profile_id: prepared.materials.common_profile_id,
+        products_id: prepared.materials.products_id,
+        gaps: prepared.sound_gaps,
+        sound: prepared
             .sound
             .take()
             .unwrap_or_else(|| Err("the map zone never opened".to_owned())),

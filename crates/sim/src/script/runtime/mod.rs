@@ -240,6 +240,43 @@ fn frame_room(world: &World, thread: &Thread) -> Result<(), String> {
     Ok(())
 }
 
+fn settle_owed_deaths(world: &mut World, parent: &mut Thread, now: i64) -> Result<(), String> {
+    {
+        let runtime = world.resource::<Runtime>();
+        if runtime.deaths.is_empty() || runtime.current_hit.is_some() {
+            return Ok(());
+        }
+    }
+    let mut runtime = world.resource_mut::<Runtime>();
+    runtime.suspended.push(parent.serial);
+    runtime.suspended_frames += parent.frames.len();
+    super::host::players::settle_deaths(world);
+    let mut runtime = world.resource_mut::<Runtime>();
+    runtime.suspended.pop();
+    runtime.suspended_frames -= parent.frames.len();
+    resume_suspended(world, parent, now)
+}
+
+fn resume_suspended(world: &mut World, parent: &mut Thread, now: i64) -> Result<(), String> {
+    let mut runtime = world.resource_mut::<Runtime>();
+    if runtime.fault.is_some() {
+        return Err(String::new());
+    }
+    let depth = runtime
+        .pending_unwinds
+        .iter()
+        .filter(|(serial, _)| *serial == parent.serial)
+        .map(|(_, depth)| *depth)
+        .min();
+    runtime
+        .pending_unwinds
+        .retain(|(serial, _)| *serial != parent.serial);
+    if let Some(depth) = depth.filter(|depth| *depth < parent.frames.len()) {
+        unwind(world, parent, depth, now, true);
+    }
+    Ok(())
+}
+
 fn run_inline(
     world: &mut World,
     program: &Program,
@@ -261,23 +298,7 @@ fn run_inline(
         world.spawn(child);
     }
     parent.stack.push(Value::Undefined);
-    let mut runtime = world.resource_mut::<Runtime>();
-    if runtime.fault.is_some() {
-        return Err(String::new());
-    }
-    let depth = runtime
-        .pending_unwinds
-        .iter()
-        .filter(|(serial, _)| *serial == parent.serial)
-        .map(|(_, depth)| *depth)
-        .min();
-    runtime
-        .pending_unwinds
-        .retain(|(serial, _)| *serial != parent.serial);
-    if let Some(depth) = depth.filter(|depth| *depth < parent.frames.len()) {
-        unwind(world, parent, depth, now, true);
-    }
-    Ok(())
+    resume_suspended(world, parent, now)
 }
 
 fn pop(thread: &mut Thread) -> Result<Value, String> {
@@ -442,16 +463,17 @@ pub(super) fn binary(op: Binary, a: Value, b: Value) -> Result<Value, String> {
         Binary::Add => {
             let (a, b) = match (&a, &b) {
                 (Value::String(_), _) | (_, Value::String(_)) => {
-                    let text = |v: &Value| match v {
-                        Value::String(s) => Some(s.to_string()),
-                        other => to_text(other),
+                    let bytes = |value: &Value| match value {
+                        Value::String(text) => Some(text.as_bytes().to_vec()),
+                        other => to_text(other).map(String::into_bytes),
                     };
-                    match (text(&a), text(&b)) {
-                        (Some(x), Some(y)) => {
+                    match (bytes(&a), bytes(&b)) {
+                        (Some(mut x), Some(y)) => {
                             if x.len() + y.len() > 0x2000 {
                                 return Err("string too long".into());
                             }
-                            return Ok(Value::String(format!("{x}{y}").into()));
+                            x.extend_from_slice(&y);
+                            return Ok(Value::byte_string(&x));
                         }
                         _ => return Err(mismatch(&a, &b)),
                     }
@@ -522,7 +544,7 @@ pub(super) fn binary(op: Binary, a: Value, b: Value) -> Result<Value, String> {
 
 fn object_key(runtime: &mut Runtime, key: ArrayKey) -> Result<u32, String> {
     match key {
-        ArrayKey::String(key) => Ok(runtime.symbol(&key)),
+        ArrayKey::String(key) => Ok(runtime.symbol(&key.symbol_key())),
         ArrayKey::Integer(_) => Err("object index must be a string".into()),
     }
 }
@@ -722,9 +744,9 @@ fn instruction(
                     let ArrayKey::Integer(i) = key else {
                         return Err("string index must be an integer".into());
                     };
-                    s.chars()
-                        .nth(i as usize)
-                        .map(|c| Value::String(c.to_string().into()))
+                    s.as_bytes()
+                        .get(i as usize)
+                        .map(|byte| Value::byte_string(&[*byte]))
                         .unwrap_or(Value::Undefined)
                 }
                 _ => return Err("value cannot be indexed".into()),
@@ -851,6 +873,7 @@ fn instruction(
                     .map_err(|m| format!("{name}: {m}"))?;
                     thread.stack.push(value);
                     deliver_pending(world, thread, now)?;
+                    settle_owed_deaths(world, thread, now)?;
                 }
                 Callee::Unlinked(_) => return Err("invalid IR: unlinked call".into()),
             }
@@ -902,7 +925,7 @@ fn instruction(
                     .ok_or("invalid array reference")?
                     .len(),
                 Value::Object(_) => 1,
-                Value::String(s) => s.chars().count(),
+                Value::String(s) => s.len(),
                 other => return Err(format!("size cannot be applied to {}", type_name(other))),
             };
             thread.stack.push(Value::Int(size as i32));
@@ -1047,7 +1070,7 @@ fn instruction(
 
 fn event_name(value: Value) -> Result<Arc<str>, String> {
     match value {
-        Value::String(name) => Ok(name),
+        Value::String(name) => Ok(name.symbol_key()),
         other => Err(format!(
             "event name must be a string, found {}",
             type_name(&other)
@@ -1437,7 +1460,10 @@ fn stack_effect(op: &Op) -> (usize, usize) {
 }
 
 fn terminal(message: &str) -> bool {
-    message.starts_with("invalid IR") || message.contains("identifier exhausted")
+    message.starts_with("invalid IR")
+        || message.contains("identifier exhausted")
+        || message == "vehicle pool exhausted"
+        || message.ends_with(": vehicle pool exhausted")
 }
 
 fn report(world: &mut World, fault: &Fault) {
@@ -1592,7 +1618,6 @@ impl Runtime {
             pending.push(receiver.clone());
             pending.extend(args.iter().cloned());
         }
-        pending.extend(self.engine.match_data.values().cloned());
         pending.extend(self.engine.world.map(Value::Object));
         pending.extend(
             self.engine
@@ -1603,7 +1628,6 @@ impl Runtime {
         );
         for slot in self.players.values() {
             pending.push(Value::Object(slot.object));
-            pending.extend(slot.data.values().cloned());
             pending.extend(slot.presented.values().flatten().cloned());
         }
         for answers in self.menu_answers.values() {

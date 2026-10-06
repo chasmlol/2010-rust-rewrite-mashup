@@ -87,6 +87,12 @@ pub trait AssetLinkSink {
         Ok(())
     }
 
+    fn remember_material_name(&mut self, _slot: Ptr, _insert_slot: Option<Ptr>, _name: Ptr) {}
+
+    fn material_name_ptr(&self, _slot: Ptr) -> Option<Ptr> {
+        None
+    }
+
     fn remember_xmodel_name(&mut self, _slot: Ptr, _insert_slot: Option<Ptr>, _name: Ptr) {}
 
     fn xmodel_name_ptr(&self, _slot: Ptr) -> Option<Ptr> {
@@ -103,6 +109,11 @@ pub trait AssetLinkSink {
     }
 
     fn capture_snd_curves(&mut self, s: &ZoneStream<'_>, rows: Ptr, count: usize) -> Result<()> {
+        let _ = (s, rows, count);
+        Ok(())
+    }
+
+    fn capture_snd_groups(&mut self, s: &ZoneStream<'_>, rows: Ptr, count: usize) -> Result<()> {
         let _ = (s, rows, count);
         Ok(())
     }
@@ -235,6 +246,11 @@ pub fn load_asset_at_observed(
             let (load, insert_slot) = s.begin_body_with_insert(slot)?;
             debug_assert!(load);
             load_asset_body_observed(s, ty, links)?;
+            if ty == AssetType::Material
+                && let Some(name) = s.latest_material().and_then(|g| g.name)
+            {
+                links.remember_material_name(slot, insert_slot, name);
+            }
             if ty == AssetType::XModel {
                 if let Some(name) = s.latest_xmodel().and_then(|g| g.name) {
                     links.remember_xmodel_name(slot, insert_slot, name);

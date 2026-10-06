@@ -22,7 +22,9 @@
       {"dvar": "ui_r_mode", "fields": {"item_type": 12, "static_flags": 0, "dvar": "ui_r_displayMode", "choices": [["@MENU_DISABLED", "0"], ["@MENU_ENABLED", "1"]], "vis_exp": "1", "disabled_exp": "0", "text_key": "", "text_exp": "", "text_align_mode": 10, "text_align_x": -8, "text_align_y": 0, "fore_color": [1, 1, 1, 1], "rect": {"x": 232, "y": 48, "w": 344, "h": 20}, "handlers": {"action": [{"Script": "play mouse_click;"}], "focus": [{"Script": "play mouse_over; setItemColor self backcolor 0 0 0 1;"}], "leave_focus": [{"Script": "setItemColor self backcolor 0 0 0 0;"}]}, "text_scale": 0.375, "style": 1, "background": "menu_button_selection_bar", "back_color": [0, 0, 0, 0], "name": "video_display_mode", "font_enum": 3}},
       {"text_key": "@MENU_VIDEO_MODE", "fields": {"name": "video_display_mode_label", "text_key": "@MENU_FULLSCREEN", "vis_exp": "1", "disabled_exp": "0", "rect": {"x": 232, "y": 48, "w": 344, "h": 20}}},
       {"dvar": "profileMenuOption_Gamma", "fields": {"item_type": 10, "static_flags": 0, "dvar": "ui_fov", "choices": [], "vis_exp": "1", "disabled_exp": "0", "text_key": "", "text_exp": "", "text_align_mode": 10, "text_align_x": -8, "text_align_y": 0, "fore_color": [1, 1, 1, 1], "rect": {"x": 420, "y": 88, "w": 112, "h": 20}, "handlers": {"action": [], "focus": [{"Script": "play mouse_over;"}], "leave_focus": []}, "text_scale": 0.375, "style": 1, "background": "", "back_color": [0, 0, 0, 0], "slider": {"min": 65, "max": 120, "step": 1, "suffix": "°"}, "name": "video_fov", "font_enum": 3, "float_exp": []}},
-      {"text_key": "@MENU_BRIGHTNESS", "fields": {"text_key": "FOV", "vis_exp": "1", "rect": {"x": 232, "y": 88, "w": 344, "h": 20}, "name": "video_fov_label", "disabled_exp": "0"}}
+      {"text_key": "@MENU_BRIGHTNESS", "fields": {"text_key": "FOV", "vis_exp": "1", "rect": {"x": 232, "y": 88, "w": 344, "h": 20}, "name": "video_fov_label", "disabled_exp": "0"}},
+      {"dvar": "ui_r_mode", "fields": {"item_type": 12, "static_flags": 0, "dvar": "ui_third_person", "choices": [["First person", "0"], ["Third person", "1"]], "vis_exp": "1", "disabled_exp": "0", "text_key": "", "text_exp": "", "text_align_mode": 10, "text_align_x": -8, "text_align_y": 0, "fore_color": [1, 1, 1, 1], "rect": {"x": 232, "y": 108, "w": 344, "h": 20}, "handlers": {"action": [{"Script": "play mouse_click;"}], "focus": [{"Script": "play mouse_over; setItemColor self backcolor 0 0 0 1;"}], "leave_focus": [{"Script": "setItemColor self backcolor 0 0 0 0;"}]}, "text_scale": 0.375, "style": 1, "background": "menu_button_selection_bar", "back_color": [0, 0, 0, 0], "name": "video_third_person", "font_enum": 3}},
+      {"text_key": "@MENU_VIDEO_MODE", "fields": {"name": "video_third_person_label", "text_key": "Camera view", "vis_exp": "1", "disabled_exp": "0", "rect": {"x": 232, "y": 108, "w": 344, "h": 20}}}
     ]
   },
   {
@@ -94,6 +96,8 @@
       {"name": "video_advanced", "fields": {"vis_exp": "0"}},
       {"name": "video_fov", "fields": {"vis_exp": "0"}},
       {"name": "video_fov_label", "fields": {"vis_exp": "0"}},
+      {"name": "video_third_person", "fields": {"vis_exp": "0"}},
+      {"name": "video_third_person_label", "fields": {"vis_exp": "0"}},
       {"name": "video_title", "fields": {"text_key": "@MENU_ADVANCED_VIDEO"}}
     ],
     "item_copies": [

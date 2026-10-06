@@ -22,7 +22,7 @@ mod ui;
 pub(crate) use capture::route_capture_commands;
 pub(crate) use echo::ConsoleEcho;
 pub(crate) use hitvol::route_hitvol_commands;
-pub(crate) use process::exit_process;
+pub(crate) use process::{exit_process, request_exit};
 pub(crate) use replay::route_replay_commands;
 pub(crate) use session::route_session_commands;
 pub(crate) use state_dump::route_state_dump_commands;
@@ -47,7 +47,11 @@ pub(crate) fn route_debug_feature_commands(
         ResMut<net::ActionRequestIds>,
         Option<Res<BotRoster>>,
     ),
-    (mut hurt, mut pending_splash): (ResMut<PendingViewHurt>, ResMut<PendingSplash>),
+    (mut hurt, mut pending_splash, authority): (
+        ResMut<PendingViewHurt>,
+        ResMut<PendingSplash>,
+        Option<Res<net::AuthorityWorld>>,
+    ),
 ) {
     let (console, settings, line) = &mut output;
     let capacity = settings.log_capacity;
@@ -61,6 +65,11 @@ pub(crate) fn route_debug_feature_commands(
         match cmd.name.as_str() {
             "bot" => match parse_bot_args(&cmd.args) {
                 Err(msg) => echo(msg, console, line),
+                Ok(BotVerb::Hold(_) | BotVerb::Tp(_) | BotVerb::Fire(_) | BotVerb::Give { .. })
+                    if authority.as_ref().is_some_and(|a| !a.0.cheats_enabled()) =>
+                {
+                    echo("bot: cheats are off".into(), console, line);
+                }
                 Ok(BotVerb::Add(n)) => {
                     bot_add.push(n);
                     echo(format!("bot: queued add {n}"), console, line);
@@ -102,15 +111,26 @@ pub(crate) fn route_debug_feature_commands(
                         echo(format!("bot give: {id:?} is not a bot"), console, line);
                         continue;
                     }
-                    match crate::weapon_dispatch::resolve_give_id(&weapons.0, &weapon, &attachments)
-                    {
-                        Ok(weapon_id) => {
+                    let (camo, attachments) = crate::weapon_dispatch::split_camo(&attachments);
+                    match crate::weapon_dispatch::resolve_give_id(
+                        weapons.registry(),
+                        &weapon,
+                        &attachments,
+                    )
+                    .and_then(|weapon_id| {
+                        let model = camo.map_or(Ok(0), |camo| {
+                            crate::weapon_dispatch::camo_slot(weapons.registry(), weapon_id, camo)
+                        })?;
+                        Ok((weapon_id, model))
+                    }) {
+                        Ok((weapon_id, model)) => {
                             let request_id = give_seq.allocate();
                             if let Err(error) = inbox.push(
                                 id,
                                 ClientAction::GiveWeapon {
                                     request_id,
                                     weapon: weapon_id,
+                                    model,
                                 },
                             ) {
                                 echo(format!("bot give: {error}"), console, line);
@@ -119,7 +139,7 @@ pub(crate) fn route_debug_feature_commands(
                             echo(
                                 format!(
                                     "bot give: queued {} id={weapon_id} on {} request_id={request_id}",
-                                    weapons.0.configuration_label(weapon_id),
+                                    weapons.registry().configuration_label(weapon_id),
                                     id.0
                                 ),
                                 console,
@@ -232,6 +252,14 @@ pub fn register_feature_commands(registry: &mut crate::ConsoleRegistry, maps: &[
         ),
         ("ui", "ui [0|1] — hide/show game UI; console Overlay stays"),
         (
+            "thirdperson",
+            "thirdperson [0|1|toggle] — switch the saved player camera view",
+        ),
+        (
+            "cg_thirdPerson",
+            "cg_thirdPerson [0|1|toggle] — switch the saved player camera view",
+        ),
+        (
             "togglemenu",
             "togglemenu — open the script main menu (g_scriptMainMenu), or escape the top menu",
         ),
@@ -258,7 +286,7 @@ pub fn register_feature_commands(registry: &mut crate::ConsoleRegistry, maps: &[
         ),
         (
             "bot",
-            "bot add [N] | dummy [N] | hold [on|off] | give <id> <weapon> [att...] | fire [all|<id>] | tp all|<id> above <h> | tp all|<id> <x> <y> <z>",
+            "bot add [N] | dummy [N] | hold [on|off] | give <id> <weapon> [att...] [camo=<name>] | fire [all|<id>] | tp all|<id> above <h> | tp all|<id> <x> <y> <z>",
         ),
         (
             "menu",
@@ -271,7 +299,7 @@ pub fn register_feature_commands(registry: &mut crate::ConsoleRegistry, maps: &[
         ),
         (
             "wait",
-            "wait [seconds|<n>t|world|spawn|torn|ambient] — pause the console FIFO; <n>t = n authority ticks; world = scene.spawned; spawn = AppScreen::InGame; torn = HasWorld false and scene.spawned false (hold after MatchTornDown); ambient = MapAmbientBooted (overlay finished, CreateFX loops spawned)",
+            "wait [seconds|<n>t|world|spawn|torn|ambient] — pause the console FIFO; <n>t = n authority ticks; world = scene.spawned; spawn = AppScreen::InGame; torn = HasWorld false and scene.spawned false (hold after MatchTornDown); ambient = MapAmbientBooted (overlay finished, CreateFX sources published)",
         ),
     ] {
         if registry.resolve(name).is_none() {
@@ -280,7 +308,7 @@ pub fn register_feature_commands(registry: &mut crate::ConsoleRegistry, maps: &[
     }
 }
 
-pub(crate) const BOT_USAGE: &str = "usage: bot add [N] | dummy [N] | hold [on|off] | give <id> <weapon> [att...] | fire [all|<id>] | tp all|<id> above <h> | tp all|<id> <x> <y> <z> [yaw] [pitch]";
+pub(crate) const BOT_USAGE: &str = "usage: bot add [N] | dummy [N] | hold [on|off] | give <id> <weapon> [att...] [camo=<name>] | fire [all|<id>] | tp all|<id> above <h> | tp all|<id> <x> <y> <z> [yaw] [pitch]";
 
 #[derive(Debug, PartialEq)]
 pub(crate) enum BotVerb {

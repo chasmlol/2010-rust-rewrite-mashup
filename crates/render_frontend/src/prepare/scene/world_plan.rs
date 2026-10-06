@@ -26,7 +26,8 @@ fn log_image_asset_memory(images: &Assets<Image>) {
         "image asset memory: assets={count} main_world_retained={:.1}MiB uploaded={:.1}MiB rss={:.0}MiB",
         mib(main_bytes),
         mib(render_bytes),
-        asset_transport::process_resident_bytes().map_or(0.0, |bytes| bytes as f64 / (1024.0 * 1024.0)),
+        asset_transport::process_resident_bytes()
+            .map_or(0.0, |bytes| bytes as f64 / (1024.0 * 1024.0)),
     );
 }
 
@@ -123,7 +124,13 @@ pub(crate) fn world_color_images(
         }
     }
 
-    for (asset_id, material) in scene.runtime_material_catalog.materials.iter().enumerate() {
+    for (asset_id, material) in scene
+        .runtime_material_catalog
+        .parts()
+        .materials
+        .iter()
+        .enumerate()
+    {
         if crate::adapters::motion_tracker::MATERIALS.contains(&material.name.as_str()) {
             stitch_fx_color_by_asset(
                 &mut colors_by_asset,
@@ -175,6 +182,7 @@ pub(crate) fn world_color_images(
                 .map(|(asset_id, hint)| {
                     let catalog = scene
                         .runtime_material_catalog
+                        .parts()
                         .materials
                         .get(asset_id)
                         .map(|material| material.name.as_str())
@@ -205,6 +213,7 @@ pub(crate) fn world_color_images(
         let catalog = &scene.runtime_material_catalog;
         let ordinal = catalog.ordinal_for_material_name(name)?;
         let material = catalog
+            .parts()
             .materials
             .iter()
             .find(|material| material.name == name)?;
@@ -232,7 +241,7 @@ pub(crate) fn prepare_fx_model_geometry(
     models: Option<&render_fx::PreparedFxModels>,
 ) -> render_fx::PreparedFxModelGeometry {
     let mut plan = render_fx::FxModelDrawPlan::default();
-    plan.generation = scene.runtime_material_catalog.generation_id.0;
+    plan.generation = scene.runtime_material_catalog.generation_id().get();
     let Some(models) = models else {
         return render_fx::PreparedFxModelGeometry(plan);
     };
@@ -339,7 +348,7 @@ pub fn install(
         .filter(|page| page.primary.is_some() && page.secondary.is_some())
         .count();
     commands.insert_resource(RuntimeImageHandles::from_pools(
-        scene.runtime_material_catalog.generation_id,
+        scene.runtime_material_catalog.generation_id(),
         exact_material_handles.clone(),
         scene.exact_material_names.clone(),
         reflection_probe_handles.clone(),

@@ -80,8 +80,8 @@ fn reset_pose(frame: &mut FrameWorld, client: ClientId, defaults: ([f32; 3], [f3
                 .cmds
                 .iter()
                 .rev()
-                .find(|(id, _)| *id == client)
-                .map(|(_, cmd)| cmd.angles)
+                .find(|command| command.client == client)
+                .map(|command| command.command.angles)
         })
         .or_else(|| frame.old_cmd_angles(client));
     frame.set_origin(client, defaults.0);
@@ -203,7 +203,8 @@ fn update(world: &mut World, input: bool) {
                     .input
                     .cmds
                     .clone();
-                for (_, cmd) in commands.iter().filter(|(owner, _)| *owner == id) {
+                for command in commands.iter().filter(|command| command.client == id) {
+                    let cmd = &command.command;
                     if let Some(ps) = frame.player_mut(id) {
                         let delta = cmd.server_time.wrapping_sub(ps.command_time);
                         if delta <= 0 {

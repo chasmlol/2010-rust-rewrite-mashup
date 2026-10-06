@@ -754,27 +754,40 @@ fn load_structured_data_def_set(s: &mut ZoneStream<'_>) -> Result<()> {
 
     s.push(XFILE_BLOCK_VIRTUAL)?;
     follow_name(s, p, 0)?;
-    if s.begin_body(p.at(s.layout(8, 16)))? {
-        let defs = s.alloc_load(4, s.layout(sz::STRUCTURED_DATA_DEF, 88) * def_count)?;
+    if let Some(defs) = s.follow_array(
+        p,
+        s.layout(8, 16),
+        4,
+        s.layout(sz::STRUCTURED_DATA_DEF, 88),
+        def_count,
+    )? {
         for index in 0..def_count {
             load_structured_data_def(s, defs.at(index * s.layout(sz::STRUCTURED_DATA_DEF, 88)))?;
         }
     }
+    s.record_structured_data_def_set(p);
     s.pop()
 }
 
 fn load_structured_data_def(s: &mut ZoneStream<'_>, p: Ptr) -> Result<()> {
     let enum_count = s.i32_at(p, 8)?.max(0) as usize;
-    if s.begin_body(p.at(s.layout(12, 16)))? {
-        let enums = s.alloc_load(4, s.layout(sz::STRUCTURED_DATA_ENUM, 16) * enum_count)?;
+    if let Some(enums) = s.follow_array(
+        p,
+        s.layout(12, 16),
+        4,
+        s.layout(sz::STRUCTURED_DATA_ENUM, 16),
+        enum_count,
+    )? {
         for index in 0..enum_count {
             let row = enums.at(index * s.layout(sz::STRUCTURED_DATA_ENUM, 16));
             let entry_count = s.i32_at(row, 0)?.max(0) as usize;
-            if s.begin_body(row.at(8))? {
-                let entries = s.alloc_load(
-                    4,
-                    s.layout(sz::STRUCTURED_DATA_ENUM_ENTRY, 16) * entry_count,
-                )?;
+            if let Some(entries) = s.follow_array(
+                row,
+                8,
+                4,
+                s.layout(sz::STRUCTURED_DATA_ENUM_ENTRY, 16),
+                entry_count,
+            )? {
                 for entry_index in 0..entry_count {
                     s.follow_string(
                         entries.at(entry_index * s.layout(sz::STRUCTURED_DATA_ENUM_ENTRY, 16)),
@@ -786,16 +799,23 @@ fn load_structured_data_def(s: &mut ZoneStream<'_>, p: Ptr) -> Result<()> {
     }
 
     let struct_count = s.i32_at(p, s.layout(16, 24))?.max(0) as usize;
-    if s.begin_body(p.at(s.layout(20, 32)))? {
-        let structs = s.alloc_load(4, s.layout(sz::STRUCTURED_DATA_STRUCT, 24) * struct_count)?;
+    if let Some(structs) = s.follow_array(
+        p,
+        s.layout(20, 32),
+        4,
+        s.layout(sz::STRUCTURED_DATA_STRUCT, 24),
+        struct_count,
+    )? {
         for index in 0..struct_count {
             let row = structs.at(index * s.layout(sz::STRUCTURED_DATA_STRUCT, 24));
             let property_count = s.i32_at(row, 0)?.max(0) as usize;
-            if s.begin_body(row.at(s.layout(4, 8)))? {
-                let properties = s.alloc_load(
-                    4,
-                    s.layout(sz::STRUCTURED_DATA_STRUCT_PROPERTY, 24) * property_count,
-                )?;
+            if let Some(properties) = s.follow_array(
+                row,
+                s.layout(4, 8),
+                4,
+                s.layout(sz::STRUCTURED_DATA_STRUCT_PROPERTY, 24),
+                property_count,
+            )? {
                 for property_index in 0..property_count {
                     s.follow_string(
                         properties

@@ -1,4 +1,3 @@
-
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 
@@ -19,4 +18,3 @@ impl ConsoleEcho<'_> {
         self.console.echo(msg, self.settings.log_capacity);
     }
 }
-

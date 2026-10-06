@@ -82,6 +82,9 @@ fn install_class_catalog(
     for line in &common.report {
         diag::info!(Launch, "{line}");
     }
+    commands.insert_resource(ui::frontend::maps::MapPresentation::from_tables(
+        &common.tables,
+    ));
     let mut class_catalog =
         ClassLoadoutCatalog::from_weapon_registry(std::sync::Arc::new(common.weapons))
             .with_weapon_tables(&common.tables);
@@ -99,7 +102,11 @@ fn install_class_catalog(
         shell.started.elapsed().as_secs_f32() * 1000.0,
     );
     for (key, preview) in &mut class_catalog.previews {
-        if key.contains('+') && menus.material_images.contains_key(&preview.image) {
+        if key.contains('+')
+            && asset_core::AssetKey::parse(key)
+                .is_ok_and(|key| key.namespace == asset_core::AssetNamespace::Iw4)
+            && menus.material_images.contains_key(&preview.image)
+        {
             preview.image = format!("iw4:material/{}", preview.image);
         }
     }
@@ -126,7 +133,10 @@ pub fn launch(
     artifacts: PathBuf,
     mode: LaunchMode,
     acceptance: Option<AcceptanceLaunch>,
+    cheats: sim::HostCheats,
 ) {
+    asset_transport::set_game_folders(console::stored_game_folders(&artifacts));
+    let steam = asset_transport::link_steam_games(&games);
     diag::info!(Launch, "{}", asset_transport::games_root_report(&games));
 
     if let Some(plan) = crate::frame_owner::prefer_performance_cores() {
@@ -147,10 +157,20 @@ pub fn launch(
                     render::diag::acceptance::ACCEPTANCE_MAPS.join(", ")
                 ));
             }
-            run_menu(games, artifacts);
+            run_menu(games, artifacts, cheats, &steam);
         }
-        LaunchMode::Map(zone) => run_map(games, artifacts, zone, acceptance, Role::Listen, None),
-        LaunchMode::Serve(zone) => run_map(games, artifacts, zone, None, Role::Dedicated, None),
+        LaunchMode::Map(zone) => run_map(
+            games,
+            artifacts,
+            zone,
+            acceptance,
+            Role::Listen,
+            None,
+            cheats,
+        ),
+        LaunchMode::Serve(zone) => {
+            run_map(games, artifacts, zone, None, Role::Dedicated, None, cheats)
+        }
         LaunchMode::ExportGltf(zone) => {
             if acceptance.is_some() {
                 fatal("render acceptance is not available for export-gltf");
@@ -185,6 +205,9 @@ fn run_export_gltf(games: asset_transport::GamesRoot, artifacts: PathBuf, zone_a
     )) {
         assets::MatchLoadOutcome::Ready(prepared) => prepared,
         assets::MatchLoadOutcome::Canceled => fatal("export-gltf: map walk canceled"),
+        assets::MatchLoadOutcome::Refused(reason) => {
+            fatal(&format!("export-gltf: map walk refused: {reason}"))
+        }
     };
     let summary = assets::export_prepared_world_gltf(
         &artifacts,
@@ -197,18 +220,77 @@ fn run_export_gltf(games: asset_transport::GamesRoot, artifacts: PathBuf, zone_a
     diag::announce_stdout(&summary.report_line());
 }
 
-fn run_menu(games: asset_transport::GamesRoot, artifacts: PathBuf) {
+fn mw2_not_found(
+    games: &asset_transport::GamesRoot,
+    steam: &asset_transport::SteamProbe,
+) -> String {
+    use asset_transport::SteamCandidate;
+    let instructions = if cfg!(windows) {
+        "MW2 Multiplayer was not found.\n\n\
+        Put a shortcut to the game folder next to iw4l.exe:\n\
+        1. In Steam, right-click Call of Duty: Modern Warfare 2 > Manage > Browse local \
+        files and copy the folder path from the address bar.\n\
+        2. In the folder with iw4l.exe, right-click > New > Shortcut, paste the path and \
+        name the shortcut Modern Warfare 2.\n\
+        3. Launch iw4l.exe again.\n\nSearched:\n"
+    } else {
+        "MW2 Multiplayer was not found.\n\nCreate an iw4 symlink to the game's installation directory in the configured games root, then launch again.\n\nSearched:\n"
+    };
+    let mut text = instructions.to_owned();
+    for folder in asset_transport::search_roots(&games.0) {
+        text.push_str(&format!("  {}\n", folder.display()));
+    }
+    if games
+        .0
+        .join(asset_transport::MW2_SHORTCUT)
+        .symlink_metadata()
+        .is_ok()
+    {
+        text.push_str(&format!(
+            "{} already exists, so Steam was not searched.\n",
+            asset_transport::MW2_SHORTCUT
+        ));
+    } else if !steam.steam_found {
+        text.push_str("Steam was not found on this PC.\n");
+    } else {
+        text.push_str("Tried in Steam:\n");
+        for (_, folder, candidate) in steam
+            .tried
+            .iter()
+            .filter(|(game, _, _)| *game == asset_core::ZoneGame::Iw4)
+        {
+            let outcome = match candidate {
+                SteamCandidate::Missing => "not installed here".to_owned(),
+                SteamCandidate::NoMultiplayerData => {
+                    "multiplayer data is missing; verify the game files in Steam".to_owned()
+                }
+                SteamCandidate::Linked => "linked, but the game data could not be read".to_owned(),
+                SteamCandidate::OneOfSeveral => {
+                    "one of several installs; put a shortcut to the one to use".to_owned()
+                }
+                SteamCandidate::ShortcutFailed(error) => {
+                    format!("found, but the shortcut was not created: {error}")
+                }
+            };
+            text.push_str(&format!("  {}: {outcome}\n", folder.display()));
+        }
+    }
+    text
+}
+
+fn run_menu(
+    games: asset_transport::GamesRoot,
+    artifacts: PathBuf,
+    cheats: sim::HostCheats,
+    steam: &asset_transport::SteamProbe,
+) {
     start_perf(None, "menu");
     let ui_games = asset_game::ui_games_root(&games).unwrap_or_else(|error| {
-        let content = asset_transport::games_content_report(&games).join("\n");
-        fatal(&format!(
-            "Cannot start the IW4 menu: base MW2 Multiplayer assets were not found.\n\n\
-             {content}\n\n\
-             The menu requires common_mp.ff with IW4 envelope version 0x114. \
-             Point IW4L_GAMES or a shortcut beside iw4launcher.exe to the folder containing \
-             the base MW2 Multiplayer files. If this is the intended folder, restore its \
-             missing base files; DLC maps alone are insufficient.\n\nSearch details: {error}"
-        ))
+        for line in asset_transport::games_content_report(&games) {
+            diag::warn!(Launch, "{line}");
+        }
+        diag::warn!(Launch, "{error}");
+        fatal(&mw2_not_found(&games, steam))
     });
     let shell_common = assets::load_pool().spawn(assets::load_shell_common(games.clone()));
     let (mut menus, menu_report) = load_ui_menu_catalog(&ui_games);
@@ -317,6 +399,7 @@ fn run_menu(games: asset_transport::GamesRoot, artifacts: PathBuf) {
         });
     }
     app.insert_resource(launch_identity(&config))
+        .insert_resource(cheats)
         .insert_resource(MenuMapList(maps))
         .insert_resource(AppScreen::MainMenu)
         .insert_resource(UiAssetRoot(Some(ui_games.0)))
@@ -367,7 +450,15 @@ fn run_play(
         });
     diag::info!(Launch, "play: {} zone={zone}", playback.path().display());
     let session = ReplayPlayback::new(playback);
-    run_map(games, artifacts, zone, None, Role::Replay, Some(session));
+    run_map(
+        games,
+        artifacts,
+        zone,
+        None,
+        Role::Replay,
+        Some(session),
+        sim::HostCheats::default(),
+    );
 }
 
 fn run_map(
@@ -377,6 +468,7 @@ fn run_map(
     acceptance: Option<AcceptanceLaunch>,
     role: Role,
     playback: Option<ReplayPlayback>,
+    cheats: sim::HostCheats,
 ) {
     let found = find_zone_file(&games, &zone_arg);
     let zone_alias = found.as_ref().ok().and_then(|z| z.alias_note.clone());
@@ -486,6 +578,7 @@ fn run_map(
     }
     let ui_games_root = asset_game::ui_games_root(&games).ok().map(|root| root.0);
     app.insert_resource(launch_identity(&config))
+        .insert_resource(cheats)
         .insert_resource(probe)
         .insert_resource(menus)
         .insert_resource(MatchLoadRequest {
@@ -569,6 +662,7 @@ fn content_flags(trees: &NamespaceTrees) -> master_protocol::ContentFlags {
         trees.get(asset_core::AssetNamespace::Iw4).is_some(),
         trees.get(asset_core::AssetNamespace::Iw5).is_some(),
         trees.get(asset_core::AssetNamespace::T5).is_some(),
+        trees.get(asset_core::AssetNamespace::T6).is_some(),
     )
 }
 

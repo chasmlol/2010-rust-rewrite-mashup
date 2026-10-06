@@ -6,6 +6,9 @@ license.workspace = true
 description = "Our wire: frames, deltas, prediction, interpolation. Not retail's netcode."
 
 [dependencies]
+updater = { path = "../updater" }
+structured_data_iw4.workspace = true
+ring = "0.17.14"
 diag.workspace = true
 math_iw4.workspace = true
 frame.workspace = true
@@ -23,10 +26,8 @@ hud_iw4.workspace = true
 perf.workspace = true
 bevy.workspace = true
 master_protocol.workspace = true
-quinn = { version = "0.11.11", default-features = false, features = ["platform-verifier", "runtime-tokio", "rustls-ring"] }
+quinn = { version = "0.11.11", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
 rustls = { version = "0.23.31", default-features = false, features = ["ring", "std"] }
-rustls-pemfile = "2.2.0"
-rustls-platform-verifier = "0.7.0"
 tokio = { version = "1.47", features = ["macros", "net", "rt-multi-thread", "sync", "time"] }
 tokio-util = { version = "0.7", default-features = false, features = ["rt"] }
 zstd = { version = "0.13", default-features = false }

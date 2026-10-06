@@ -1,8 +1,4 @@
-use crate::random::{
-    FX_RAND_CH_SPAWN_OFFSET_HEIGHT, FX_RAND_CH_SPAWN_OFFSET_RADIUS, FX_RAND_CH_SPAWN_OFFSET_YAW,
-    FX_RAND_CH_SPAWN_ORIGIN_X, FX_RAND_CH_SPAWN_ORIGIN_Y, FX_RAND_CH_SPAWN_ORIGIN_Z,
-    random_table_f32,
-};
+use crate::random::{FxRandomChannel, sample_f32};
 
 pub const FX_ELEM_SPAWN_RELATIVE: i32 = 0x2;
 
@@ -20,33 +16,31 @@ pub fn sample_float_range(base: f32, amplitude: f32, rand01: f32) -> f32 {
 }
 
 #[inline]
-pub fn sample_spawn_origin_offset(spawn_origin: [[f32; 2]; 3], seed: u32) -> [f32; 3] {
+pub fn sample_spawn_origin_offset(spawn_origin: [[f32; 2]; 3], seed: u64) -> [f32; 3] {
     [
         sample_float_range(
             spawn_origin[0][0],
             spawn_origin[0][1],
-            random_table_f32(seed, FX_RAND_CH_SPAWN_ORIGIN_X),
+            sample_f32(seed, FxRandomChannel::SpawnOriginX),
         ),
         sample_float_range(
             spawn_origin[1][0],
             spawn_origin[1][1],
-            random_table_f32(seed, FX_RAND_CH_SPAWN_ORIGIN_Y),
+            sample_f32(seed, FxRandomChannel::SpawnOriginY),
         ),
         sample_float_range(
             spawn_origin[2][0],
             spawn_origin[2][1],
-            random_table_f32(seed, FX_RAND_CH_SPAWN_ORIGIN_Z),
+            sample_f32(seed, FxRandomChannel::SpawnOriginZ),
         ),
     ]
 }
 
 #[inline]
-pub fn random_dir(seed: u32) -> [f32; 3] {
-    let height = random_table_f32(seed, FX_RAND_CH_SPAWN_OFFSET_HEIGHT)
-        + random_table_f32(seed, FX_RAND_CH_SPAWN_OFFSET_HEIGHT)
-        - 1.0;
+pub fn random_dir(seed: u64) -> [f32; 3] {
+    let height = 2.0 * sample_f32(seed, FxRandomChannel::SpawnHeight) - 1.0;
     let horiz = libm::sqrtf((1.0 - height * height).max(0.0));
-    let yaw = random_table_f32(seed, FX_RAND_CH_SPAWN_OFFSET_YAW) * (FX_TWO_PI as f32);
+    let yaw = sample_f32(seed, FxRandomChannel::SpawnYaw) * (FX_TWO_PI as f32);
     let (sin_yaw, cos_yaw) = (libm::sinf(yaw), libm::cosf(yaw));
     [horiz * cos_yaw, horiz * sin_yaw, height]
 }
@@ -56,7 +50,7 @@ pub fn apply_spawn_origin(
     effect_origin: [f32; 3],
     axis: [[f32; 3]; 3],
     spawn_origin: [[f32; 2]; 3],
-    seed: u32,
+    seed: u64,
     spawn_relative: bool,
 ) -> [f32; 3] {
     let local = sample_spawn_origin_offset(spawn_origin, seed);
@@ -93,7 +87,7 @@ pub fn offset_spawn_origin(
     radius_amp: f32,
     height_base: f32,
     height_amp: f32,
-    seed: u32,
+    seed: u64,
 ) {
     let Some(mode) = elem_spawn_offset_mode(flags) else {
         return;
@@ -105,7 +99,7 @@ pub fn offset_spawn_origin(
             let radius = sample_float_range(
                 radius_base,
                 radius_amp,
-                random_table_f32(seed, FX_RAND_CH_SPAWN_OFFSET_RADIUS),
+                sample_f32(seed, FxRandomChannel::SpawnRadius),
             );
             origin[0] += radius * dir[0];
             origin[1] += radius * dir[1];
@@ -115,9 +109,9 @@ pub fn offset_spawn_origin(
             let radius = sample_float_range(
                 radius_base,
                 radius_amp,
-                random_table_f32(seed, FX_RAND_CH_SPAWN_OFFSET_RADIUS),
+                sample_f32(seed, FxRandomChannel::SpawnRadius),
             );
-            let yaw = random_table_f32(seed, FX_RAND_CH_SPAWN_OFFSET_YAW) * (FX_TWO_PI as f32);
+            let yaw = sample_f32(seed, FxRandomChannel::SpawnYaw) * (FX_TWO_PI as f32);
             let (sin_yaw, cos_yaw) = (libm::sinf(yaw), libm::cosf(yaw));
             let rx = radius * cos_yaw;
             let ry = radius * sin_yaw;
@@ -128,7 +122,7 @@ pub fn offset_spawn_origin(
             let height = sample_float_range(
                 height_base,
                 height_amp,
-                random_table_f32(seed, FX_RAND_CH_SPAWN_OFFSET_HEIGHT),
+                sample_f32(seed, FxRandomChannel::SpawnHeight),
             );
             origin[0] += height * axis[0][0];
             origin[1] += height * axis[0][1];
@@ -147,7 +141,7 @@ pub fn spawn_origin_world(
     radius_amp: f32,
     height_base: f32,
     height_amp: f32,
-    seed: u32,
+    seed: u64,
 ) -> [f32; 3] {
     let mut origin = apply_spawn_origin(
         effect_origin,

@@ -66,6 +66,11 @@ pub struct MatchInstallAuthority<'w> {
     role: Res<'w, frame::RuntimeRole>,
     prediction: Option<Res<'w, net::ClientPredictionState>>,
     input_gate: Res<'w, AuthorityInputGate>,
+    cheats: Option<Res<'w, sim::HostCheats>>,
+    profile: Option<Res<'w, sim::LocalPlayerProfile>>,
+    previous: Option<Res<'w, AuthorityWorld>>,
+    account: Option<Res<'w, crate::LocalAccount>>,
+    local: Option<Res<'w, net::LocalPresentClient>>,
 }
 
 #[derive(SystemParam)]
@@ -107,7 +112,13 @@ pub fn apply_prepared_match(
         role,
         prediction,
         input_gate,
+        cheats,
+        profile,
+        previous,
+        account,
+        local,
     } = authority;
+    let allow_debug_actions = cheats.is_some_and(|cheats| cheats.0);
     let MatchInstallPresentation {
         mut probe,
         camera: sim_cam,
@@ -176,7 +187,9 @@ pub fn apply_prepared_match(
     let request_id = ready.request_id;
     let load_key = ready.load_key;
     let zone = std::mem::take(&mut ready.zone);
-    let mut prepared = std::mem::take(&mut ready.prepared);
+    let Some(mut prepared) = ready.prepared.take() else {
+        return;
+    };
     commands.remove_resource::<PreparedMatchReady>();
 
     let world_report = std::mem::take(&mut prepared.report);
@@ -189,6 +202,7 @@ pub fn apply_prepared_match(
 
     let plan = match preflight_match_install(
         prepared,
+        load_key,
         &zone,
         mode_selection.as_deref(),
         rules.as_deref(),
@@ -228,6 +242,7 @@ pub fn apply_prepared_match(
             script_level,
             script_entries,
             script_dvars,
+            account_defaults,
             script_sound_aliases,
             objective_weapons,
             kind,
@@ -285,17 +300,34 @@ pub fn apply_prepared_match(
         stage_resource(&mut install, tracers);
 
         let mut scene = loaded_scene;
+        scene.readiness = frame::WorldReadiness::new(
+            WorldGeneration::from_install(request_id),
+            frame::ReadinessState::Pending,
+        );
         let mut sim_cam = *sim_cam;
         let mut input_gate = *input_gate;
         let mut content = sim::SimContentBuilder::default();
         content.set_script_sound_aliases(script_sound_aliases);
         let mut sim = sim::SimWorld::new();
-        content.set_weapon_def_scales(weapons.0.scales_table());
-        let combat = combat_table::from_registry(&weapons.0, lochit_table);
+        if role.runs_authority()
+            && let Some(previous) = previous.as_ref()
+        {
+            sim.set_persistent_data(previous.0.persistent_data().for_new_match());
+        }
+        if *role == frame::RuntimeRole::Listen {
+            let profile = previous
+                .as_ref()
+                .map(|authority| authority.0.local_player_profile())
+                .or_else(|| profile.as_deref().copied())
+                .unwrap_or(sim::LocalPlayerProfile::default());
+            sim.set_local_player_profile(profile);
+        }
+        content.set_weapon_def_scales(weapons.registry().scales_table());
+        let combat = combat_table::from_registry(weapons.registry(), lochit_table);
         content.set_weapon_combat_table(combat.clone());
-        content.set_weapon_runnable_table(weapons.0.runnable_table());
-        content.set_weapon_transition_groups(weapons.0.configuration_transition_groups());
-        content.set_bullet_pen_facts(combat_table::pen_from_registry(&weapons.0));
+        content.set_weapon_runnable_table(weapons.registry().runnable_table());
+        content.set_weapon_transition_groups(weapons.registry().configuration_transition_groups());
+        content.set_bullet_pen_facts(combat_table::pen_from_registry(weapons.registry()));
         content.set_penetration_table(pen_table);
         content.set_pen_table_loaded(pen_table_loaded);
         content.set_player_kit_collisions(
@@ -307,9 +339,10 @@ pub fn apply_prepared_match(
                 if let Ok(definition) = tree.to_runtime_definition(|_, name| {
                     let kit = bodies.0.kits().kit(axis)?;
                     let body = bodies.0.get(&kit.body)?;
-                    xanims
-                        .0
-                        .body_clip(body.namespace, name, &body.skel.bone_names)
+                    if player_anim_sources.family() != Some(body.namespace) {
+                        return None;
+                    }
+                    xanims.0.clip(body.namespace, name)
                 }) {
                     if axis {
                         content.set_player_axis_anim_tree(Some(definition));
@@ -328,9 +361,7 @@ pub fn apply_prepared_match(
             }
         }
 
-        let anim_namespace = prepared_map
-            .namespace
-            .unwrap_or(asset_core::AssetNamespace::Iw4);
+        let anim_namespace = prepared_map.namespace.expect("installed map family");
         content.set_script_model_anims(xanims.0.names().filter_map(|name| {
             let parts = &xanims.0.get(anim_namespace, name)?.parts;
             let frequency = if parts.numframes > 0 && parts.framerate > 0.0 {
@@ -353,40 +384,49 @@ pub fn apply_prepared_match(
                 .clip(asset_core::AssetNamespace::Iw4, name)
                 .map(|clip| (*clip).clone())
         }));
-        content.set_weapon_script_names(weapons.0.script_names_table());
+        content.set_weapon_script_names(weapons.registry().script_names_table());
         content.set_weapon_script_aliases(objective_weapons);
-        content.set_vehicle_turrets(weapons.0.vehicle_turrets());
+        content.set_vehicle_turrets(weapons.registry().vehicle_turrets());
+        content.set_vehicle_accel(
+            weapons
+                .registry()
+                .vehicle_accel()
+                .map(|(name, accel)| (name.to_owned(), accel)),
+        );
         content.set_vehicle_compass(
             weapons
-                .0
+                .registry()
                 .vehicle_compass()
                 .map(|(name, icons, size)| (name.to_owned(), (icons.clone(), size))),
         );
+        let script_names = weapons.registry().script_names_table();
         content.set_weapon_setups(
-            (0..weapons.0.script_names_table().len() as u32)
+            (0..script_names.len() as u32)
                 .map(|id| {
-                    let selection = weapons.0.describe_configuration(id)?;
+                    let selection = weapons.registry().describe_configuration(id)?;
                     let family = selection.family.as_ref()?;
                     Some(sim::WeaponSetup {
-                        realm: match family.namespace {
-                            asset_core::AssetNamespace::T5 => sim::script::Realm::T5,
-                            asset_core::AssetNamespace::Iw5 => sim::script::Realm::Iw5,
-                            _ => sim::script::Realm::Iw4,
-                        },
+                        realm: family.namespace,
                         base: family.base.clone(),
                         attachments: selection.attachments.clone(),
+                        stand_in: None,
                     })
                 })
                 .collect(),
         );
         content.set_shield_models(
-            (0..=weapons.0.len())
+            (0..=weapons.registry().len())
                 .map(|index| {
                     let weapon = index as u32;
-                    (weapons.0.facts_of(weapon)?.weap_type == weapon_iw4::WEAPTYPE_SHIELD)
-                        .then_some(())?;
+                    (weapons
+                        .registry()
+                        .bind_published_row(weapon)
+                        .ok()
+                        .and_then(|weapon| weapon.world_facts())?
+                        .is_shield())
+                    .then_some(())?;
                     weapons
-                        .0
+                        .registry()
                         .world_model_entry(weapon, &world_weapons.0)?
                         .skel
                         .retained_capability()
@@ -394,20 +434,22 @@ pub fn apply_prepared_match(
                 })
                 .collect(),
         );
-        content.set_weapon_world_models(weapons.0.world_models_table());
-        content.set_weapon_projectile_models(weapons.0.projectile_models_table());
-        content.set_weapon_melee_only(combat_table::melee_only_from_registry(&weapons.0));
-        content.set_weapon_script_sounds(combat_table::script_sounds_from_registry(&weapons.0));
+        content.set_weapon_world_models(weapons.registry().world_models_table());
+        content.set_weapon_projectile_models(weapons.registry().projectile_models_table());
+        content.set_weapon_melee_only(combat_table::melee_only_from_registry(weapons.registry()));
+        content.set_weapon_script_sounds(combat_table::script_sounds_from_registry(
+            weapons.registry(),
+        ));
         install_team_voice_prefixes(&mut content, catalog.as_deref(), identity.as_deref(), &zone);
         install_shocks(&mut content, catalog.as_deref(), &map_shocks);
-        let equipment = combat_table::equipment_from_registry(&weapons.0);
+        let equipment = combat_table::equipment_from_registry(weapons.registry());
         content.set_equipment_runtime_table(equipment.clone());
         let mut primary = Vec::new();
         let mut secondary = Vec::new();
         let mut lethal = Vec::new();
         let mut tactical = Vec::new();
         let mut excluded = Vec::new();
-        let families = weapons.0.weapon_families();
+        let families = weapons.registry().weapon_families();
         for family in families.offered() {
             let offer = CacWeaponOffer {
                 key: family.key.asset_key(),
@@ -463,21 +505,38 @@ pub fn apply_prepared_match(
             }),
             airstrike_height,
             &prepared_map.spawns,
-            &weapons.0,
+            weapons.registry(),
             &combat,
             &equipment,
             &mut sim_cam,
             &mut input_gate,
             host_classes.as_deref(),
             kind,
+            allow_debug_actions,
         )?;
         let script_facts = script_install_facts(&zone, gametype, &scripts, script_entries.len());
+        if *role == frame::RuntimeRole::Listen {
+            sim.register_local_presentation_dvars(local.as_ref().map(|local| local.0));
+        }
         sim.install_gsc_program(
             scripts,
             sim::script::NativeRegistry::default(),
             script_level,
         )
         .map_err(|e| script_refusal(&zone, gametype, "install", &e))?;
+        if *role == frame::RuntimeRole::Listen
+            && let (Some(account), Some(local)) = (account.as_ref(), local.as_ref())
+        {
+            account
+                .bind_or_initialize(
+                    sim.persistent_data_mut(),
+                    local.0,
+                    account_defaults.as_ref(),
+                )
+                .map_err(|error| {
+                    InstallRefusal::new(format!("local account binding: {error:?}"))
+                })?;
+        }
         for (name, value) in &script_dvars {
             sim.set_gsc_dvar(name, value);
         }
@@ -485,7 +544,7 @@ pub fn apply_prepared_match(
             sim.start_gsc(&entry, sim::script::Value::level(), Vec::new())
                 .map_err(|e| script_refusal(&zone, gametype, "entry", &e))?;
         }
-        let load_hold = AuthorityLoadHold(sim.clip_brush_count() > 0);
+        let load_hold = AuthorityLoadHold(true);
         if let Some(glass) = scene.fx_glass.as_ref() {
             let panes = (0..glass.piece_places.len())
                 .filter_map(|i| {
@@ -531,7 +590,7 @@ pub fn apply_prepared_match(
 
         let manifest = SessionContentManifest::build(
             &prepared_map,
-            &weapons.0,
+            weapons.registry(),
             &combat,
             &equipment,
             sim.content_digest(),
@@ -675,6 +734,7 @@ struct MatchInstallPlan {
     script_level: sim::script::LevelData,
     script_entries: Vec<String>,
     script_dvars: Vec<(String, String)>,
+    account_defaults: Option<sim::PlayerDataDefaults>,
     script_sound_aliases: Option<std::collections::BTreeMap<String, Option<bool>>>,
     objective_weapons: Vec<(String, u32)>,
     kind: gamemode_iw4::GameModeKind,
@@ -787,6 +847,7 @@ fn script_refusal(
 
 fn preflight_match_install(
     mut prepared: assets::PreparedMatch,
+    load_key: frame::LocalLoadKey,
     zone: &str,
     mode_selection: Option<&sim::HostGameModeSelection>,
     rules: Option<&frame::HostMatchRules>,
@@ -823,13 +884,13 @@ fn preflight_match_install(
                 names
             }),
     );
-    let weapons = PreparedWeapons(prepared.weapons);
-    let fpv_meshes = PreparedFpvMeshes(prepared.fpv_meshes);
+    let weapons = PreparedWeapons::for_match(prepared.weapons, load_key);
+    let fpv_meshes = PreparedFpvMeshes(Arc::new(prepared.fpv_meshes));
     let bodies = assets::PreparedBodies(prepared.bodies);
-    let world_weapons = assets::PreparedWorldWeapons(prepared.world_weapons);
+    let world_weapons = assets::PreparedWorldWeapons(Arc::new(prepared.world_weapons));
     let projectile_meshes = assets::PreparedProjectileMeshes(prepared.projectile_meshes);
     let xmodel_walk = std::mem::take(&mut prepared.xmodel_walk);
-    let xanims = PreparedXAnims(prepared.xanims);
+    let xanims = PreparedXAnims(Arc::new(prepared.xanims));
     let death = PreparedDestructibleDeath(std::mem::take(&mut prepared.destructible_death));
     log_destructible_death_assets(&death);
     let player_anim_sources = prepared.player_anim_sources;
@@ -882,6 +943,9 @@ fn preflight_match_install(
                 ) | (
                     Some(asset_core::AssetNamespace::T5),
                     Some(asset_world::MapXModelSceneAsset::T5(_))
+                ) | (
+                    Some(asset_core::AssetNamespace::T6),
+                    Some(asset_world::MapXModelSceneAsset::T6(_))
                 )
             );
             if !native || !scene.alias(from, to) {
@@ -897,13 +961,16 @@ fn preflight_match_install(
             }
         }
         for (from, to) in iw4.weapon_pairs(realm) {
-            let weapon = (1..weapons.0.len() as u32).find(|&id| {
-                weapons.0.namespace_of(id) == prepared_map.namespace
-                    && weapons.0.script_name_of(id) == to
-                    && [weapons.0.gun_xmodel_of(id), weapons.0.hand_xmodel_of(id)]
-                        .into_iter()
-                        .flatten()
-                        .all(|model| fpv_meshes.0.get(namespace, model).is_some())
+            let weapon = (1..weapons.registry().len() as u32).find(|&id| {
+                weapons.registry().identity_namespace_of(id) == prepared_map.namespace
+                    && weapons.registry().script_name_of(id) == to
+                    && [
+                        weapons.registry().gun_xmodel_of(id),
+                        weapons.registry().hand_xmodel_of(id),
+                    ]
+                    .into_iter()
+                    .flatten()
+                    .all(|model| fpv_meshes.0.get(namespace, model).is_some())
             });
             match weapon {
                 Some(id) => {
@@ -942,6 +1009,13 @@ fn preflight_match_install(
         fn read_bytes(&self, module: &str) -> Result<Vec<u8>, String> {
             self.0.read(module)
         }
+        fn origin(&self, module: &str) -> sim::script::SourceOrigin {
+            match self.0.origin(module) {
+                Some(assets::ScriptSourceOrigin::Packaged) => sim::script::SourceOrigin::Packaged,
+                Some(assets::ScriptSourceOrigin::BuiltIn) => sim::script::SourceOrigin::BuiltIn,
+                None => sim::script::SourceOrigin::External,
+            }
+        }
     }
     let sources = Sources(std::mem::take(&mut prepared.scripts));
     let gametype = kind
@@ -955,6 +1029,20 @@ fn preflight_match_install(
                 .is_ok()
         })
         .unwrap_or(kind.token());
+    let account_defaults =
+        sources
+            .0
+            .config("mp/stats_init.cfg")
+            .map(|config| sim::PlayerDataDefaults {
+                config: config.to_owned(),
+                class_names: std::array::from_fn(|index| {
+                    let key = format!("CLASS_SLOT{}", index + 1);
+                    strings
+                        .raw_text(&key)
+                        .filter(|bytes| bytes.first().is_some_and(|byte| *byte != 0))
+                        .map_or_else(|| key.into_bytes(), |bytes| bytes.to_vec())
+                }),
+            });
     let keys = match sources.0.config("radiant/keys.txt") {
         Some(text) => sim::script::parse_radiant_keys(text).unwrap_or_else(|error| {
             diag::warn!(Sim, "gsc: radiant/keys.txt: {error}");
@@ -969,6 +1057,8 @@ fn preflight_match_install(
         }
     };
     let script_level = sim::script::LevelData {
+        player_data_defaults: account_defaults.clone(),
+        schemas: sources.0.schemas().clone(),
         entities: sim::script::parse_entity_string(sources.0.entities().unwrap_or("")),
         keys,
         tables: sources
@@ -1093,6 +1183,7 @@ fn preflight_match_install(
         script_level,
         script_entries,
         script_dvars,
+        account_defaults,
         objective_weapons,
         kind,
         gametype,
@@ -1331,6 +1422,7 @@ fn retained(
         Some(
             asset_world::MapXModelSceneAsset::Iw4(model)
             | asset_world::MapXModelSceneAsset::Iw5(model)
+            | asset_world::MapXModelSceneAsset::T6(model)
             | asset_world::MapXModelSceneAsset::T5(model),
         ) => model.retained_capability().map(std::sync::Arc::new),
         Some(asset_world::MapXModelSceneAsset::Unavailable { .. }) | None => None,
@@ -1415,6 +1507,7 @@ fn install_clip_and_player(
     input_gate: &mut AuthorityInputGate,
     host_classes: Option<&HostClassLoadouts>,
     kind: gamemode_iw4::GameModeKind,
+    allow_debug_actions: bool,
 ) -> Result<(&'static str, Vec<Option<String>>), InstallRefusal> {
     let clip = clip.ok_or_else(|| InstallRefusal::new("Required collision geometry is missing"))?;
     let static_models = &clip.static_models;
@@ -1566,6 +1659,7 @@ fn install_clip_and_player(
             let row = ClassRow::from(&preset.into());
             project_class(index as u32, &row, weapons, combat, equipment).def
         })
+        .filter(|class| !class.locked)
         .collect();
     let locked_n = lock_reasons.iter().filter(|r| r.is_some()).count();
     let has_intermission_view = intermission_view.is_some();
@@ -1588,7 +1682,7 @@ fn install_clip_and_player(
             gamemode_iw4::GameModeKind::Demolition => gamemode_iw4::dd::TIME_LIMIT_MS,
             _ => sim::FFA.time_limit_ms,
         },
-        allow_debug_actions: true,
+        allow_debug_actions,
         intermission_view,
         airstrike_height,
         ..Default::default()

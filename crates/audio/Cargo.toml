@@ -23,8 +23,8 @@ hud_iw4 = { path = "../hud_iw4" }
 playerstate_iw4.workspace = true
 gamemode_iw4.workspace = true
 perf.workspace = true
-symphonia = { version = "0.5", default-features = false, features = ["mp3", "pcm", "wav", "adpcm", "ogg", "vorbis"] }
-rodio = { version = "=0.22.2", default-features = false }
+symphonia = { version = "0.5", default-features = false, features = ["mp3", "pcm", "wav", "adpcm", "flac", "ogg", "vorbis"] }
+cpal = "=0.17.3"
 
 [lints]
 workspace = true

@@ -1,3 +1,5 @@
+pub(crate) const T6_EQUIPMENT: &str = include_str!("t6_equipment.gsc.txt");
+
 pub(crate) const RADIATION: &str = r#"main()
 {
     waittillframeend;

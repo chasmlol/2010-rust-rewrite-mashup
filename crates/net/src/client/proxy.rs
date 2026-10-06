@@ -10,12 +10,13 @@ pub const PROXY_BUFFER_TICKS: usize = 32;
 
 pub const PROXY_DELAY_MS: i32 = 100;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ProxyMode {
-    FixedDelay,
-
-    MatchLatest,
-}
+const PROXY_DELAY_MIN_MS: i32 = AUTHORITY_MS;
+const PROXY_DELAY_MAX_MS: i32 = 250;
+const PROXY_DELAY_MARGIN_MS: i32 = 8;
+const PROXY_DELAY_RISE_MS: i32 = 20;
+const PROXY_DELAY_DECAY_MS: i32 = 2;
+const PROXY_GAP_OUTLIERS: usize = PROXY_GAP_WINDOW / 10;
+const PROXY_GAP_WINDOW: usize = 60;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct PresentationSampleTime(pub i32);
@@ -23,7 +24,7 @@ pub struct PresentationSampleTime(pub i32);
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ProxyPolicyRevision(pub u16);
 
-pub const FIXED_DELAY_POLICY_REVISION: ProxyPolicyRevision = ProxyPolicyRevision(2);
+pub const ADAPTIVE_DELAY_POLICY_REVISION: ProxyPolicyRevision = ProxyPolicyRevision(4);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ProxyStarvationReason {
@@ -100,9 +101,21 @@ struct BufferedSnapshot {
     time_ms: i32,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct RemoteProxy {
     buffer: VecDeque<BufferedSnapshot>,
+    arrival_gaps: VecDeque<i32>,
+    delay_ms: i32,
+}
+
+impl Default for RemoteProxy {
+    fn default() -> Self {
+        Self {
+            buffer: VecDeque::new(),
+            arrival_gaps: VecDeque::new(),
+            delay_ms: PROXY_DELAY_MS,
+        }
+    }
 }
 
 impl RemoteProxy {
@@ -110,15 +123,15 @@ impl RemoteProxy {
         Self::default()
     }
 
-    pub fn mode(&self) -> ProxyMode {
-        ProxyMode::FixedDelay
+    pub fn delay_ms(&self) -> i32 {
+        self.delay_ms
     }
 
     pub fn push(&mut self, snapshot: &Snapshot) {
-        self.push_arc(Arc::new(snapshot.clone()));
+        self.push_arc(Arc::new(snapshot.clone()), None);
     }
 
-    pub fn push_arc(&mut self, snapshot: Arc<Snapshot>) {
+    pub fn push_arc(&mut self, snapshot: Arc<Snapshot>, render_time_ms: Option<i32>) {
         let time_ms = snapshot_time_ms(&snapshot);
         if self
             .buffer
@@ -127,16 +140,8 @@ impl RemoteProxy {
         {
             return;
         }
-        if self.buffer.back().is_some_and(|last| {
-            snapshot.players.iter().any(|(id, ps)| {
-                last.snap.players.iter().any(|(old_id, old)| {
-                    id == old_id
-                        && (old.is_live_frame() != ps.is_live_frame()
-                            || old.kill_cam_client_num != ps.kill_cam_client_num)
-                })
-            })
-        }) {
-            self.buffer.clear();
+        if let (Some(render), Some(newest)) = (render_time_ms, self.buffer.back()) {
+            self.adapt_delay(render.saturating_sub(newest.time_ms));
         }
         self.buffer.push_back(BufferedSnapshot {
             time_ms,
@@ -147,10 +152,28 @@ impl RemoteProxy {
         }
     }
 
+    fn adapt_delay(&mut self, gap_ms: i32) {
+        self.arrival_gaps.push_back(gap_ms);
+        while self.arrival_gaps.len() > PROXY_GAP_WINDOW {
+            self.arrival_gaps.pop_front();
+        }
+        let mut gaps: Vec<i32> = self.arrival_gaps.iter().copied().collect();
+        gaps.sort_unstable();
+        let covered = gaps[gaps.len() - 1 - PROXY_GAP_OUTLIERS.min(gaps.len() - 1)];
+        let target = covered
+            .saturating_add(PROXY_DELAY_MARGIN_MS)
+            .clamp(PROXY_DELAY_MIN_MS, PROXY_DELAY_MAX_MS);
+        self.delay_ms = if target > self.delay_ms {
+            self.delay_ms + (target - self.delay_ms).min(PROXY_DELAY_RISE_MS)
+        } else {
+            self.delay_ms - (self.delay_ms - target).min(PROXY_DELAY_DECAY_MS)
+        };
+    }
+
     pub fn shot_sample(&self, render_time_ms: i32) -> sim::ShotSampleProvenance {
         use sim::ShotSampleQuality;
 
-        let effective = render_time_ms.saturating_sub(PROXY_DELAY_MS);
+        let effective = render_time_ms.saturating_sub(self.delay_ms);
         let (Some(oldest), Some(newest)) = (self.buffer.front(), self.buffer.back()) else {
             return sim::ShotSampleProvenance::default();
         };
@@ -202,30 +225,46 @@ impl RemoteProxy {
         }
     }
 
-    pub fn snapshot_at(&self, render_time_ms: i32) -> Option<Arc<Snapshot>> {
-        let effective = render_time_ms.saturating_sub(PROXY_DELAY_MS);
-        self.buffer
-            .iter()
-            .rev()
+    pub fn snapshot_at(&self, client: ClientId, render_time_ms: i32) -> Option<Arc<Snapshot>> {
+        let effective = render_time_ms.saturating_sub(self.delay_ms);
+        let (_, newest) = self.last_sample(client)?;
+        let epoch = || {
+            self.buffer.iter().rev().take_while(|entry| {
+                player_row(&entry.snap.players, client)
+                    .is_some_and(|ps| same_presentation_epoch(ps, &newest))
+            })
+        };
+        epoch()
             .find(|entry| entry.time_ms <= effective)
-            .or_else(|| self.buffer.front())
+            .or_else(|| epoch().last())
             .map(|entry| Arc::clone(&entry.snap))
     }
 
-    pub(crate) fn snapshot_after(&self, render_time_ms: i32) -> Option<Arc<Snapshot>> {
-        let effective = render_time_ms.saturating_sub(PROXY_DELAY_MS);
+    pub(crate) fn snapshot_after(
+        &self,
+        client: ClientId,
+        render_time_ms: i32,
+    ) -> Option<Arc<Snapshot>> {
+        let effective = render_time_ms.saturating_sub(self.delay_ms);
+        let (_, newest) = self.last_sample(client)?;
         self.buffer
             .iter()
-            .find(|entry| entry.time_ms > effective)
+            .rev()
+            .take_while(|entry| {
+                player_row(&entry.snap.players, client)
+                    .is_some_and(|ps| same_presentation_epoch(ps, &newest))
+            })
+            .filter(|entry| entry.time_ms > effective)
+            .last()
             .map(|entry| Arc::clone(&entry.snap))
     }
 
     pub fn interpolate_at(&self, client: ClientId, render_time_ms: i32) -> ProxySample {
         let sample = self.sample_at(client, render_time_ms);
-        self.hold_across_teleport(client, sample)
+        self.hold_across_transition(client, sample)
     }
 
-    fn hold_across_teleport(&self, client: ClientId, sample: ProxySample) -> ProxySample {
+    fn hold_across_transition(&self, client: ClientId, sample: ProxySample) -> ProxySample {
         let (sampled, provenance) = match &sample {
             ProxySample::Pose { ps, provenance } => (Some(ps), *provenance),
             ProxySample::Starved { held, provenance } => (held.as_ref(), *provenance),
@@ -233,8 +272,7 @@ impl RemoteProxy {
         let (Some(sampled), Some((_, newest))) = (sampled, self.last_sample(client)) else {
             return sample;
         };
-        let teleport_bit = |ps: &PlayerState| ps.e_flags & playerstate_iw4::eflags::TELEPORT;
-        if teleport_bit(sampled) == teleport_bit(&newest) {
+        if same_presentation_epoch(sampled, &newest) {
             return sample;
         }
         let first_after = self
@@ -244,7 +282,7 @@ impl RemoteProxy {
             .filter_map(|entry| {
                 player_row(&entry.snap.players, client).map(|ps| (entry.snap.tick, ps))
             })
-            .take_while(|(_, ps)| teleport_bit(ps) == teleport_bit(&newest))
+            .take_while(|(_, ps)| same_presentation_epoch(ps, &newest))
             .last();
         let Some((tick, ps)) = first_after else {
             return sample;
@@ -259,7 +297,7 @@ impl RemoteProxy {
     }
 
     fn sample_at(&self, client: ClientId, render_time_ms: i32) -> ProxySample {
-        let effective_time = PresentationSampleTime(render_time_ms.saturating_sub(PROXY_DELAY_MS));
+        let effective_time = PresentationSampleTime(render_time_ms.saturating_sub(self.delay_ms));
         let held = if self
             .buffer
             .front()
@@ -274,7 +312,7 @@ impl RemoteProxy {
         let starved = |reason| ProxySample::Starved {
             held: held.map(|(_, ps)| ps),
             provenance: PresentationSampleProvenance {
-                policy_revision: FIXED_DELAY_POLICY_REVISION,
+                policy_revision: ADAPTIVE_DELAY_POLICY_REVISION,
                 effective_time,
                 outcome: PresentationSampleOutcome::Starved {
                     reason,
@@ -305,7 +343,7 @@ impl RemoteProxy {
                 Some(ps) => ProxySample::Pose {
                     ps: *ps,
                     provenance: PresentationSampleProvenance {
-                        policy_revision: FIXED_DELAY_POLICY_REVISION,
+                        policy_revision: ADAPTIVE_DELAY_POLICY_REVISION,
                         effective_time,
                         outcome: PresentationSampleOutcome::Exact {
                             snapshot: exact.snap.tick,
@@ -343,11 +381,11 @@ impl RemoteProxy {
             .for_client(client)
             .zip(right.snap.meta.for_client(client))
             .is_some_and(|(a, b)| a.life_sequence != b.life_sequence);
-        if life_changed {
+        if life_changed || !same_presentation_epoch(ps0, ps1) {
             return ProxySample::Pose {
                 ps: *ps1,
                 provenance: PresentationSampleProvenance {
-                    policy_revision: FIXED_DELAY_POLICY_REVISION,
+                    policy_revision: ADAPTIVE_DELAY_POLICY_REVISION,
                     effective_time,
                     outcome: PresentationSampleOutcome::Exact {
                         snapshot: right.snap.tick,
@@ -360,7 +398,7 @@ impl RemoteProxy {
         ProxySample::Pose {
             ps: lerp_player_state(ps0, ps1, alpha),
             provenance: PresentationSampleProvenance {
-                policy_revision: FIXED_DELAY_POLICY_REVISION,
+                policy_revision: ADAPTIVE_DELAY_POLICY_REVISION,
                 effective_time,
                 outcome: PresentationSampleOutcome::Interpolated {
                     left: left.snap.tick,
@@ -376,6 +414,13 @@ impl RemoteProxy {
             player_row(&entry.snap.players, client).map(|ps| (entry.snap.tick, *ps))
         })
     }
+}
+
+fn same_presentation_epoch(a: &PlayerState, b: &PlayerState) -> bool {
+    a.is_live_frame() == b.is_live_frame()
+        && a.kill_cam_client_num == b.kill_cam_client_num
+        && (a.e_flags & playerstate_iw4::eflags::TELEPORT)
+            == (b.e_flags & playerstate_iw4::eflags::TELEPORT)
 }
 
 fn snapshot_time_ms(snapshot: &Snapshot) -> i32 {

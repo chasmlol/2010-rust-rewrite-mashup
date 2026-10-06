@@ -81,6 +81,14 @@ impl FrameWorld<'_> {
             .unwrap_or_default()
     }
 
+    pub(crate) fn emit_script_entity_trace(&self) {
+        if perf::enabled()
+            && let Some(runtime) = self.ecs.get_resource::<crate::script::Runtime>()
+        {
+            crate::script::host::trace::entities(runtime, self.entity_collision_capabilities());
+        }
+    }
+
     pub(crate) fn ecs(&mut self) -> &mut World {
         self.ecs
     }

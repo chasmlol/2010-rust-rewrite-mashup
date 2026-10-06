@@ -130,6 +130,7 @@ pub enum FireType {
     BurstFire2 = 2,
     BurstFire3 = 3,
     BurstFire4 = 4,
+    DoubleBarrel = 5,
 }
 
 impl FireType {
@@ -140,6 +141,7 @@ impl FireType {
             2 => Self::BurstFire2,
             3 => Self::BurstFire3,
             4 => Self::BurstFire4,
+            5 => Self::DoubleBarrel,
             other => return Err(WeaponDecodeError::UnknownFireType(other)),
         })
     }
@@ -149,7 +151,7 @@ impl FireType {
     }
 
     pub fn is_single(self) -> bool {
-        matches!(self, Self::SingleShot)
+        matches!(self, Self::SingleShot | Self::DoubleBarrel)
     }
 
     pub fn is_burst(self) -> bool {
@@ -168,7 +170,7 @@ impl FireType {
     pub fn shot_limit_reached(self, shot_count: u8) -> bool {
         match self {
             Self::FullAuto => false,
-            Self::SingleShot => shot_count != 0,
+            Self::SingleShot | Self::DoubleBarrel => shot_count != 0,
             Self::BurstFire2 => shot_count > 1,
             Self::BurstFire3 => shot_count > 2,
             Self::BurstFire4 => shot_count > 3,

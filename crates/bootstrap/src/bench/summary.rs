@@ -63,13 +63,19 @@ fn build(facts: &RuntimeFacts) -> Value {
 /// would invite a consumer to divide them by a frame count.
 fn audio() -> Value {
     let prep = audio::clip_prep_cost();
+    let pcm = audio::pcm_memory();
+    let decode = audio::decode_memory();
     let xwma = asset_audio::xwma_decode_cost();
     json!({
         "workers": prep.workers,
         "requests": prep.requests,
         "queued": prep.queued,
         "queue_wait_ms": prep.queue_wait_ms,
+        "queue_deferred": prep.queue_deferred,
+        "request_limit": prep.request_limit,
         "late_prepares": prep.late,
+        "decode_memory": { "limit_bytes": decode.limit_bytes, "live_bytes": decode.live_bytes, "peak_bytes": decode.peak_bytes, "refused": decode.refused },
+        "pcm_memory": { "limit_bytes": pcm.limit_bytes, "live_bytes": pcm.live_bytes, "peak_bytes": pcm.peak_bytes, "refused": pcm.refused },
         "paths": prep.paths.iter().map(|(path, cost)| json!({
             "decoder": path.name(),
             "prepared": cost.prepared,
@@ -80,9 +86,9 @@ fn audio() -> Value {
         "xwma": {
             "cache_hit": xwma.hit,
             "cache_miss": xwma.miss,
-            "ffmpeg_processes": xwma.spawned,
+            "backend": "native_wma2",
+            "native_decodes": xwma.native,
             "failed": xwma.failed,
-            "retried_alone": xwma.retried,
             "pcm_bytes": xwma.pcm_bytes,
             "decode_ms": xwma.decode_ms,
             "key_ms": xwma.key_ms,

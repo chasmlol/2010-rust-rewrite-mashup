@@ -1,4 +1,4 @@
-use crate::random::{FX_RAND_CH_EMIT_DIST, random_table_f32};
+use crate::random::{FxRandomChannel, sample_f32};
 
 pub const FX_EMIT_RESIDUAL_TO_DIST: f64 = 0.003_906_25;
 
@@ -38,9 +38,9 @@ pub fn emit_dist_range(
     emit_dist_amp: f32,
     emit_var_base: f32,
     emit_var_amp: f32,
-    elem_random_seed: u32,
+    elem_random_seed: u64,
 ) -> (f32, f32) {
-    let r = random_table_f32(elem_random_seed, FX_RAND_CH_EMIT_DIST);
+    let r = sample_f32(elem_random_seed, FxRandomChannel::EmitDistance);
     let base = emit_dist_base + emit_dist_amp * r + emit_var_base;
     let max = base + emit_var_amp;
     (base, max)

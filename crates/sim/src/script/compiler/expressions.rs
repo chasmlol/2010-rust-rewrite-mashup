@@ -49,7 +49,7 @@ impl Parser {
             if self.tokens[self.pos].string {
                 let text = self.tokens[self.pos].text.clone();
                 self.pos += 1;
-                self.emit(Op::Constant(Value::String(text.into())));
+                self.emit(Op::Constant(self.string_value(&text)));
             } else {
                 self.expect("animtree")?;
                 let tree = self
@@ -113,7 +113,7 @@ impl Parser {
             let t = self.tokens[self.pos].clone();
             if t.string {
                 self.pos += 1;
-                self.emit(Op::Constant(Value::String(t.text.into())));
+                self.emit(Op::Constant(self.string_value(&t.text)));
             } else if let Some(value) = self.number(&t.text) {
                 let value = value?;
                 self.pos += 1;
@@ -153,8 +153,7 @@ impl Parser {
                     let field = self.symbol(&field);
                     self.emit(Op::LoadField(field));
                 }
-            } else if self.is("[") && !self.tokens.get(self.pos + 1).is_some_and(|t| t.is("["))
-            {
+            } else if self.is("[") && !self.tokens.get(self.pos + 1).is_some_and(|t| t.is("[")) {
                 self.pos += 1;
                 self.expression(0)?;
                 self.expect("]")?;
@@ -175,8 +174,7 @@ impl Parser {
                         .get(self.pos + 1)
                         .is_some_and(|t| t.is("(") || t.is("::"));
                 if receiver_call
-                    || (self.is("[")
-                        && self.tokens.get(self.pos + 1).is_some_and(|t| t.is("[")))
+                    || (self.is("[") && self.tokens.get(self.pos + 1).is_some_and(|t| t.is("[")))
                 {
                     self.invocation(true, false)?;
                 } else {

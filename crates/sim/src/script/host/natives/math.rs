@@ -229,34 +229,36 @@ pub(crate) fn register(registry: &mut NativeRegistry) {
         Ok(Value::Float(min + random_unit(world) * (max - min)))
     });
     registry.register(Function, "getsubstr", |_, _, args| {
-        let text = string(args, 0)?;
-        let chars: Vec<char> = text.chars().collect();
+        let text = super::super::args::byte_string(args, 0)?;
+        let bytes = text.as_bytes();
         let start = int(args, 1)?.max(0) as usize;
         let end = match optional(args, 2, int)? {
-            Some(end) => (end.max(0) as usize).min(chars.len()),
-            None => chars.len(),
+            Some(end) => (end.max(0) as usize).min(bytes.len()),
+            None => bytes.len(),
         };
-        Ok(Value::String(
-            chars
-                .get(start.min(end)..end)
-                .unwrap_or(&[])
-                .iter()
-                .collect::<String>()
-                .into(),
+        Ok(Value::byte_string(
+            bytes.get(start.min(end)..end).unwrap_or(&[]),
         ))
     });
     registry.register(Function, "issubstr", |_, _, args| {
-        Ok(Value::Int(
-            string(args, 0)?.contains(string(args, 1)?.as_str()).into(),
-        ))
+        let text = super::super::args::byte_string(args, 0)?;
+        let needle = super::super::args::byte_string(args, 1)?;
+        Ok(Value::Int(i32::from(
+            needle.is_empty()
+                || text
+                    .as_bytes()
+                    .windows(needle.len())
+                    .any(|window| window == needle.as_bytes()),
+        )))
     });
     registry.register(Function, "strtok", |world, _, args| {
-        let text = string(args, 0)?;
-        let delimiters = string(args, 1)?;
+        let text = super::super::args::byte_string(args, 0)?;
+        let delimiters = super::super::args::byte_string(args, 1)?;
         let tokens = text
-            .split(|c| delimiters.contains(c))
-            .filter(|t| !t.is_empty())
-            .map(|t| Value::String(t.into()))
+            .as_bytes()
+            .split(|byte| delimiters.as_bytes().contains(byte))
+            .filter(|token| !token.is_empty())
+            .map(Value::byte_string)
             .collect();
         new_array(world, tokens)
     });
@@ -297,7 +299,7 @@ pub(crate) fn register(registry: &mut NativeRegistry) {
         Ok(Value::LocalizedString(table_lookup(world, args)?.into()))
     });
     registry.register(Function, "tablelookupbyrow", |world, _, args| {
-        Ok(Value::String(table_lookup_by_row(world, args)?))
+        Ok(Value::String(table_lookup_by_row(world, args)?.into()))
     });
     registry.register(Function, "tablelookupistringbyrow", |world, _, args| {
         Ok(Value::LocalizedString(table_lookup_by_row(world, args)?))
@@ -312,9 +314,20 @@ pub(crate) fn register(registry: &mut NativeRegistry) {
             .and_then(|t| table_search(t, column as usize, &value));
         Ok(Value::Int(row.map_or(-1, |r| r as i32)))
     });
-    registry.register(Function, "getsystemtime", |_, _, _| Ok(Value::Int(0)));
+    registry.register(Function, "getsystemtime", |_, _, _| {
+        let seconds = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|_| "system time precedes the Unix epoch")?
+            .as_secs();
+        let seconds =
+            u32::try_from(seconds).map_err(|_| "system time exceeds the timestamp format")?;
+        Ok(Value::Int(i32::from_le_bytes(seconds.to_le_bytes())))
+    });
     registry.register(Function, "getbuildnumber", |_, _, _| {
-        Ok(Value::string(env!("CARGO_PKG_VERSION")))
+        env!("IW4L_BUILD_NUMBER")
+            .parse::<i32>()
+            .map(Value::Int)
+            .map_err(|_| "numeric build metadata is unavailable".into())
     });
     registry.register(Function, "getbuildversion", |_, _, _| {
         Ok(Value::string(env!("CARGO_PKG_VERSION")))

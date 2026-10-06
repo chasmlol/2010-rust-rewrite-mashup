@@ -5,56 +5,22 @@ use dpvs_iw4::GfxDrawSurf;
 
 use crate::catalog::{fnv1a64, fnv1a64_more};
 use crate::prepared::{
-    GfxPassStateBits, PackedCodeArg, PackedLocalBanks, PackedLocalSamplers, PreparedArgBelts,
-    PreparedMaterialTable, PreparedTechnique,
+    PackedCodeArg, PackedLocalBanks, PackedLocalSamplers, PreparedArgBelts, PreparedMaterialTable,
+    PreparedTechnique,
 };
 use crate::{
-    CatalogBuildError, CodeSourceLookup, MaterialAssetId, MaterialGenerationId, PortId,
-    RemapResolution, RuntimeImageId, RuntimeMaterial, RuntimeMaterialCatalog, RuntimeShaderPair,
-    RuntimeShaderStage, RuntimeSortedMaterialTable, RuntimeTechnique, RuntimeTechniqueSetId,
-    SetupArm, TechType,
+    CatalogBuildError, CodeSourceLookup, CompiledPassState, MaterialAssetId, MaterialGenerationId,
+    PortId, RemapResolution, RuntimeImageId, RuntimeMaterial, RuntimeMaterialCatalog,
+    RuntimeShaderPair, RuntimeShaderStage, RuntimeSortedMaterialTable, RuntimeTechnique,
+    RuntimeTechniqueSetId, SetupArm, TechType, UnsupportedStateFields,
 };
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct UnsupportedStateFields {
-    pub unknown_blend_factor: bool,
-    pub unknown_blend_operation: bool,
-    pub stencil: bool,
-}
-
-impl UnsupportedStateFields {
-    pub fn any(self) -> bool {
-        self.unknown_blend_factor || self.unknown_blend_operation || self.stencil
-    }
-}
-
-impl GfxPassStateBits {
-    pub fn unsupported_host_fields(self) -> Option<UnsupportedStateFields> {
-        let blend_op = ((self.word0 >> 8) & 0x7) as u8;
-        let colour_src = d3d9_state::BlendFactor::from_raw(self.word0 & 0xf);
-        let colour_dst = d3d9_state::BlendFactor::from_raw((self.word0 >> 4) & 0xf);
-        let alpha_blend = (self.word0 >> 16) & 0x7ff;
-        let alpha_blend_op = (alpha_blend >> 8) & 0x7;
-        let alpha_src = d3d9_state::BlendFactor::from_raw(alpha_blend & 0xf);
-        let alpha_dst = d3d9_state::BlendFactor::from_raw((alpha_blend >> 4) & 0xf);
-        let fields = UnsupportedStateFields {
-            unknown_blend_factor: blend_op != 0
-                && (!colour_src.is_known()
-                    || !colour_dst.is_known()
-                    || (alpha_blend_op != 0 && (!alpha_src.is_known() || !alpha_dst.is_known()))),
-            unknown_blend_operation: blend_op > 5 || (blend_op != 0 && alpha_blend_op > 5),
-            stencil: false,
-        };
-        fields.any().then_some(fields)
-    }
-}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ExecutablePass {
     pub pass_index: u8,
     pub port: PortId,
     pub shader_pair: RuntimeShaderPair,
-    pub state: GfxPassStateBits,
+    pub state: CompiledPassState,
     pub local_banks: Option<Arc<PackedLocalBanks>>,
     pub local_samplers: Option<Arc<PackedLocalSamplers>>,
     pub code_constants: PackedCodeConstants,
@@ -66,7 +32,7 @@ pub struct ExecutablePassView<'a> {
     pub pass_index: u8,
     pub port: PortId,
     pub shader_pair: RuntimeShaderPair,
-    pub state: GfxPassStateBits,
+    pub state: CompiledPassState,
     pub local_banks: Option<&'a Arc<PackedLocalBanks>>,
     pub local_samplers: Option<&'a Arc<PackedLocalSamplers>>,
     pub code_constants: &'a [PackedCodeConstantLane],
@@ -244,6 +210,9 @@ pub enum MaterialRefusal {
         retained: MaterialGenerationId,
         current: MaterialGenerationId,
     },
+    MissingLightBindings {
+        scene_light: u8,
+    },
     MaterialOutOfRange {
         material: MaterialAssetId,
     },
@@ -368,6 +337,7 @@ pub fn resolve_sorted_material(
 ) -> Result<&RuntimeMaterial, MaterialRefusal> {
     if let Some(material_id) = key.material_id {
         return catalog
+            .parts()
             .materials
             .get(usize::from(material_id.0))
             .filter(|material| material.asset_id == material_id)
@@ -376,7 +346,7 @@ pub fn resolve_sorted_material(
             });
     }
     let ordinal = key.rank;
-    let material_id = match &catalog.sorted_materials {
+    let material_id = match &catalog.parts().sorted_materials {
         RuntimeSortedMaterialTable::Missing => {
             return Err(MaterialRefusal::SortedMaterialTableMissing);
         }
@@ -396,6 +366,7 @@ pub fn resolve_sorted_material(
         )?,
     };
     catalog
+        .parts()
         .materials
         .get(usize::from(material_id.0))
         .ok_or(MaterialRefusal::MaterialOutOfRange {
@@ -416,7 +387,7 @@ pub fn add_surf_has_technique(
         RemapResolution::Resolved(set) => set,
         RemapResolution::Missing { .. } | RemapResolution::Cycle { .. } => return true,
     };
-    let Some(set) = catalog.technique_sets.get(set_id.0 as usize) else {
+    let Some(set) = catalog.parts().technique_sets.get(set_id.0 as usize) else {
         return true;
     };
     set.technique(tech_type).is_some()
@@ -440,6 +411,7 @@ pub fn resolve_material_technique(
         }
     };
     let set = catalog
+        .parts()
         .technique_sets
         .get(set_id.0 as usize)
         .ok_or_else(|| {
@@ -508,6 +480,7 @@ fn world_vert_decl_from_resolved(
         }
     };
     catalog
+        .parts()
         .technique_sets
         .get(set_id.0 as usize)
         .map(|set| {
@@ -552,13 +525,24 @@ fn missing_prepared_technique(
     match entries.get(usize::from(tech_type.0)).copied() {
         None => MaterialRefusal::StateEntryOutOfRange { tech_type },
         Some(0xff) => MaterialRefusal::TechniqueAbsent { tech_type },
-        Some(_) => match technique.passes.first().and_then(|pass| pass.shader_pair) {
-            Some(pair) => MaterialRefusal::UnsupportedShaderPair {
-                pass_index: 0,
-                pair,
-            },
-            None => MaterialRefusal::ShaderProgramMissing { pass_index: 0 },
-        },
+        Some(base) => {
+            for pass_index in 0..technique.passes.len() {
+                let row = usize::from(base).saturating_add(pass_index);
+                let Ok(pass_index) = u8::try_from(pass_index) else {
+                    return MaterialRefusal::PassIndexOverflow { pass_index };
+                };
+                if material.pass_states.get(row).is_none() {
+                    return MaterialRefusal::StateRowOutOfRange { row, pass_index };
+                }
+            }
+            match technique.passes.first().and_then(|pass| pass.shader_pair) {
+                Some(pair) => MaterialRefusal::UnsupportedShaderPair {
+                    pass_index: 0,
+                    pair,
+                },
+                None => MaterialRefusal::ShaderProgramMissing { pass_index: 0 },
+            }
+        }
     }
 }
 
@@ -703,12 +687,26 @@ fn resolve_pass_code(
     Ok((constants, samplers))
 }
 
+fn validate_prepared_generation(
+    catalog: &RuntimeMaterialCatalog,
+    prepared: &PreparedMaterialTable,
+) -> Result<(), MaterialRefusal> {
+    if prepared.generation_id() != catalog.generation_id() {
+        return Err(MaterialRefusal::StaleMaterialGeneration {
+            retained: prepared.generation_id(),
+            current: catalog.generation_id(),
+        });
+    }
+    Ok(())
+}
+
 pub fn prepared_draw_technique<'a>(
     catalog: &'a RuntimeMaterialCatalog,
     prepared: &'a PreparedMaterialTable,
     key: MaterialDrawKey,
     tech_type: TechType,
 ) -> Result<(&'a RuntimeMaterial, &'a PreparedTechnique), MaterialRefusal> {
+    validate_prepared_generation(catalog, prepared)?;
     let (material, technique) = resolve_material_technique(catalog, key, tech_type)?;
     let prepared_tech = prepared
         .technique(material.asset_id, tech_type)
@@ -721,10 +719,9 @@ pub fn draw_code_sampler_mask(
     prepared: &PreparedMaterialTable,
     key: MaterialDrawKey,
     tech_type: TechType,
-) -> u64 {
+) -> Result<u64, MaterialRefusal> {
     prepared_draw_technique(catalog, prepared, key, tech_type)
         .map(|(_, prepared_tech)| prepared_tech.code_sampler_mask)
-        .unwrap_or(0)
 }
 
 pub fn draw_binds_code_texture(
@@ -733,11 +730,9 @@ pub fn draw_binds_code_texture(
     key: MaterialDrawKey,
     tech_type: TechType,
     index: u32,
-) -> bool {
-    let Ok((_, prepared_tech)) = prepared_draw_technique(catalog, prepared, key, tech_type) else {
-        return false;
-    };
-    prepared_tech.binds_code_texture(index)
+) -> Result<bool, MaterialRefusal> {
+    let (_, prepared_tech) = prepared_draw_technique(catalog, prepared, key, tech_type)?;
+    Ok(prepared_tech.binds_code_texture(index))
 }
 
 pub fn execute_material(
@@ -759,6 +754,7 @@ pub fn execute_material_with_shell(
     tech_type: TechType,
     vertex_type: u8,
 ) -> Result<MaterialExecution, MaterialRefusal> {
+    validate_prepared_generation(catalog, prepared)?;
     let (material, technique) = resolve_material_technique(catalog, key, tech_type)?;
     let prepared_tech = prepared
         .technique(material.asset_id, tech_type)
@@ -784,7 +780,7 @@ pub fn execute_material_with_shell(
             .flatten()
             .ok_or(MaterialRefusal::UnsupportedShaderPair { pass_index, pair })?;
         let state = prepared_pass.state;
-        let load_bits = [state.word0, state.word1];
+        let load_bits = state.authored_words();
         if let Some(fields) = state.unsupported_host_fields() {
             return Err(MaterialRefusal::UnsupportedState {
                 pass_index,
@@ -829,6 +825,9 @@ pub fn execute_material_with_shell(
         arm,
         vertex_type,
         shell: Arc::new(StableMaterialShell {
+            generation_id: catalog.generation_id(),
+            material_id: material.asset_id,
+            source_selection: technique.source_selection,
             tech_type,
             arm,
             vertex_type,
@@ -841,24 +840,45 @@ pub fn execute_material_with_shell(
 
 #[derive(Clone, Debug)]
 pub struct StablePassShell {
-    pub pass_index: u8,
-    pub port: PortId,
-    pub shader_pair: RuntimeShaderPair,
-    pub state: GfxPassStateBits,
-    pub local_banks: Option<Arc<PackedLocalBanks>>,
-    pub local_samplers: Option<Arc<PackedLocalSamplers>>,
-    pub belts: Arc<PreparedArgBelts>,
+    pass_index: u8,
+    port: PortId,
+    shader_pair: RuntimeShaderPair,
+    state: CompiledPassState,
+    local_banks: Option<Arc<PackedLocalBanks>>,
+    local_samplers: Option<Arc<PackedLocalSamplers>>,
+    belts: Arc<PreparedArgBelts>,
 }
 
 #[derive(Clone, Debug)]
 pub struct StableMaterialShell {
-    pub tech_type: TechType,
-    pub arm: SetupArm,
-    pub vertex_type: u8,
-    pub passes: Vec<StablePassShell>,
+    generation_id: crate::MaterialGenerationId,
+    material_id: MaterialAssetId,
+    source_selection: Option<crate::SourceTechniqueSelection>,
+    tech_type: TechType,
+    arm: SetupArm,
+    vertex_type: u8,
+    passes: Vec<StablePassShell>,
+}
+
+impl StableMaterialShell {
+    pub fn material_id(&self) -> MaterialAssetId {
+        self.material_id
+    }
+    pub fn source_selection(&self) -> Option<crate::SourceTechniqueSelection> {
+        self.source_selection
+    }
+    pub fn generation_id(&self) -> crate::MaterialGenerationId {
+        self.generation_id
+    }
+    pub fn passes(&self) -> &[StablePassShell] {
+        &self.passes
+    }
 }
 
 impl StablePassShell {
+    pub fn state(&self) -> CompiledPassState {
+        self.state
+    }
     pub fn bind<'a>(
         &'a self,
         constants: &'a PackedCodeConstants,
@@ -884,11 +904,23 @@ pub fn capture_stable_shell(
     prepared: &PreparedMaterialTable,
     key: MaterialDrawKey,
     tech_type: TechType,
-    _vertex_type: u8,
+    vertex_type: u8,
     execution: &MaterialExecution,
 ) -> Option<StableMaterialShell> {
+    validate_prepared_generation(catalog, prepared).ok()?;
     let (material, technique) = resolve_material_technique(catalog, key, tech_type).ok()?;
     let prepared_tech = prepared.technique(material.asset_id, tech_type)?;
+    let shell = &execution.shell;
+    if shell.generation_id != catalog.generation_id()
+        || shell.material_id != material.asset_id
+        || shell.tech_type != tech_type
+        || shell.vertex_type != vertex_type
+        || execution.tech_type != shell.tech_type
+        || execution.arm != shell.arm
+        || execution.vertex_type != shell.vertex_type
+    {
+        return None;
+    }
     if execution.pass_count() != technique.passes.len() {
         return None;
     }
@@ -900,10 +932,11 @@ pub fn capture_stable_shell(
 
 pub fn rebind_stable_material(
     shell: &StableMaterialShell,
+    catalog: &RuntimeMaterialCatalog,
     code_sources: &impl CodeSourceLookup,
 ) -> Result<MaterialExecution, MaterialRefusal> {
     let mut execution = MaterialExecution::vacant();
-    execution.rebind_into(&Arc::new(shell.clone()), code_sources)?;
+    execution.rebind_into(&Arc::new(shell.clone()), catalog, code_sources)?;
     Ok(execution)
 }
 
@@ -914,6 +947,9 @@ impl MaterialExecution {
         VACANT
             .get_or_init(|| {
                 Arc::new(StableMaterialShell {
+                    generation_id: crate::MaterialGenerationId::default(),
+                    material_id: MaterialAssetId(u16::MAX),
+                    source_selection: None,
                     tech_type: TechType(0),
                     arm: SetupArm::Generic,
                     vertex_type: 0,
@@ -969,8 +1005,16 @@ impl MaterialExecution {
     pub fn rebind_into(
         &mut self,
         shell: &Arc<StableMaterialShell>,
+        catalog: &RuntimeMaterialCatalog,
         code_sources: &impl CodeSourceLookup,
     ) -> Result<(), MaterialRefusal> {
+        let generation = catalog.generation_id();
+        if shell.generation_id != generation {
+            return Err(MaterialRefusal::StaleMaterialGeneration {
+                retained: shell.generation_id,
+                current: generation,
+            });
+        }
         self.tech_type = shell.tech_type;
         self.arm = shell.arm;
         self.vertex_type = shell.vertex_type;
@@ -991,8 +1035,8 @@ impl MaterialExecution {
                 return Err(MaterialRefusal::UnsupportedState {
                     pass_index: pass.pass_index,
                     fields,
-                    word0: pass.state.word0,
-                    word1: pass.state.word1,
+                    word0: pass.state.authored_words()[0],
+                    word1: pass.state.authored_words()[1],
                 });
             }
             resolve_pass_code_into(

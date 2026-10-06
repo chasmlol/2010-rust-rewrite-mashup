@@ -124,7 +124,6 @@ pub(crate) fn route_capture_commands(
     }
 }
 
-
 fn screenshot_path(artifacts: &Path, zone: &str, name: Option<&str>) -> Result<PathBuf, String> {
     let name = name.unwrap_or(zone);
     let relative = Path::new(name);
@@ -150,4 +149,3 @@ fn screenshot_path(artifacts: &Path, zone: &str, name: Option<&str>) -> Result<P
     }
     Ok(path)
 }
-

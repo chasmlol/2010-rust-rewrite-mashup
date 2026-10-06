@@ -149,9 +149,6 @@ fn report_on_app_exit(mut exit: MessageReader<AppExit>) {
     }
 }
 
-/// Every exit ends in `std::process::exit` (`console::exit_process`),
-/// so `App::run` never returns and nothing after it runs. Perfetto survives that
-/// on an `atexit` handler; the report needs the same one, or `make bench <demo>`
 /// would measure a whole run and print nothing.
 #[cfg(unix)]
 fn arm_exit_hook() {
@@ -159,10 +156,7 @@ fn arm_exit_hook() {
     if ARMED.swap(true, Ordering::SeqCst) {
         return;
     }
-    unsafe extern "C" {
-        fn atexit(callback: extern "C" fn()) -> i32;
-    }
-    extern "C" fn report_at_exit() {
+    diag::exit::at_exit(|| {
         let Some(artifacts) = ARTIFACTS.get() else {
             return;
         };
@@ -171,15 +165,14 @@ fn arm_exit_hook() {
         // after the flush, its Perfetto slice stays open and every span of
         // that frame reads as falling outside every wall.
         perf::stats::close_open_frame();
-        // This hook was armed after Perfetto's, and `atexit` runs last-armed
-        // first, so the trace is still open here; flushing it is what gives the
+        // This hook was armed after Perfetto's, and exit hooks run
+        // last-armed first, so the trace is still open here; flushing it is what gives the
         // heading a run directory to name. Flushing twice is a no-op.
         let trace = perf::flush().ok().flatten();
         let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             report(artifacts, trace);
         }));
-    }
-    let _ = unsafe { atexit(report_at_exit) };
+    });
 }
 
 #[cfg(not(unix))]

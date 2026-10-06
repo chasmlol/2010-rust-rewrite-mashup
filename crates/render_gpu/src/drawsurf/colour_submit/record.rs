@@ -146,11 +146,18 @@ pub(super) fn draw_exact_colour(
     // Handles only: taking the caches would drop the kept skinned surfaces.
     let tess_vertex = scratch.skinned_tess.vertex_buffer().cloned();
     let tess_index = scratch.skinned_tess.index_buffer().cloned();
+    let tess_vertex_lighting = scratch.skinned_tess.vertex_lighting_buffer().cloned();
     let shadow_tess_vertex = shadow_scratch.skinned_tess.vertex_buffer().cloned();
+    let shadow_tess_vertex_lighting = shadow_scratch
+        .skinned_tess
+        .vertex_lighting_buffer()
+        .cloned();
     let shadow_tess_index = shadow_scratch.skinned_tess.index_buffer().cloned();
     let smodel_skinned_vertex = tess_vertex.as_ref();
     let smodel_skinned_index = tess_index.as_ref();
+    let smodel_skinned_vertex_lighting = tess_vertex_lighting.as_ref();
     let shadow_skinned_vertex = shadow_tess_vertex.as_ref();
+    let shadow_skinned_vertex_lighting = shadow_tess_vertex_lighting.as_ref();
     let shadow_skinned_index = shadow_tess_index.as_ref();
     let sun_prepared = std::mem::take(&mut shadow_scratch.sun_prepared);
     let spot_prepared = std::mem::take(&mut shadow_scratch.spot_prepared);
@@ -166,6 +173,7 @@ pub(super) fn draw_exact_colour(
         &static_draws,
         &mut context,
         shadow_skinned_vertex,
+        shadow_skinned_vertex_lighting,
         shadow_skinned_index,
         minecraft.off(),
     );
@@ -179,6 +187,7 @@ pub(super) fn draw_exact_colour(
         &spot_arena,
         &mut context,
         shadow_skinned_vertex,
+        shadow_skinned_vertex_lighting,
         shadow_skinned_index,
         minecraft.off(),
     );
@@ -414,6 +423,7 @@ pub(super) fn draw_exact_colour(
             &geometry,
             &smodel_cache_gpu,
             smodel_skinned_vertex,
+            smodel_skinned_vertex_lighting,
             smodel_skinned_index,
             pretess.as_ref(),
             &indirect,
@@ -468,6 +478,7 @@ pub(super) fn draw_exact_colour(
                         &geometry,
                         &smodel_cache_gpu,
                         smodel_skinned_vertex,
+                        smodel_skinned_vertex_lighting,
                         smodel_skinned_index,
                         pretess.as_ref(),
                         &indirect,

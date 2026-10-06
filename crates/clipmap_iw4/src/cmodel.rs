@@ -191,3 +191,37 @@ fn transpose_matrix(mat: &[[f32; 3]; 3]) -> [[f32; 3]; 3] {
         [mat[0][2], mat[1][2], mat[2][2]],
     ]
 }
+
+#[derive(Clone, Copy, Debug)]
+pub struct CmodelTransform {
+    origin: [f32; 3],
+    matrix: [[f32; 3]; 3],
+}
+
+impl CmodelTransform {
+    pub fn new(origin: [f32; 3], angles: [f32; 3]) -> Option<Self> {
+        if !origin.iter().chain(angles.iter()).all(|v| v.is_finite()) {
+            return None;
+        }
+        Some(Self {
+            origin,
+            matrix: angles_to_axis(angles),
+        })
+    }
+
+    pub fn local_point(self, point: [f32; 3]) -> [f32; 3] {
+        let mut local = core::array::from_fn(|i| point[i] - self.origin[i]);
+        rotate_point(&mut local, &self.matrix);
+        local
+    }
+
+    pub fn world_direction(self, mut direction: [f64; 3]) -> [f64; 3] {
+        let local = direction;
+        for (i, value) in direction.iter_mut().enumerate() {
+            *value = (0..3)
+                .map(|j| f64::from(self.matrix[j][i]) * local[j])
+                .sum();
+        }
+        direction
+    }
+}

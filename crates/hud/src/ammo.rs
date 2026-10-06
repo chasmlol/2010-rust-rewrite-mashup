@@ -1,4 +1,4 @@
-use assets::PreparedWeapons;
+use assets::BoundWeapons;
 use hud_iw4::{
     AmmoCounterClipKind, CLIP_PIP_EMPTY_ALPHA, CLIP_PIP_EMPTY_RGB, ammo_counter_clip_kind,
     clip_pip_belt_xy, clip_pip_grid_xy, clip_pip_metrics,
@@ -49,11 +49,13 @@ pub(crate) struct WeaponbarAmmo {
 
 pub(crate) fn weaponbar_ammo(
     ps: &PlayerState,
-    weapons: &PreparedWeapons,
+    weapons: &BoundWeapons<'_>,
     meta: Option<&ClientSnapshotMeta>,
 ) -> Option<WeaponbarAmmo> {
     let viewmodel = get_viewmodel_weapon_index(ps);
-    let facts = weapons.0.facts_of(viewmodel)?;
+    let facts = weapons
+        .row(viewmodel)
+        .and_then(|weapon| weapon.hud_facts())?;
     let kind = ammo_counter_clip_kind(facts.ammo_counter_clip)?;
     let clip_key = clip_table_key(facts.clip_index, viewmodel);
     let ammo_key = ammo_table_key(facts.ammo_index, viewmodel);
@@ -108,7 +110,7 @@ pub(crate) fn stock_digits(count: i32) -> String {
     format!("{count:3}")
 }
 
-pub(crate) fn offhand_ammo(ps: &PlayerState, weapons: &PreparedWeapons, class: i32) -> i32 {
+pub(crate) fn offhand_ammo(ps: &PlayerState, weapons: &BoundWeapons<'_>, class: i32) -> i32 {
     if class == 0 {
         return 0;
     }
@@ -118,7 +120,7 @@ pub(crate) fn offhand_ammo(ps: &PlayerState, weapons: &PreparedWeapons, class: i
             continue;
         }
         let index = slot as u32;
-        let Some(facts) = weapons.0.facts_of(index) else {
+        let Some(facts) = weapons.row(index).and_then(|weapon| weapon.hud_facts()) else {
             continue;
         };
         if facts.offhand_class != class {
@@ -138,7 +140,7 @@ pub(crate) fn offhand_ammo(ps: &PlayerState, weapons: &PreparedWeapons, class: i
 
 pub(crate) fn offhand_weapon_index(
     ps: &PlayerState,
-    weapons: &PreparedWeapons,
+    weapons: &BoundWeapons<'_>,
     class: i32,
 ) -> Option<u32> {
     if class == 0 {
@@ -150,8 +152,8 @@ pub(crate) fn offhand_weapon_index(
         }
         let index = slot as u32;
         weapons
-            .0
-            .facts_of(index)
+            .row(index)
+            .and_then(|weapon| weapon.hud_facts())
             .filter(|facts| facts.offhand_class == class)
             .map(|_| index)
     })

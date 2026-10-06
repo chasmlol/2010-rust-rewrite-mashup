@@ -10,6 +10,7 @@ default = ["native"]
 native = ["dep:perfetto-sdk"]
 
 [dependencies]
+diag.workspace = true
 serde_json.workspace = true
 uuid = { version = "1", features = ["v4"] }
 

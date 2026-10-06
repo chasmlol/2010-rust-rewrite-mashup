@@ -23,8 +23,6 @@ pub const FX_TRAIL_ELEM_POOL_CAPACITY: u32 = 0x800;
 pub const FX_EFFECT_HANDLE_RING_SIZE: u32 = 0x400;
 pub const FX_EFFECT_HANDLE_RING_MASK: u32 = 0x3ff;
 
-pub const FX_RAND_TABLE_MOD: u32 = 0x1df;
-
 pub const FX_BUFFERS_OFF_EFFECTS: u32 = 0x0;
 pub const FX_BUFFERS_OFF_ELEMS: u32 = 0x24000;
 pub const FX_BUFFERS_OFF_SPARK_CLOUD: u32 = 0x4a800;

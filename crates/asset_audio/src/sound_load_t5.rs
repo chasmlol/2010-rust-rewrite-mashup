@@ -5,7 +5,7 @@ use crate::sound_catalog::{
     CapturedAlias, CapturedSndCurve, CapturedSound, LoadedSoundPcm, MSS_PCM, SoundCatalog,
 };
 use crate::zone::{T5ZoneMemory, open_zone_shared};
-use crate::{ZoneGame, ZoneOwner};
+use crate::{AssetNamespace, ZoneGame, ZoneOwner};
 use fastfile_t5::size as sz;
 use fastfile_t5::{
     AssetLinkSink, AssetSink, AssetType, Ptr, ScriptStrings, ZonePtr, ZoneStream,
@@ -79,10 +79,29 @@ impl AssetLinkSink for T5SoundCapture {
                 knots.push((s.f32_at(row, 36 + n * 8)?, s.f32_at(row, 40 + n * 8)?));
             }
             let name = format!("t5/curve/{i}");
-            self.catalog
-                .curves
-                .insert(name.clone(), CapturedSndCurve { name, knots });
+            self.catalog.curves.insert(
+                (AssetNamespace::T5, name.clone()),
+                CapturedSndCurve { name, knots },
+            );
         }
+        Ok(())
+    }
+
+    fn capture_snd_groups(
+        &mut self,
+        s: &ZoneStream<'_>,
+        rows: Ptr,
+        count: usize,
+    ) -> fastfile_t5::Result<()> {
+        let mut groups = Vec::with_capacity(count);
+        for i in 0..count {
+            let row = rows.at(i * 80);
+            groups.push(crate::MixerGroup {
+                parent: s.i32_at(row, 68)?,
+                attenuation: f32::from(s.u16_at(row, 78)?) / 65535.0,
+            });
+        }
+        self.catalog.ingest_mixer_groups(AssetNamespace::T5, groups);
         Ok(())
     }
 
@@ -165,7 +184,7 @@ impl AssetLinkSink for T5SoundCapture {
             pcm: pcm_bytes.into(),
             zone: self.catalog.capture_zone_for_ingest(),
             seek_table,
-            ..Default::default()
+            sab_media: None,
         });
         Ok(())
     }
@@ -329,6 +348,7 @@ impl T5SoundCapture {
             mixer_group: None,
             loaded_name,
             loaded,
+            loaded_binding_origin: crate::LoadedBindingOrigin::Unresolved,
             streamed,
             file_type,
             file_exists,
@@ -339,12 +359,14 @@ impl T5SoundCapture {
             sequence: 0,
             vol_min,
             vol_max,
+            vol_mod_index: None,
             pitch_min,
             pitch_max,
             dist_min,
             dist_max,
             velocity_min: 0.0,
             flags: s.u32_at(row, sz::SND_ALIAS_FLAGS_OFF).ok(),
+            looping: None,
             slave_percentage: 0.0,
             probability,
             lfe_percentage: 0.0,
@@ -381,6 +403,7 @@ impl T5SoundCapture {
             envelop_max,
             envelop_percentage,
             speaker_map: None,
+            stereo_speaker_gains: None,
             limit_count: s.u8_at(row, sz::SND_ALIAS_LIMIT_COUNT_OFF).ok(),
             entity_limit_count: s.u8_at(row, sz::SND_ALIAS_ENTITY_LIMIT_COUNT_OFF).ok(),
         }

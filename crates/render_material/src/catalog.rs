@@ -26,7 +26,13 @@ pub struct MaterialAssetId(pub u16);
 pub struct SortedMaterialOrdinal(u32);
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
-pub struct MaterialGenerationId(pub u64);
+pub struct MaterialGenerationId(u64);
+
+impl MaterialGenerationId {
+    pub const fn get(self) -> u64 {
+        self.0
+    }
+}
 
 pub const fn sort_band(rank: u32) -> u16 {
     if (rank as usize) < SortedMaterialOrdinal::RETAIL_LIMIT {
@@ -289,8 +295,26 @@ impl RuntimePass {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RuntimeTechnique {
+    pub source_selection: Option<SourceTechniqueSelection>,
     pub flags: u16,
     pub passes: Vec<RuntimePass>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TechniqueSelectionPolicy {
+    Exact,
+    DfogCompatibility,
+    UnshadowedCompatibility,
+    LitFallbackCompatibility,
+    EmissiveCompatibility,
+    DepthToColourCompatibility,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SourceTechniqueSelection {
+    pub namespace: AssetNamespace,
+    pub slot: u8,
+    pub policy: TechniqueSelectionPolicy,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -341,6 +365,14 @@ impl RuntimeTechniqueSet {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MaterialDrawRules {
+    pub colour_camera_region: u8,
+    pub smodel_colour_emits: bool,
+    pub unlit_sky: bool,
+    pub postfx_host_supported: bool,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RuntimeMaterial {
     pub asset_id: MaterialAssetId,
@@ -354,9 +386,10 @@ pub struct RuntimeMaterial {
     pub local_technique_set: RuntimeTechniqueSetId,
     pub remap: RemapResolution,
     pub state_bits_entry: Option<[u8; TECHNIQUE_SLOT_COUNT]>,
-    pub state_bits_table: Vec<[u32; 2]>,
+    pub pass_states: Vec<crate::CompiledPassState>,
 
     pub camera_region: u8,
+    pub draw_rules: MaterialDrawRules,
 
     pub sort_key: u8,
 
@@ -473,11 +506,11 @@ impl Default for RuntimeSortedMaterialTable {
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct RuntimeMaterialCatalog {
-    pub generation_id: MaterialGenerationId,
+pub struct RuntimeMaterialBuild {
     pub materials: Vec<RuntimeMaterial>,
 
     pub material_indices_by_name: Vec<(String, usize)>,
+    pub material_indices_by_key: std::collections::HashMap<asset_core::MaterialKey, usize>,
     pub technique_sets: Vec<RuntimeTechniqueSet>,
 
     pub shader_programs: Vec<Option<RuntimeShaderProgram>>,
@@ -546,27 +579,60 @@ pub struct RuntimeMaterialCatalog {
     pub leftover_unknown_n: u32,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RuntimeMaterialCatalog {
+    generation_id: MaterialGenerationId,
+    parts: RuntimeMaterialBuild,
+}
+
+impl RuntimeMaterialBuild {
+    pub fn publish(self) -> RuntimeMaterialCatalog {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        RuntimeMaterialCatalog {
+            generation_id: MaterialGenerationId(
+                NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+            ),
+            parts: self,
+        }
+    }
+}
+
+impl Default for RuntimeMaterialCatalog {
+    fn default() -> Self {
+        RuntimeMaterialBuild::default().publish()
+    }
+}
+
 impl RuntimeMaterialCatalog {
+    pub fn generation_id(&self) -> MaterialGenerationId {
+        self.generation_id
+    }
+
+    pub fn parts(&self) -> &RuntimeMaterialBuild {
+        &self.parts
+    }
+
     pub fn derived(&self, id: MaterialIndex) -> Option<&RuntimeMaterial> {
-        let row = self.materials.get(id.order())?;
+        let row = self.parts.materials.get(id.order())?;
         (usize::from(row.asset_id.0) == id.order()).then_some(row)
     }
 
     pub fn ordinal_for_asset_id(&self, id: MaterialIndex) -> Option<SortedMaterialOrdinal> {
         self.derived(id)?;
-        self.sorted_materials.ordinal_for_asset_id(id.order())
+        self.parts.sorted_materials.ordinal_for_asset_id(id.order())
     }
 
     pub fn material_for_sorted_ordinal(&self, ordinal: u32) -> Option<&RuntimeMaterial> {
         let RuntimeSortedMaterialTable::Ready {
             asset_ids_by_ordinal,
             ..
-        } = &self.sorted_materials
+        } = &self.parts.sorted_materials
         else {
             return None;
         };
         let asset_id = *asset_ids_by_ordinal.get(ordinal as usize)?;
-        self.materials
+        self.parts
+            .materials
             .get(usize::from(asset_id.0))
             .filter(|material| material.asset_id == asset_id)
     }
@@ -576,39 +642,50 @@ impl RuntimeMaterialCatalog {
         name: impl AsRef<str>,
     ) -> Option<SortedMaterialOrdinal> {
         let material = self.material_for_name(name)?;
-        self.sorted_materials
+        self.parts
+            .sorted_materials
             .ordinal_for_asset_id(usize::from(material.asset_id.0))
+    }
+
+    pub fn material_for_key(&self, key: &asset_core::MaterialKey) -> Option<&RuntimeMaterial> {
+        self.parts
+            .materials
+            .get(*self.parts.material_indices_by_key.get(key)?)
     }
 
     pub fn material_for_name(&self, name: impl AsRef<str>) -> Option<&RuntimeMaterial> {
         let want = AssetRef::bare_name(name.as_ref());
         let index = self
+            .parts
             .material_indices_by_name
             .binary_search_by(|(candidate, _)| candidate.as_str().cmp(want))
             .ok()
-            .and_then(|index| self.material_indices_by_name.get(index))
+            .and_then(|index| self.parts.material_indices_by_name.get(index))
             .map(|(_, material)| *material)?;
-        self.materials
+        self.parts
+            .materials
             .get(index)
             .filter(|material| material.name == want)
     }
 
     pub fn shader_program(&self, id: RuntimeShaderProgramId) -> Option<&RuntimeShaderProgram> {
-        self.shader_programs
+        self.parts
+            .shader_programs
             .get(usize::try_from(id.asset_slot).ok()?)?
             .as_ref()
             .filter(|program| program.id == id)
     }
 
     pub fn vertex_decl(&self, pointer_identity: u32) -> Option<&RuntimeVertexDecl> {
-        self.vertex_decls
+        self.parts
+            .vertex_decls
             .binary_search_by_key(&pointer_identity, |(identity, _)| *identity)
             .ok()
-            .map(|index| &self.vertex_decls[index].1)
+            .map(|index| &self.parts.vertex_decls[index].1)
     }
 
     pub fn opcode_surface_coverage(&self) -> crate::OpcodeSurfaceCoverage {
-        let programs = self.shader_programs.iter().filter_map(|slot| {
+        let programs = self.parts.shader_programs.iter().filter_map(|slot| {
             let program = slot.as_ref()?;
             Some((program.program.as_slice(), program.stage))
         });

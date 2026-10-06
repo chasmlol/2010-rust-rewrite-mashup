@@ -4,6 +4,7 @@ mod breath_hint;
 mod chrome;
 mod compass;
 mod draw2d;
+mod emp_static;
 mod expr_cache;
 mod flash;
 mod font_overlay;
@@ -37,11 +38,14 @@ pub use draw2d::{
     TEXT_STYLE_HUDELEM, TextRunFx, tessellate, tessellate_fonts,
 };
 pub use gaps::{GapCause, HudGap, HudPresentationGaps};
-pub use gpu_list::{HudTessBatch, HudTessGpuFrame, HudTessTechnique, HudTessVertex};
+pub use gpu_list::{
+    HudTessBatch, HudTessGpuFrame, HudTessTechnique, HudTessVertex, ShellshockScreen,
+};
 pub use hudelem::HudElemSoundLatch;
 pub use menus::ScriptMenus;
 pub use overhead_names::{
-    OverheadPosedHead, OverheadPosedPlayerFrame, OverheadPosedPlayerFramePublished,
+    OverheadPosedHead, OverheadPosedModelFrame, OverheadPosedPlayerFrame,
+    OverheadPosedPlayerFramePublished,
 };
 pub use plugin::HudPlugin;
 pub use presentation_scale::{

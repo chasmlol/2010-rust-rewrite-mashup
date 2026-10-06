@@ -96,8 +96,8 @@ impl PendingSvcSounds {
         }
     }
 
-    pub fn adopt_from_world(&mut self, world: &mut sim::SimWorld) {
-        for sound in world.take_pending_local_sounds() {
+    pub fn adopt_sounds(&mut self, effects: &[sim::PendingLocalSound]) {
+        for sound in effects.iter().cloned() {
             if sound.alias_index == 0 {
                 self.dropped_index_zero = self.dropped_index_zero.saturating_add(1);
                 continue;

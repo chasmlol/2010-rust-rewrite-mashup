@@ -90,6 +90,7 @@ struct ItemRow {
 }
 
 struct PickupRow {
+    event: Option<String>,
     picker_pm_type: Option<i64>,
 }
 
@@ -109,31 +110,20 @@ pub fn chaos_gate(root: &Path, trace: Option<PathBuf>) -> bool {
     let path = match resolve_trace(root, trace.as_deref()) {
         Ok(path) => path,
         Err(error) => {
-            println!("{error}");
             println!("  make chaos");
-            return false;
+            return crate::scenario::harness_failure(&error);
         }
     };
     let loaded = match load(root, &path) {
         Ok(loaded) => loaded,
         Err(error) => {
-            println!("{error}");
-            return false;
+            return crate::scenario::harness_failure(&error);
         }
     };
     let claims = check(&loaded);
     let mut ok = true;
     for claim in &claims {
-        println!(
-            "\n[{}] {} — {}",
-            claim.id,
-            claim.title,
-            if claim.passed { "green" } else { "RED" }
-        );
-        for line in &claim.evidence {
-            println!("  {line}");
-        }
-        ok &= claim.passed;
+        ok &= claim.report();
     }
     ok
 }
@@ -214,7 +204,7 @@ fn load(root: &Path, trace: &Path) -> Result<Trace, String> {
 }
 
 fn check(t: &Trace) -> Vec<Claim> {
-    vec![
+    let mut claims = vec![
         pose_claim(t),
         bot_pitch_claim(t),
         rpg_claim(t),
@@ -237,7 +227,37 @@ fn check(t: &Trace) -> Vec<Claim> {
         items_scavenger_claim(t),
         proxy_claim(t),
         starve_claim(t),
-    ]
+    ];
+    for claim in &mut claims {
+        let observed = match claim.id {
+            "K0" | "I5" => t.deaths.iter().any(|d| d.suicide == 0),
+            "K1" => t
+                .ticks
+                .iter()
+                .any(|r| r.client_id == 0 && r.lifecycle.as_deref() == Some("Dead")),
+            "K2" | "K4" | "K6" => t
+                .feel
+                .iter()
+                .any(|r| r.lifecycle.as_deref() == Some("Dead")),
+            "K3" => t.feel.iter().any(|r| {
+                r.lifecycle.as_deref() == Some("Alive")
+                    && r.authority_origin_x.is_some()
+                    && r.adopted_origin_x.is_some()
+            }),
+            "L1" => t
+                .remotes
+                .iter()
+                .any(|r| r.pose_e_type == Some(1) && r.client.is_some_and(|c| c != 0)),
+            "C1" | "C2" => t.corpses.iter().any(|r| r.occupied == Some(1)),
+            "I2" | "I3" => t.items.iter().any(|r| r.e_type == Some(3)),
+            _ => true,
+        };
+        claim.require(
+            observed,
+            "required scenario entity or lifecycle was not observed",
+        );
+    }
+    claims
 }
 
 fn pose_claim(t: &Trace) -> Claim {
@@ -345,8 +365,23 @@ fn rpg_claim(t: &Trace) -> Claim {
 
 fn truck_claim(t: &Trace) -> Claim {
     let mut claim = Claim::new("T6", "a boneyard vehicle left state 0 / full health");
-    let max_state = t.trucks.iter().filter_map(|r| r.state).max();
-    let min_health = t.trucks.iter().filter_map(|r| r.health).min();
+    let targets: Vec<&TruckRow> = t
+        .trucks
+        .iter()
+        .filter(|row| {
+            row.script_model_id
+                .is_some_and(|id| TRUCK_IDS.contains(&id))
+                && row.state.is_some()
+        })
+        .collect();
+    if !claim.require(
+        !targets.is_empty(),
+        "no authoritative target vehicle rows were observed",
+    ) {
+        return claim;
+    }
+    let max_state = targets.iter().filter_map(|r| r.state).max();
+    let min_health = targets.iter().filter_map(|r| r.health).min();
     let damaged = max_state.unwrap_or(0) > 0 || min_health.is_some_and(|h| h < 300);
     claim.check(
         damaged,
@@ -360,21 +395,32 @@ fn truck_death_clip_claim(t: &Trace) -> Claim {
         "T7",
         "truck 234/179/163 published death_clip and Present posed it (machine B, not player DEATH)",
     );
-    let named = t
+    if !claim.require(
+        t.trucks.iter().any(|r| {
+            r.script_model_id.is_some_and(|id| TRUCK_IDS.contains(&id))
+                && r.state.is_some_and(|s| s >= 5)
+        }),
+        "no destroyed vehicle state was observed",
+    ) {
+        return claim;
+    }
+    let destroyed: std::collections::BTreeSet<(i64, &str)> = t
         .trucks
         .iter()
         .filter(|r| {
-            r.script_model_id.is_some_and(|id| TRUCK_IDS.contains(&id))
-                && r.death_clip.is_some()
-                && r.state.unwrap_or(0) >= 5
+            r.script_model_id.is_some_and(|id| TRUCK_IDS.contains(&id)) && r.state.unwrap_or(0) >= 5
         })
-        .count();
+        .filter_map(|r| Some((r.script_model_id?, r.death_clip.as_deref()?)))
+        .collect();
+    let named = destroyed.len();
     let posed = t
         .trucks
         .iter()
         .filter(|r| {
-            r.script_model_id.is_some_and(|id| TRUCK_IDS.contains(&id))
-                && r.present_gap.as_deref() == Some("posed")
+            r.present_gap.as_deref() == Some("posed")
+                && r.script_model_id
+                    .zip(r.death_clip.as_deref())
+                    .is_some_and(|pair| destroyed.contains(&pair))
         })
         .count();
     claim.check(
@@ -383,7 +429,7 @@ fn truck_death_clip_claim(t: &Trace) -> Claim {
     );
     claim.check(
         posed > 0,
-        format!("rows with present_gap=posed = {posed} (authority names are not posed)"),
+        format!("posed rows matching a destroyed vehicle's published animation = {posed}"),
     );
     claim
 }
@@ -545,10 +591,7 @@ fn suicide_wait_claim(t: &Trace) -> Claim {
         .map(|d| d.victim)
         .collect();
     if victims.is_empty() {
-        claim.check(
-            true,
-            "no suicide victims — skipped (K0 still requires a combat local death)",
-        );
+        claim.require(false, "no suicide/world death was exercised");
         return claim;
     }
     for victim in victims {
@@ -740,18 +783,37 @@ fn items_dead_pickup_claim(t: &Trace) -> Claim {
         "I4",
         "Dead walkers do not consume ET_ITEM (health/pm_type gate)",
     );
-    if t.pickups.is_empty() {
-        claim.check(true, "no pickup events — skipped (no grab this run)");
+    if t.pickups
+        .iter()
+        .any(|p| p.event.is_none() || p.picker_pm_type.is_none())
+    {
+        claim.harness_error("pickup events are missing event kind or picker movement type");
+        return claim;
+    }
+    let rejected = t
+        .pickups
+        .iter()
+        .filter(|p| {
+            p.event.as_deref() == Some("pickup_rejected")
+                && p.picker_pm_type.is_some_and(|pm| pm >= 8)
+        })
+        .count();
+    if !claim.require(
+        rejected > 0,
+        "no dead player overlapped a dropped item to exercise rejection",
+    ) {
         return claim;
     }
     let dead = t
         .pickups
         .iter()
-        .filter(|p| p.picker_pm_type.unwrap_or(0) >= 8)
+        .filter(|p| {
+            p.event.as_deref() == Some("pickup") && p.picker_pm_type.is_some_and(|pm| pm >= 8)
+        })
         .count();
     claim.check(
         dead == 0,
-        format!("Dead pickups={dead} (chaos local on the bed must not eat the AK)"),
+        format!("Dead pickup grants={dead}; rejected dead-player overlaps={rejected}"),
     );
     claim
 }
@@ -779,17 +841,21 @@ fn proxy_claim(t: &Trace) -> Claim {
     let remotes: Vec<&RemoteRow> = t
         .remotes
         .iter()
-        .filter(|r| {
-            r.pose_e_type == Some(1)
-                && r.client.is_some_and(|c| c != 0)
-                && r.snap_origin_x.is_some()
-        })
+        .filter(|r| r.pose_e_type == Some(1) && r.client.is_some_and(|c| c != 0))
         .collect();
-    if remotes.is_empty() {
-        claim.check(
-            false,
-            "no remote ET_PLAYER rows with applied-snapshot origin",
-        );
+    if !claim.require(
+        !remotes.is_empty(),
+        "no remote ET_PLAYER rows were observed",
+    ) {
+        return claim;
+    }
+    if remotes.iter().any(|r| {
+        r.origin_x.is_none()
+            || r.origin_y.is_none()
+            || r.snap_origin_x.is_none()
+            || r.snap_origin_y.is_none()
+    }) {
+        claim.harness_error("remote pose or applied snapshot XY coordinates are missing");
         return claim;
     }
     let n = remotes.len() as i64;
@@ -818,6 +884,22 @@ fn starve_claim(t: &Trace) -> Claim {
         .iter()
         .filter(|r| r.pose_e_type == Some(1) && r.client.is_some_and(|c| c != 0))
         .collect();
+    if !claim.require(
+        !remotes.is_empty(),
+        "no remote ET_PLAYER rows were observed",
+    ) {
+        return claim;
+    }
+    if remotes.iter().any(|r| {
+        r.time_ms.is_none()
+            || !matches!(
+                r.proxy_outcome.as_deref(),
+                Some("starved" | "exact" | "interpolated")
+            )
+    }) {
+        claim.harness_error("remote sample time or proxy outcome is missing or invalid");
+        return claim;
+    }
     let starved = remotes
         .iter()
         .filter(|r| r.proxy_outcome.as_deref() == Some("starved"))
@@ -827,6 +909,12 @@ fn starve_claim(t: &Trace) -> Claim {
         .filter(|r| r.proxy_outcome.as_deref() != Some("starved"))
         .filter_map(|r| r.time_ms)
         .min();
+    if !claim.require(
+        first_ok.is_some(),
+        "no usable remote proxy sample was observed",
+    ) {
+        return claim;
+    }
     let later = remotes
         .iter()
         .filter(|r| {
@@ -1004,6 +1092,7 @@ fn parse_pickups(table: &Table) -> Vec<PickupRow> {
         .rows
         .iter()
         .map(|cells| PickupRow {
+            event: cell(&table.headers, cells, "event").map(str::to_owned),
             picker_pm_type: cell_i64(&table.headers, cells, "picker_pm_type"),
         })
         .collect()

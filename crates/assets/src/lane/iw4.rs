@@ -68,10 +68,7 @@ impl ZoneLane for Iw4Lane {
         progress: &LoadProgress,
         shared_surfaces: asset_model::SharedXModelSurfaces,
         material_seed: asset_material::MaterialCatalog,
-        common_film_visions: &mut std::collections::BTreeMap<
-            String,
-            Result<asset_world::FilmVision, asset_world::FilmVisionParseError>,
-        >,
+        common_film_visions: &super::FilmVisionCatalog,
     ) -> LoadedWorld {
         let mut report = Vec::new();
         let stage = progress.begin_scoped(StageId::MapAssets, "header", None);
@@ -173,18 +170,11 @@ impl ZoneLane for Iw4Lane {
             .map(|stem| format!("vision/{}.vision", stem.to_ascii_lowercase()));
         let mut film_visions = common_film_visions.clone();
         film_visions.extend(sink.film_visions.clone());
-        let film_result = match vision_name.as_ref() {
-            Some(name) => match sink.film_visions.remove(name) {
-                Some(Ok(vision)) => Ok(Some((vision, "fastfile"))),
-                Some(Err(error)) => Err(format!("fastfile parse error {error:?}")),
-                None => match common_film_visions.remove(name) {
-                    Some(Ok(vision)) => Ok(Some((vision, "common_mp"))),
-                    Some(Err(error)) => Err(format!("common_mp parse error {error:?}")),
-                    None => Ok(None),
-                },
-            },
-            None => Err("map path has no UTF-8 stem".into()),
-        };
+        let film_result = select_film_vision(
+            vision_name.as_deref(),
+            &sink.film_visions,
+            common_film_visions,
+        );
         let film_vision = match film_result {
             Ok(Some((vision, source))) => {
                 report.push(format!(
@@ -431,7 +421,7 @@ impl ZoneLane for Iw4Lane {
                     film_visions,
                     createart_name,
                     policy: WorldDrawPolicy::iw4(),
-                    ..Default::default()
+                    ..PreparedWorld::empty(WorldDrawPolicy::iw4())
                 },
                 collision: clip,
                 spawns: dm_spawns,
@@ -646,6 +636,7 @@ impl ZoneLane for Iw4Lane {
                     sound: map_sound,
                     materials: map_materials,
                     world: PreparedWorld {
+                        source_namespace: Some(asset_core::AssetNamespace::Iw4),
                         draw: Some(draw),
                         dynamic_light: None,
                         static_model_meshes,
@@ -665,6 +656,7 @@ impl ZoneLane for Iw4Lane {
                         reflection_probe_images,
                         intermission_view,
                         exp_fog,
+                        t6_film_grade: None,
                         film_vision,
                         film_visions,
                         createart_name,
@@ -713,7 +705,7 @@ impl ZoneLane for Iw4Lane {
                         film_visions,
                         createart_name,
                         policy: WorldDrawPolicy::iw4(),
-                        ..Default::default()
+                        ..PreparedWorld::empty(WorldDrawPolicy::iw4())
                     },
                     collision: clip,
                     spawns: dm_spawns,
@@ -853,6 +845,10 @@ impl ZoneLane for Iw4Lane {
         weapons.resolve_fpv_mesh_edges(&sink.fpv_meshes);
         weapons.resolve_world_model_edges(&sink.world_weapons);
         let gun_named = weapons.gun_xmodel_count();
+        let (camo_weapons, camo_view, camo_world) = weapons.camo_census();
+        report.push(format!(
+            "common_mp camouflage: {camo_weapons} weapons; {camo_view} view and {camo_world} world models bound"
+        ));
         report.push(format!(
         "common_mp weapons: {captured} captures → {} unique catalog ids (sorted); {gun_named} with gunXModel[0]; {} with szXAnims[IDLE]; {} with any szXAnims slot",
         weapons.len(),
@@ -1001,7 +997,7 @@ impl ZoneLane for Iw4Lane {
                 inline.missing,
                 inline.unsupported
             ));
-            let tracer_inline = asset_material::material_images::plan_color_or_2d_for_keys(
+            let tracer_inline = asset_material::material_images::plan_images_for_keys(
                 &mut plan,
                 &mut material_population,
                 sink.tracers.material_keys(),
@@ -1009,9 +1005,9 @@ impl ZoneLane for Iw4Lane {
                 crate::session_load::load_pool(),
             );
             report.push(format!(
-                "common_mp tracer beam images: {tracer_inline} in-zone TS_COLOR_MAP/TS_2D decoded, rest claimed"
+                "common_mp tracer beam images: {tracer_inline} in-zone images decoded, rest claimed"
             ));
-            let fx_inline = asset_material::material_images::plan_color_or_2d_for_keys(
+            let fx_inline = asset_material::material_images::plan_images_for_keys(
                 &mut plan,
                 &mut material_population,
                 sink.fx.unique_material_keys(),
@@ -1019,7 +1015,7 @@ impl ZoneLane for Iw4Lane {
                 crate::session_load::load_pool(),
             );
             report.push(format!(
-                "common_mp fx elem 2d images: {fx_inline} in-zone TS_COLOR_MAP/TS_2D decoded, rest claimed"
+                "common_mp fx elem 2d images: {fx_inline} in-zone images decoded, rest claimed"
             ));
             // The planning phase is over and it succeeded: what is left of the
             // plan is decoded later, under its own stage. Dropping the handle
@@ -1106,6 +1102,7 @@ impl ZoneLane for Iw4Lane {
                 teamsets: std::collections::HashMap::new(),
                 scripts: sink.scripts,
                 film_visions: sink.film_visions,
+                preparation: None,
             }
         } else {
             let memory = sink.materials.image_memory();
@@ -1142,6 +1139,7 @@ impl ZoneLane for Iw4Lane {
                 teamsets: std::collections::HashMap::new(),
                 scripts: sink.scripts,
                 film_visions: sink.film_visions,
+                preparation: None,
             }
         }
     }
@@ -1259,7 +1257,7 @@ fn decode_map_material_images(
         namespace: asset_core::AssetNamespace::Iw4,
         name: name.clone(),
     }));
-    match asset_material::material_images::decode_color_or_2d_for_keys(
+    match asset_material::material_images::decode_images_for_keys(
         path,
         catalog,
         keys,
@@ -1267,7 +1265,7 @@ fn decode_map_material_images(
         crate::session_load::load_pool(),
     ) {
         Ok(n) => report.push(format!(
-            "fx elem 2d images: {n} TS_COLOR_MAP/TS_2D decoded (unique Bound names)"
+            "fx elem 2d images: {n} decoded (unique Bound names)"
         )),
         Err(error) => report.push(format!("fx elem 2d image gap: {error}")),
     }
@@ -1283,4 +1281,21 @@ fn decode_map_material_images(
     );
     stage.done();
     report
+}
+
+fn select_film_vision(
+    name: Option<&str>,
+    map: &super::FilmVisionCatalog,
+    common: &super::FilmVisionCatalog,
+) -> Result<Option<(asset_world::FilmVision, &'static str)>, String> {
+    let name = name.ok_or_else(|| "map path has no UTF-8 stem".to_owned())?;
+    let candidate = map
+        .get(name)
+        .map(|vision| (vision, "fastfile"))
+        .or_else(|| common.get(name).map(|vision| (vision, "common_mp")));
+    match candidate {
+        Some((Ok(vision), source)) => Ok(Some((*vision, source))),
+        Some((Err(error), source)) => Err(format!("{source} parse error {error:?}")),
+        None => Ok(None),
+    }
 }

@@ -14,6 +14,7 @@ pub mod world_draw;
 pub mod world_iw5;
 pub mod world_mesh;
 pub mod world_t5;
+pub mod world_t6;
 
 pub use asset_core::*;
 pub use asset_transport::{Iw5ZoneMemory, T5ZoneMemory, ZoneMemory};

@@ -304,6 +304,8 @@ ps_netfields! {
     cursor_hint: i32 = Replication::Replicated, Validation::AdoptOnly("authority-selected interaction target");
     cursor_hint_string: i32 = Replication::Replicated, Validation::AdoptOnly("authority-selected interaction target");
     cursor_hint_ent_index: i32 = Replication::Replicated, Validation::AdoptOnly("authority-selected interaction target");
+    viewlocked: i32 = Replication::Replicated, Validation::AdoptOnly("authority-selected view lock");
+    viewlocked_ent_num: i32 = Replication::Replicated, Validation::AdoptOnly("authority-selected view lock target");
     cursor_hint_dual_wield: i32 = Replication::Replicated, Validation::AdoptOnly("authority-selected interaction target");
     sprint_button_up_required: i32 = Replication::Replicated, Validation::Exact;
     sprint_delay: i32 = Replication::Replicated, Validation::Exact;

@@ -132,8 +132,6 @@ pub const SUN_SHADOW_NEG_QUARTER: f32 = -0.25;
 
 pub const SUN_SHADOW_SAMPLE_EXTENT_PIXELS: f32 = 1024.0;
 
-pub const SM_SUN_SAMPLE_SIZE_NEAR_DEFAULT: f32 = 0.25;
-
 pub const SM_SUN_PARTITION_RATIO: f32 = 4.0;
 
 pub const SUN_SHADOW_CASTER_TECH: u8 = 3;
@@ -437,6 +435,8 @@ pub fn forced_fallback_frame(
     world_mid: [f32; 3],
 
     world_half: [f32; 3],
+
+    sample_near: f32,
 ) -> SunShadowForcedFrame {
     let profile = SUN_SHADOW_FORCED_PROFILE;
     let axes = sun_axes_from_dir(sun_direction);
@@ -447,7 +447,6 @@ pub fn forced_fallback_frame(
     ]);
     let view_origin = camera.origin;
     let org = view_org_in_sun_proj(view_origin, axes);
-    let sample_near = SM_SUN_SAMPLE_SIZE_NEAR_DEFAULT;
     let sample_far = sample_near * SM_SUN_PARTITION_RATIO;
     let sample_size = [sample_near, sample_far];
     let corner_rays = sun_shadow_corner_rays(camera);

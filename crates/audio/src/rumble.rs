@@ -23,8 +23,7 @@ impl Rumble {
         let text = |name: &str| -> Result<&str, String> {
             let key = format!("rumble/{name}");
             let bytes = bank
-                .rawfiles
-                .get(&(namespace, key.clone()))
+                .rawfile_bytes_in(namespace, &key)
                 .ok_or_else(|| format!("missing {key}"))?;
             std::str::from_utf8(bytes).map_err(|_| format!("invalid text in {key}"))
         };

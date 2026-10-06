@@ -1,7 +1,7 @@
 use crate::ScriptModelId;
 use crate::frame::FrameWorld;
 use crate::script::runtime::raise;
-use crate::script::{Arc, Runtime, Value};
+use crate::script::{Runtime, Value};
 use crate::world::ClientId;
 use bevy_ecs::prelude::World;
 
@@ -250,7 +250,7 @@ pub(crate) fn damage_entity(world: &mut World, hit: &EntityHit) -> bool {
     let mut runtime = world.resource_mut::<Runtime>();
     let model = match runtime.object_field(object, "model") {
         Value::String(model) => model,
-        _ => Arc::from(""),
+        _ => "".into(),
     };
     let before = match runtime.object_field(object, "health") {
         Value::Int(health) => health,
@@ -356,7 +356,7 @@ pub(crate) fn set_destructible_model(
     if let Some(model) = model {
         runtime.set_object_field(object, "model", Value::string(model));
     }
-    runtime.entities.get_mut(&object).unwrap().loop_sound = sound.map(Arc::from);
+    runtime.entities.get_mut(&object).unwrap().loop_sound = sound.map(std::sync::Arc::from);
 }
 
 pub(crate) fn destructible_debris(

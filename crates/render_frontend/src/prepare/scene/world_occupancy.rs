@@ -183,9 +183,13 @@ pub fn place(
     for instance in script_model_instances {
         match map_xmodel_scene_assets.get(&instance.current_model) {
             Some(asset_world::MapXModelSceneAsset::Iw4(_))
-            | Some(asset_world::MapXModelSceneAsset::Iw5(_))
+            | Some(
+                asset_world::MapXModelSceneAsset::Iw5(_) | asset_world::MapXModelSceneAsset::T6(_),
+            )
             | Some(asset_world::MapXModelSceneAsset::T5(_)) => script_ready += 1,
-            Some(asset_world::MapXModelSceneAsset::Unavailable { .. }) | None => script_unavailable += 1,
+            Some(asset_world::MapXModelSceneAsset::Unavailable { .. }) | None => {
+                script_unavailable += 1
+            }
         }
 
         if !instance.metadata.gameobject.is_empty() {
@@ -219,9 +223,13 @@ pub fn place(
     for instance in dyn_ent_instances {
         match map_xmodel_scene_assets.get(&instance.current_model) {
             Some(asset_world::MapXModelSceneAsset::Iw4(_))
-            | Some(asset_world::MapXModelSceneAsset::Iw5(_))
+            | Some(
+                asset_world::MapXModelSceneAsset::Iw5(_) | asset_world::MapXModelSceneAsset::T6(_),
+            )
             | Some(asset_world::MapXModelSceneAsset::T5(_)) => dyn_ready += 1,
-            Some(asset_world::MapXModelSceneAsset::Unavailable { .. }) | None => dyn_unavailable += 1,
+            Some(asset_world::MapXModelSceneAsset::Unavailable { .. }) | None => {
+                dyn_unavailable += 1
+            }
         }
         let transform = instance.transform;
         commands.spawn((
@@ -247,7 +255,7 @@ pub fn place(
         scene.model_lighting_image = Some(atlas.image.clone());
         scene.model_lighting_dims = Some(atlas.dims);
         commands.insert_resource(crate::assemble::drawsurf::RuntimeImageHandles::from_pools(
-            scene.runtime_material_catalog.generation_id,
+            scene.runtime_material_catalog.generation_id(),
             exact_material_handles,
             scene.exact_material_names.clone(),
             reflection_probe_handles,

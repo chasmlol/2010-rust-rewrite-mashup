@@ -1,6 +1,3 @@
-//! The Windows cross build: `cargo xwin` for `launcher` + `updater`, and the
-//! one fact about the result worth asserting before it is packaged.
-
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -10,17 +7,12 @@ use crate::shell::{Res, Step, capture, require_tools, run};
 pub const TARGET: &str = "x86_64-pc-windows-msvc";
 pub const LINUX_TARGET: &str = "x86_64-unknown-linux-gnu";
 
-/// `crates/launcher/build.rs` passes `/STACK`. A recursive zone walk overflows
-/// the 1 MiB default, and the link arg is the sort of thing that disappears in
-/// a refactor without a single test noticing.
 const WANT_STACK_RESERVE: u64 = 8 * 1024 * 1024;
 
 pub struct WindowsBins {
     pub game: PathBuf,
-    pub launcher: PathBuf,
 }
 
-/// The three profiles in `Cargo.toml` a shippable binary may come from.
 pub fn require_profile(profile: &str) -> Res<()> {
     match profile {
         "play" | "release" | "perf" => Ok(()),
@@ -36,9 +28,6 @@ pub fn profile(env: &Env) -> Res<String> {
     Ok(profile)
 }
 
-/// The public trust anchor baked into `updater` and shipped to players. It is
-/// never minted here: a release signed by a CA nobody has pinned is worse than
-/// a failed build.
 pub fn public_ca(env: &Env) -> Res<PathBuf> {
     let ca = env
         .get("IW4L_UPDATER_CA_CERT")
@@ -108,31 +97,17 @@ pub fn build(profile: &str, ca_cert: &Path) -> Res<WindowsBins> {
                 "--target",
             ])
             .arg(TARGET)
-            .args([
-                "-p",
-                "launcher",
-                "-p",
-                "updater",
-                "--message-format=json-render-diagnostics",
-            ])
-            .env("XWIN_CACHE_DIR", &cache)
-            .env("IW4L_UPDATER_CA_CERT", ca_cert),
+            .args(["-p", "launcher", "--message-format=json-render-diagnostics"])
+            .env("XWIN_CACHE_DIR", &cache),
     )?;
     let bins = WindowsBins {
         game: cargo_json_bin(&messages, "iw4l")?,
-        launcher: cargo_json_bin(&messages, "iw4launcher")?,
     };
     assert_stack_reserve(&bins.game)?;
-    step.done(&format!(
-        "game={} launcher={}",
-        bins.game.display(),
-        bins.launcher.display()
-    ));
+    step.done(&format!("game={}", bins.game.display()));
     Ok(bins)
 }
 
-/// The last `compiler-artifact` message naming `bin_name` wins, as in the
-/// script: a rebuild of the same target emits the fresh path last.
 pub fn cargo_json_bin(messages: &str, bin_name: &str) -> Res<PathBuf> {
     let mut found = None;
     for line in messages.lines() {
@@ -176,8 +151,6 @@ fn assert_stack_reserve(exe: &Path) -> Res<()> {
     if data.get(pe..pe + 4) != Some(b"PE\0\0") {
         return Err(format!("{}: not a PE image", exe.display()));
     }
-    // Optional header: magic at +24, SizeOfStackReserve 72 bytes into it,
-    // widened to 8 bytes for PE32+ (0x20b).
     let magic = read_u16(&data, pe + 24)?;
     let at = pe + 24 + 72;
     let reserve = if magic == 0x20b {
@@ -217,7 +190,6 @@ fn read_u64(data: &[u8], at: usize) -> Res<u64> {
     Ok(u64::from_le_bytes(slice::<8>(data, at)?))
 }
 
-/// `cargo xtask windows [build|setup]`.
 pub fn run_cli(env: &Env, args: &[String]) -> Res<()> {
     match args.first().map(String::as_str).unwrap_or("build") {
         "setup" => setup(),
@@ -226,7 +198,6 @@ pub fn run_cli(env: &Env, args: &[String]) -> Res<()> {
             let ca = public_ca(env)?;
             let bins = build(&profile, &ca)?;
             println!("iw4l.exe={}", bins.game.display());
-            println!("iw4launcher.exe={}", bins.launcher.display());
             Ok(())
         }
         other => Err(format!(

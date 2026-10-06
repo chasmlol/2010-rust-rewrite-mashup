@@ -461,7 +461,7 @@ pub(super) fn hold_image_plan(
 
 impl HeldImagePlan {
     /// Put the plan on the load pool now, with every claim it made.
-    fn enqueue(self, progress: &LoadProgress) -> PendingImages {
+    pub(super) fn enqueue(self, progress: &LoadProgress) -> PendingImages {
         let Self { label, plan, job } = self;
         let job = job.enqueued();
         let progress = progress.clone();
@@ -842,6 +842,103 @@ pub(super) fn walk_t5_weapon_common(
     }
 }
 
+fn t6_class_tables(
+    root: &asset_transport::GamesRoot,
+    report: &mut Vec<String>,
+) -> Vec<asset_game::CapturedStringTable> {
+    let zone = match find_zone_file_version(root, "patch_mp", fastfile_t6::ZONE_VERSION_PC) {
+        Ok(zone) => zone,
+        Err(error) => {
+            report.push(format!("t6 class tables: {error}"));
+            return Vec::new();
+        }
+    };
+    let image = match asset_transport::open_t6_zone(&zone.path) {
+        Ok(image) => image,
+        Err(error) => {
+            report.push(format!("t6 class tables: {error}"));
+            return Vec::new();
+        }
+    };
+    let schema = match fastfile_t6::schema::parse() {
+        Ok(schema) => schema,
+        Err(error) => {
+            report.push(format!("t6 class tables: load plan {error:?}"));
+            return Vec::new();
+        }
+    };
+    let (load, walked) = fastfile_t6::load_zone(&schema, &image.bytes, |_, _| true);
+    if let Err(error) = walked {
+        report.push(format!("t6 class tables: patch_mp walk stopped: {error:?}"));
+    }
+    let tables: Vec<_> = load
+        .assets
+        .iter()
+        .filter_map(|asset| asset_game::capture_t6_string_table(&load, asset))
+        .filter(|table| {
+            asset_game::is_stats_table_name(&table.name)
+                || table.name.eq_ignore_ascii_case("mp/attachmentTable.csv")
+                || table.name.eq_ignore_ascii_case("mp/mapstable.csv")
+        })
+        .collect();
+    report.push(format!(
+        "t6 class tables: {} from {}",
+        tables.len(),
+        zone.path.display()
+    ));
+    tables
+}
+
+pub(super) fn walk_t6_weapon_bundle(
+    progress: &LoadProgress,
+) -> (
+    WeaponBuild,
+    Option<Box<dyn crate::lane::CommonFamilyCompiler>>,
+    Vec<asset_game::CapturedStringTable>,
+    Vec<String>,
+) {
+    let mut report = Vec::new();
+    let root = match games_root_from_env() {
+        Ok(root) => root,
+        Err(error) => {
+            report.push(format!("t6 weapons: {error}"));
+            return (WeaponBuild::default(), None, Vec::new(), report);
+        }
+    };
+    let donor = match find_common_mp_for_envelope(&root, fastfile_t6::ZONE_VERSION_PC) {
+        Ok(donor) => donor,
+        Err(error) => {
+            report.push(format!("t6 weapons: {error}"));
+            return (WeaponBuild::default(), None, Vec::new(), report);
+        }
+    };
+    let stage = progress.begin_scoped(StageId::CommonAssets, "t6_weapons", None);
+    let opened = open_zone_shared(&donor.path).map_err(|error| error.to_string());
+    stage.finish_from(&opened);
+    let image = match opened {
+        Ok(image) => image,
+        Err(error) => {
+            report.push(format!(
+                "t6 weapons: open {}: {error}",
+                donor.path.display()
+            ));
+            return (WeaponBuild::default(), None, Vec::new(), report);
+        }
+    };
+    let tables = t6_class_tables(&root, &mut report);
+    let census = lane(image.game).load_common_mp(
+        &donor.path,
+        &image,
+        progress,
+        false,
+        MaterialCatalog::default(),
+    );
+    report.extend(census.report);
+    let mut weapons = census.weapons;
+    weapons.apply_stats_tables(&tables);
+    (weapons, census.preparation, tables, report)
+}
+
 pub(super) async fn walk_startup_material_zones(
     map_path: Option<&PathBuf>,
     progress: &LoadProgress,
@@ -952,7 +1049,7 @@ pub(super) fn load_localized_strings_beside(
             return catalog;
         }
     };
-    let lanes: [(asset_core::AssetNamespace, u32, &[&str]); 3] = [
+    let lanes: [(asset_core::AssetNamespace, u32, &[&str]); 4] = [
         (
             asset_core::AssetNamespace::Iw4,
             fastfile_iw4::ZONE_VERSION_PC,
@@ -968,18 +1065,28 @@ pub(super) fn load_localized_strings_beside(
             fastfile_iw5::ZONE_VERSION_PC,
             MP_LOCALIZED_ZONES,
         ),
+        (
+            asset_core::AssetNamespace::T6,
+            fastfile_t6::ZONE_VERSION_PC,
+            &[],
+        ),
     ];
     let runtime_language = find_runtime_common_mp(&root, zone_ff)
         .ok()
         .and_then(|zone| zone.path.parent()?.file_name()?.to_str().map(str::to_owned));
     let mut plan = Vec::new();
     for (namespace, version, names) in lanes {
-        let found: Vec<_> = if namespace == asset_core::AssetNamespace::T5 {
+        let found: Vec<_> = if matches!(
+            namespace,
+            asset_core::AssetNamespace::T5 | asset_core::AssetNamespace::T6
+        ) {
             match find_zone_file_version(&root, "common_mp", version).and_then(|zone| {
-                asset_transport::discover::find_t5_localized_zones(
-                    &zone.path,
-                    runtime_language.as_deref(),
-                )
+                let language = runtime_language.as_deref();
+                if namespace == asset_core::AssetNamespace::T6 {
+                    asset_transport::discover::find_t6_localized_zones(&zone.path, language)
+                } else {
+                    asset_transport::discover::find_t5_localized_zones(&zone.path, language)
+                }
             }) {
                 Ok(zones) => zones,
                 Err(error) => {

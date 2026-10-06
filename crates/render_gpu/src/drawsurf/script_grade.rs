@@ -70,7 +70,7 @@ impl GradeGpu {
             layout,
             uniform: device.create_buffer(&BufferDescriptor {
                 label: Some("gsc_grade"),
-                size: 16,
+                size: 256,
                 usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             }),
@@ -92,8 +92,15 @@ impl GradeGpu {
         source: &TextureView,
         target: &TextureView,
         grading: [f32; 4],
+        t6_film: Option<asset_world::T6FilmGrade>,
     ) {
-        queue.write_buffer(&self.uniform, 0, bytemuck::cast_slice(&grading));
+        let mut rows = [[0.0f32; 4]; 16];
+        rows[0] = grading;
+        if let Some(film) = t6_film {
+            rows[1][0] = 1.0;
+            rows[2..].copy_from_slice(&film.controls);
+        }
+        queue.write_buffer(&self.uniform, 0, bytemuck::cast_slice(&rows));
         let group = device.create_bind_group(
             "gsc_grade",
             &cache.get_bind_group_layout(&self.layout),

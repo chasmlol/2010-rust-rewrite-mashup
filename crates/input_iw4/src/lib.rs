@@ -257,6 +257,7 @@ pub struct ClientInput {
 
     pub stance_held: Option<(i32, i32)>,
     pub center_view: bool,
+    pub airborne: bool,
 }
 
 impl Default for ClientInput {
@@ -271,6 +272,7 @@ impl Default for ClientInput {
             offhand_hold_cancel: false,
             stance_held: None,
             center_view: false,
+            airborne: false,
         }
     }
 }
@@ -392,6 +394,10 @@ fn stance_hold(client: &mut ClientInput, now_msec: i32) {
     let Some((from, since)) = client.stance_held else {
         return;
     };
+    if client.airborne {
+        client.stance_held = Some((from, now_msec));
+        return;
+    }
     if now_msec.wrapping_sub(since) >= STANCE_HOLD_MS {
         let prone = buttons::PRONE as i32;
         client.stance_latch = if from == prone { 0 } else { prone };
@@ -581,8 +587,9 @@ pub fn create_cmd(input: &CreateCmdInput) -> UserCmd {
 pub fn sample_move(client: &mut ClientInput, now_msec: i32, frame_msec: u32) -> (u32, MoveAxes) {
     stance_hold(client, now_msec);
     let mut bits = key_move_bits(&client.kb, client.using_ads, cmd_buttons(&client.kb));
-    if client.kb.gostand.active || client.kb.gostand.was_pressed {
+    if client.kb.gostand.was_pressed {
         client.stance_latch = 0;
+        client.stance_held = None;
     }
     if bits & buttons::STANCE_HELD == 0 {
         bits |= client.stance_latch as u32;

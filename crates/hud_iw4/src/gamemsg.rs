@@ -9,6 +9,9 @@ pub const GAME_MSG_WINDOW_COUNT: usize = 4;
 pub const GAME_MSG_WIN0_LINE_COUNT: usize = 4;
 
 pub const GAME_MSG_WIN0_MSG_TIME_MS: i32 = 5000;
+pub const GAME_MSG_WIN0_SCROLL_TIME_MS: i32 = 250;
+pub const GAME_MSG_WIN0_FADE_IN_TIME_MS: i32 = 250;
+pub const GAME_MSG_WIN0_FADE_OUT_TIME_MS: i32 = 500;
 
 pub const GAME_MSG_WIN0_X: f32 = 6.0;
 

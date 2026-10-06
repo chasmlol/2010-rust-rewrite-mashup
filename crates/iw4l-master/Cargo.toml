@@ -6,6 +6,10 @@ license.workspace = true
 description = "Standalone relay-only IW4L master, browser and opaque packet service."
 
 [dependencies]
+axum = { version = "0.8", default-features = false, features = ["http1", "tokio"] }
+axum-server = { version = "0.7", default-features = false, features = ["tls-rustls-no-provider"] }
+tower = { version = "0.5", features = ["util"] }
+tower-http = { version = "0.6", features = ["fs"] }
 getrandom = "0.3"
 ring = "0.17"
 master_protocol.workspace = true

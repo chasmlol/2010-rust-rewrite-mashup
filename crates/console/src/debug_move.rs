@@ -61,6 +61,11 @@ pub(crate) fn register_debug_move_commands(registry: &mut ConsoleRegistry) {
                 .usage("move <x> <y> <z> [yaw] [pitch] — write player origin (needs cheats)"),
         );
     }
+    if registry.resolve("god").is_none() {
+        registry.register(
+            crate::CommandSpec::new("god").usage("god — toggle invincibility (needs cheats)"),
+        );
+    }
     if registry.resolve("kill").is_none() {
         registry
             .register(crate::CommandSpec::new("kill").usage(
@@ -281,6 +286,38 @@ pub(crate) fn route_debug_move_commands(
                     );
                 }
             },
+            "god" => {
+                if !cmd.args.is_empty() {
+                    echo("usage: god".into(), &mut console, &mut line);
+                    continue;
+                }
+                if authority.as_ref().is_some_and(|a| !a.0.cheats_enabled()) {
+                    echo("god: cheats are off".into(), &mut console, &mut line);
+                    continue;
+                }
+                if !alive(&presented, local.0) {
+                    echo(
+                        "god: not Alive — spawn a class first".into(),
+                        &mut console,
+                        &mut line,
+                    );
+                    continue;
+                }
+                let Some(inbox) = inbox.as_deref_mut() else {
+                    echo("god: no action inbox".into(), &mut console, &mut line);
+                    continue;
+                };
+                let request_id = seq.allocate();
+                if let Err(error) = inbox.push(local.0, ClientAction::ToggleGod { request_id }) {
+                    echo(format!("god: {error}"), &mut console, &mut line);
+                    continue;
+                }
+                echo(
+                    format!("god: queued toggle request_id={request_id}"),
+                    &mut console,
+                    &mut line,
+                );
+            }
             "kill" => {
                 if !alive(&presented, local.0) {
                     echo(

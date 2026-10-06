@@ -5,6 +5,61 @@ use crate::controller::HostController;
 
 pub const MAX_HOST_BOTS: u32 = 20;
 
+const BOT_NAMES: [&str; 52] = [
+    "contextrot",
+    "t.me/contextrot",
+    "mossy.exe",
+    "xXAfterglowXx",
+    "dad_on_wifi",
+    "soupEnjoyer",
+    "k1netic",
+    "lastSlice",
+    "n0vaKid",
+    "grape_soda",
+    "sleepyJules",
+    "pixelPete",
+    "cereal4dinner",
+    "altTabAndy",
+    "bennyFPS",
+    "duckOnDeck",
+    "mango_juice",
+    "spareMouse",
+    "justMika",
+    "oatmilk97",
+    "t0ast",
+    "LowBattery",
+    "lilOrbit",
+    "raincheck_",
+    "ctrlZed",
+    "frostbyte88",
+    "[LAN]lukas",
+    "snackDealer",
+    "whiffWizard",
+    "bluejay_",
+    "NotNowNate",
+    "laggyLemon",
+    "heyitsEm",
+    "VelvetRush",
+    "c0ffeeBreak",
+    "tinyMonitor",
+    "zippy_42",
+    "oneMoreRound",
+    "roofcat",
+    "DizzyDylan",
+    "pocketLint",
+    "SundayCasual",
+    "Ranger",
+    "Crash",
+    "Visor",
+    "Ariel",
+    "Nova",
+    "Cipher",
+    "Phantom",
+    "Wyatt",
+    "Toby",
+    "Gryphon",
+];
+
 #[derive(Resource, Debug, Default)]
 pub struct BotAddQueue(pub Vec<BotAddRequest>);
 
@@ -91,6 +146,8 @@ impl BotFireQueue {
 #[derive(Debug)]
 pub struct BotSlot {
     pub id: ClientId,
+    pub name: &'static str,
+    pub account: sim::AccountId,
     pub brain: Option<HostController>,
     pub joined: bool,
     pub class_picked_in: Option<LifeSequence>,
@@ -133,10 +190,26 @@ impl BotRoster {
             let Some(id) = self.claim_id(taken) else {
                 break;
             };
+            let mut account = [0; 16];
+            while account == [0; 16] {
+                if let Err(error) = getrandom::fill(&mut account) {
+                    diag::warn!(Sim, "bots: account identity creation failed: {error}");
+                    return added;
+                }
+            }
             let brain = (!dummy)
                 .then(|| HostController::new(seed ^ (u64::from(id.0) << 32) ^ u64::from(i)));
+            let available: Vec<_> = BOT_NAMES
+                .iter()
+                .copied()
+                .filter(|name| !self.bots.iter().any(|bot| bot.name == *name))
+                .collect();
+            let random = u64::from_le_bytes(account[..8].try_into().unwrap());
+            let name = available[(random % available.len() as u64) as usize];
             self.bots.push(BotSlot {
                 id,
+                name,
+                account: sim::AccountId(account),
                 brain,
                 joined: false,
                 class_picked_in: None,

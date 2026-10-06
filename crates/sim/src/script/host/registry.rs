@@ -47,6 +47,8 @@ impl Default for NativeRegistry {
         natives::math::register(&mut registry);
         natives::engine::register(&mut registry);
         natives::player::register(&mut registry);
+        natives::skill::register(&mut registry);
+        natives::local_profile::register(&mut registry);
         super::objectives::register(&mut registry);
         super::weapons::register(&mut registry);
         super::vehicles::register(&mut registry);

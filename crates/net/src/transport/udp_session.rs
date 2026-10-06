@@ -1,37 +1,41 @@
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::io;
 use std::sync::{Arc, Mutex};
 
 use bevy::prelude::Resource;
 use master_protocol::MemberId;
 use playerstate_iw4::UserCmd;
-use sim::{ClientAction, ClientId, Snapshot, Tick, TickInput};
+use sim::{ClientAction, ClientId, Snapshot, Tick};
 
 use crate::authority::runtime::ClientShotSamples;
 use crate::client::predict::CmdSeq;
 use crate::transport::acked_baseline::AckedBaselineTable;
 use crate::transport::bootstrap::{
-    BootstrapAck, BootstrapLane, BootstrapMessage, BootstrapTransaction, decode_bootstrap,
-    encode_bootstrap, epoch_applies,
+    BootstrapAck, BootstrapLane, BootstrapMessage, BootstrapTransaction, QueuedBootstrap,
+    decode_bootstrap, encode_bootstrap, epoch_applies,
 };
 use crate::transport::delta::{SnapshotDecoder, SnapshotEncoder};
-use crate::transport::frame::{Frame, frame_from_acked_tick};
+use crate::transport::frame::{Frame, FrameParts, FrameSegments, FrameTail, WireMeta};
 use crate::transport::loopback_live::ReceivedTick;
 use crate::transport::meta_wire::WorldObjectSyncDecoder;
+use crate::transport::netfields::compute_state_hash;
 use crate::transport::protocol::{
     ClientPacket, ConnectionId, ConnectionTable, HandshakeHello, HandshakeReject, PacketHeader,
-    ProtocolLimits, ServerPacket, decode_client_packet, decode_server_packet,
+    ProtocolLimits, ServerPacket, SnapshotPayload, decode_client_packet, decode_server_packet,
 };
+use crate::transport::segment_delta::{self, MetaPatchCache};
 use crate::transport::udp_socket::UdpSendError;
 use crate::transport::wire::WireReader;
+
+use super::account_wire::{AccountMessage, profile_payload};
 
 const RELAY_MAIL_CAP: usize = 64;
 pub(crate) const CMDS_PER_PACKET: usize = 16;
 
 #[derive(Clone, Debug)]
 pub struct RelayMailbox {
-    inbound: Arc<Mutex<Vec<(MemberId, Vec<u8>)>>>,
-    outbound: Arc<Mutex<Vec<(MemberId, Vec<u8>)>>>,
+    inbound: Arc<Mutex<DataLanes>>,
+    outbound: Arc<Mutex<DataLanes>>,
     control_inbound: Arc<Mutex<Vec<(MemberId, Vec<u8>)>>>,
     control_inbound_drained: Arc<tokio::sync::Notify>,
     control_outbound: Arc<Mutex<Vec<(MemberId, Vec<u8>)>>>,
@@ -41,8 +45,8 @@ pub struct RelayMailbox {
 impl RelayMailbox {
     pub fn new(cap: usize) -> Self {
         Self {
-            inbound: Arc::new(Mutex::new(Vec::new())),
-            outbound: Arc::new(Mutex::new(Vec::new())),
+            inbound: Arc::new(Mutex::new(DataLanes::default())),
+            outbound: Arc::new(Mutex::new(DataLanes::default())),
             control_inbound: Arc::new(Mutex::new(Vec::new())),
             control_inbound_drained: Arc::new(tokio::sync::Notify::new()),
             control_outbound: Arc::new(Mutex::new(Vec::new())),
@@ -95,21 +99,50 @@ impl RelayMailbox {
         Self::new(RELAY_MAIL_CAP)
     }
 
-    pub fn push_inbound(&self, member: MemberId, bytes: Vec<u8>) -> Result<(), &'static str> {
-        push_mail(&self.inbound, self.cap, member, bytes)
+    pub fn push_inbound(&self, member: MemberId, bytes: Vec<u8>) -> bool {
+        lock_lanes(&self.inbound).push(self.cap, member, bytes)
     }
 
     pub fn take_inbound(&self) -> Vec<(MemberId, Vec<u8>)> {
-        take_mail(&self.inbound)
+        lock_lanes(&self.inbound).take()
     }
 
-    pub fn push_outbound(&self, member: MemberId, bytes: Vec<u8>) -> Result<(), &'static str> {
-        push_mail(&self.outbound, self.cap, member, bytes)
+    pub fn push_outbound(&self, member: MemberId, bytes: Vec<u8>) -> bool {
+        lock_lanes(&self.outbound).push(self.cap, member, bytes)
     }
 
     pub fn take_outbound(&self) -> Vec<(MemberId, Vec<u8>)> {
-        take_mail(&self.outbound)
+        lock_lanes(&self.outbound).take()
     }
+}
+
+#[derive(Debug, Default)]
+struct DataLanes {
+    lanes: BTreeMap<MemberId, VecDeque<Vec<u8>>>,
+}
+
+impl DataLanes {
+    fn push(&mut self, cap: usize, member: MemberId, bytes: Vec<u8>) -> bool {
+        let lane = self.lanes.entry(member).or_default();
+        let dropped = lane.len() >= cap;
+        if dropped {
+            lane.pop_front();
+        }
+        lane.push_back(bytes);
+        dropped
+    }
+
+    fn take(&mut self) -> Vec<(MemberId, Vec<u8>)> {
+        let mut out = Vec::new();
+        for (member, lane) in std::mem::take(&mut self.lanes) {
+            out.extend(lane.into_iter().map(|bytes| (member, bytes)));
+        }
+        out
+    }
+}
+
+fn lock_lanes(lanes: &Mutex<DataLanes>) -> std::sync::MutexGuard<'_, DataLanes> {
+    lanes.lock().expect("relay mailbox poisoned")
 }
 
 fn push_mail(
@@ -159,6 +192,7 @@ pub struct UdpAuthorityHub {
     committed_admissions: Vec<CommittedAdmission>,
 
     denied: HashSet<master_protocol::MemberId>,
+    accounts_required: bool,
 }
 
 #[derive(Debug)]
@@ -173,25 +207,23 @@ struct PeerReplicationState {
     admission: PeerAdmission,
     last_control_seq: Option<u16>,
     control_drops_sent: u32,
+    account: Option<PeerAccount>,
+}
+
+#[derive(Debug)]
+struct PeerAccount {
+    challenge: crate::AccountChallenge,
+    challenge_sent: bool,
+    refusal_pending: bool,
+    owner: Option<sim::AccountId>,
+    offered: Option<sim::AccountSnapshot>,
 }
 
 #[derive(Debug)]
 enum PeerAdmission {
     Uncommitted,
-    Pending {
-        bootstrap_id: u32,
-        snapshot_seq: u32,
-        epoch: u32,
-
-        #[allow(dead_code)]
-        tick_b: u32,
-
-        #[allow(dead_code)]
-        offer_bytes: Vec<u8>,
-    },
-    Committed {
-        bootstrap_id: u32,
-    },
+    Pending(QueuedBootstrap),
+    Committed { bootstrap_id: u32, epoch: u32 },
 }
 
 impl PeerReplicationState {
@@ -207,6 +239,7 @@ impl PeerReplicationState {
             admission: PeerAdmission::Uncommitted,
             last_control_seq: None,
             control_drops_sent: 0,
+            account: None,
         }
     }
 
@@ -300,6 +333,7 @@ impl UdpAuthorityHub {
             member_by_conn: HashMap::new(),
             committed_admissions: Vec::new(),
             denied: HashSet::new(),
+            accounts_required: false,
         }
     }
 
@@ -311,28 +345,55 @@ impl UdpAuthorityHub {
         self.bootstrap = Some(lane);
     }
 
-    fn enroll_relay_member(&mut self, member_id: MemberId) -> ConnectionId {
+    fn enroll_relay_member(&mut self, member_id: MemberId, occupied: &[u32]) -> ConnectionId {
         if let Some((conn, _)) = self.member_by_conn.iter().find(|(_, id)| **id == member_id) {
             return *conn;
         }
-        let (conn, _) = self.connections.accept_new();
+        let (conn, _) = self.connections.accept_new(occupied);
         self.peers.insert(conn, member_id);
         self.replication.insert(conn, PeerReplicationState::new());
         self.member_by_conn.insert(conn, member_id);
         conn
     }
 
-    pub fn reconcile_relay_membership(&mut self, members: &[MemberId], local: MemberId) {
+    pub fn reconcile_relay_membership(
+        &mut self,
+        members: &[MemberId],
+        local: MemberId,
+        occupied: &[u32],
+    ) {
         for member_id in members {
             if *member_id == local || self.denied.contains(member_id) {
                 continue;
             }
-            self.enroll_relay_member(*member_id);
+            self.enroll_relay_member(*member_id, occupied);
         }
     }
 
     pub fn take_committed_admissions(&mut self) -> Vec<CommittedAdmission> {
-        std::mem::take(&mut self.committed_admissions)
+        let mut ready = Vec::new();
+        let live = self.live_packet_epoch();
+        self.committed_admissions.retain(|admission| {
+            if admission.epoch != live
+                || !self
+                    .replication
+                    .contains_key(&ConnectionId(admission.connection_id))
+            {
+                return false;
+            }
+
+            let bound = !self.accounts_required
+                || self
+                    .replication
+                    .get(&ConnectionId(admission.connection_id))
+                    .and_then(|peer| peer.account.as_ref())
+                    .is_some_and(|account| account.owner.is_some() && account.offered.is_some());
+            if bound {
+                ready.push(*admission);
+            }
+            !bound
+        });
+        ready
     }
 
     pub fn client_of_member(&self, member_id: master_protocol::MemberId) -> Option<ClientId> {
@@ -399,13 +460,16 @@ impl UdpAuthorityHub {
         self.member_by_conn.remove(&conn);
         self.replication.remove(&conn);
         self.next_bootstrap_id.remove(&conn);
+        self.committed_admissions
+            .retain(|admission| admission.connection_id != conn.0);
         client
     }
 
     fn send_outgoing(&mut self, member: MemberId, bytes: &[u8]) -> Result<(), UdpSendError> {
-        self.relay
-            .push_outbound(member, bytes.to_vec())
-            .map_err(relay_send_error)
+        if self.relay.push_outbound(member, bytes.to_vec()) {
+            perf::net_leg("mail_drop_out", 0, 1);
+        }
+        Ok(())
     }
 
     fn live_packet_epoch(&self) -> u32 {
@@ -416,6 +480,7 @@ impl UdpAuthorityHub {
     }
 
     pub fn reset_match(&mut self) {
+        self.accounts_required = false;
         self.next_bootstrap_id.clear();
         self.committed_admissions.clear();
         self.denied.clear();
@@ -433,8 +498,20 @@ impl UdpAuthorityHub {
         action_inbox: &mut crate::ClientActionInbox,
         _samples: Option<&mut ClientShotSamples>,
         mut reliable: Option<&mut crate::ReliableEventHub>,
+        account_context: Option<(&mut sim::SimWorld, frame::MatchKey)>,
     ) -> Result<(), String> {
+        let (mut account_world, match_key) = match account_context {
+            Some((world, key)) => (Some(world), key),
+            None => (None, frame::MatchKey::NONE),
+        };
+        self.accounts_required = self.bootstrap.is_some()
+            && account_world
+                .as_ref()
+                .is_some_and(|world| world.gsc_realm() == Some(sim::script::Realm::Iw4));
         self.apply_admission_acks();
+        if self.accounts_required {
+            self.offer_accounts(account_world.as_deref().unwrap(), match_key)?;
+        }
         let mut packets: Vec<(Vec<u8>, MemberId, bool)> = Vec::new();
         for (member, bytes) in self.relay.take_inbound() {
             packets.push((bytes, member, false));
@@ -443,6 +520,26 @@ impl UdpAuthorityHub {
             packets.push((bytes, member, true));
         }
         for (bytes, from, control) in packets {
+            if control {
+                match AccountMessage::decode(&bytes) {
+                    Ok(Some(message)) => {
+                        if self.accounts_required {
+                            self.apply_account_message(
+                                from,
+                                message,
+                                account_world.as_deref_mut().unwrap(),
+                                match_key,
+                            )?;
+                        }
+                        continue;
+                    }
+                    Err(error) => {
+                        diag::warn!(Net, "account control refused: {error}");
+                        continue;
+                    }
+                    Ok(None) => {}
+                }
+            }
             let packet = match decode_client_packet(&bytes, &self.limits) {
                 Ok(p) => p,
                 Err(_) => continue,
@@ -477,6 +574,19 @@ impl UdpAuthorityHub {
                     {
                         continue;
                     }
+                    if self.accounts_required
+                        && !self
+                            .replication
+                            .get(&header.connection)
+                            .and_then(|peer| peer.account.as_ref())
+                            .is_some_and(|account| {
+                                account.challenge.match_key == match_key
+                                    && account.owner.is_some()
+                                    && account.offered.is_some()
+                            })
+                    {
+                        continue;
+                    }
                     let client = match self.connections.resolve(header.connection, claimed_client) {
                         Ok(id) => ClientId(id),
                         Err(_) => continue,
@@ -486,6 +596,9 @@ impl UdpAuthorityHub {
                     }
                     if let Some(reliable) = reliable.as_deref_mut() {
                         reliable.ack(client, reliable_ack);
+                    }
+                    if let Some((seq, _)) = cmds.last() {
+                        perf::net_leg("cmd_in", seq.0, cmds.len() as u32);
                     }
                     for (seq, cmd) in cmds {
                         let mut sample = cmd_samples
@@ -539,6 +652,152 @@ impl UdpAuthorityHub {
         Ok(())
     }
 
+    fn offer_accounts(
+        &mut self,
+        world: &sim::SimWorld,
+        match_key: frame::MatchKey,
+    ) -> Result<(), String> {
+        for (connection, peer) in &mut self.replication {
+            if !matches!(peer.admission, PeerAdmission::Committed { epoch, .. } if epoch == match_key.match_epoch)
+            {
+                continue;
+            }
+            let member = self.member_by_conn[connection];
+            if peer
+                .account
+                .as_ref()
+                .is_some_and(|account| account.challenge.match_key != match_key)
+            {
+                peer.account = None;
+            }
+            if peer.account.is_none() {
+                peer.account = Some(PeerAccount {
+                    challenge: crate::AccountChallenge::new(match_key, *connection, member)
+                        .map_err(|error| format!("account challenge: {error:?}"))?,
+                    challenge_sent: false,
+                    refusal_pending: false,
+                    owner: None,
+                    offered: None,
+                });
+            }
+            let account = peer.account.as_mut().unwrap();
+            if !account.challenge_sent {
+                let bytes = AccountMessage::Challenge(account.challenge)
+                    .encode()
+                    .map_err(|error| error.to_string())?;
+                if self.relay.push_control_outbound(member, bytes).is_err() {
+                    continue;
+                }
+                account.challenge_sent = true;
+            }
+            if account.refusal_pending {
+                let bytes = AccountMessage::Refused(account.challenge)
+                    .encode()
+                    .map_err(|error| error.to_string())?;
+                if self.relay.push_control_outbound(member, bytes).is_err() {
+                    continue;
+                }
+                account.refusal_pending = false;
+            }
+            if let Some(owner) = account.owner
+                && let Some(snapshot) = world.persistent_data().snapshot(owner)
+                && account.offered.as_ref() != Some(&snapshot)
+            {
+                let bytes = AccountMessage::Update {
+                    challenge: account.challenge,
+                    snapshot: snapshot.clone(),
+                }
+                .encode()
+                .map_err(|error| error.to_string())?;
+                if self.relay.push_control_outbound(member, bytes).is_ok() {
+                    account.offered = Some(snapshot);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn apply_account_message(
+        &mut self,
+        from: MemberId,
+        message: AccountMessage,
+        world: &mut sim::SimWorld,
+        match_key: frame::MatchKey,
+    ) -> Result<(), String> {
+        let context = match &message {
+            AccountMessage::Profile { challenge, .. } | AccountMessage::Saved { challenge, .. } => {
+                *challenge
+            }
+            _ => return Ok(()),
+        };
+        if context.match_key != match_key
+            || context.member != from
+            || self.peers.get(&context.connection) != Some(&from)
+        {
+            return Ok(());
+        }
+        let Some(account) = self
+            .replication
+            .get_mut(&context.connection)
+            .and_then(|peer| peer.account.as_mut())
+        else {
+            return Ok(());
+        };
+        if account.challenge != context || !account.challenge_sent {
+            return Ok(());
+        }
+        match message {
+            AccountMessage::Profile {
+                proof, snapshot, ..
+            } => {
+                let verified = profile_payload(proof.account, snapshot.as_ref())
+                    .map_err(|error| error.to_string())
+                    .and_then(|payload| {
+                        proof
+                            .verify(&context, &payload)
+                            .map_err(|error| format!("{error:?}"))
+                    });
+                let accepted = verified.and_then(|owner| {
+                    if account.owner.is_some_and(|old| old != owner) {
+                        return Err("account owner cannot change".into());
+                    }
+                    let client = ClientId(
+                        self.connections
+                            .resolve(context.connection, 0)
+                            .map_err(|error| format!("{error:?}"))?,
+                    );
+                    world
+                        .persistent_data_mut()
+                        .admit(client, owner, snapshot.as_ref(), None)
+                        .map_err(|error| format!("{error:?}"))?;
+                    account.owner = Some(owner);
+                    account.refusal_pending = false;
+                    Ok(())
+                });
+                if let Err(error) = accepted {
+                    diag::warn!(Net, "remote account admission refused: {error}");
+                    account.refusal_pending = true;
+                }
+            }
+            AccountMessage::Saved {
+                account: owner,
+                revision,
+                ..
+            } if account.owner == Some(owner)
+                && account
+                    .offered
+                    .as_ref()
+                    .is_some_and(|snapshot| snapshot.revision == revision) =>
+            {
+                world
+                    .persistent_data_mut()
+                    .acknowledge_saved(owner, revision);
+            }
+            _ => {}
+        }
+        self.offer_accounts(world, match_key)
+    }
+
     fn apply_admission_acks(&mut self) {
         let Some(lane) = &self.bootstrap else {
             return;
@@ -579,16 +838,13 @@ impl UdpAuthorityHub {
             return;
         };
         let pending = match &peer.admission {
-            PeerAdmission::Pending {
-                bootstrap_id,
-                snapshot_seq,
-                epoch,
-                ..
-            } => Some((*bootstrap_id, *snapshot_seq, *epoch)),
+            PeerAdmission::Pending(offer) => {
+                Some((offer.bootstrap_id, offer.snapshot_seq, offer.epoch))
+            }
             _ => None,
         };
         let committed = match &peer.admission {
-            PeerAdmission::Committed { bootstrap_id } => Some(*bootstrap_id),
+            PeerAdmission::Committed { bootstrap_id, .. } => Some(*bootstrap_id),
             _ => None,
         };
         let action = applied_action(
@@ -612,6 +868,7 @@ impl UdpAuthorityHub {
             AppliedAction::Commit => {
                 peer.admission = PeerAdmission::Committed {
                     bootstrap_id: ack.bootstrap_id,
+                    epoch: ack.epoch,
                 };
                 let _ = peer.baseline.ack(ack.snapshot_seq);
                 true
@@ -626,32 +883,12 @@ impl UdpAuthorityHub {
         });
     }
 
-    pub fn fanout(
-        &mut self,
-        input: &TickInput,
-        snapshot: &Snapshot,
-        acks: &[(ClientId, CmdSeq)],
-    ) -> Result<(), UdpSendError> {
-        self.fanout_with_seats(
-            input,
-            snapshot,
-            acks,
-            |_, live| live.clone(),
-            None,
-            None,
-            None,
-            None,
-            false,
-        )
-    }
-
     #[allow(clippy::too_many_arguments)]
     pub fn fanout_with_seats(
         &mut self,
-        input: &TickInput,
         snapshot: &Snapshot,
         acks: &[(ClientId, CmdSeq)],
-        mut for_peer: impl FnMut(ClientId, &Snapshot) -> Snapshot,
+        mut for_peer: impl FnMut(ClientId, &Snapshot) -> Option<Snapshot>,
         mut pending_svc: Option<&mut crate::PendingSvcSounds>,
         mut pending_playercard: Option<&mut crate::PendingPlayerCard>,
         mut pending_gamenotify: Option<&mut crate::PendingGameNotify>,
@@ -661,6 +898,9 @@ impl UdpAuthorityHub {
         let mut last_err = None;
         let live_epoch = self.live_packet_epoch();
         let peer_ids: Vec<ConnectionId> = self.peers.keys().copied().collect();
+        let mut live: Option<Arc<Snapshot>> = None;
+        let mut live_meta: Option<Arc<WireMeta>> = None;
+        let mut meta_patches = MetaPatchCache::default();
         for conn in peer_ids {
             let Some(target) = self.peers.get(&conn).copied() else {
                 continue;
@@ -684,6 +924,11 @@ impl UdpAuthorityHub {
                 .replication
                 .entry(conn)
                 .or_insert_with(PeerReplicationState::new);
+            if let (Some(lane), PeerAdmission::Pending(offer)) = (&self.bootstrap, &peer.admission)
+                && offer.epoch == lane.epoch()
+            {
+                continue;
+            }
             if peer.admits_gameplay(self.bootstrap.is_some()) {
                 if let Some(reliable) = reliable {
                     if let Err(error) = peer.queue_control(
@@ -737,33 +982,70 @@ impl UdpAuthorityHub {
                 .copied()
                 .filter(|(id, _)| *id == client)
                 .collect();
-            let peer_snap = for_peer(client, snapshot);
-            let mut frame = frame_from_acked_tick(&mut encoder, input, &peer_snap, peer_acks);
+            let (peer_snap, meta) = match for_peer(client, snapshot) {
+                Some(own) => {
+                    let meta = Arc::new(WireMeta::without_reliable_events(&own.meta));
+                    (Arc::new(own), meta)
+                }
+                None => (
+                    Arc::clone(live.get_or_insert_with(|| Arc::new(snapshot.clone()))),
+                    Arc::clone(live_meta.get_or_insert_with(|| {
+                        Arc::new(WireMeta::without_reliable_events(&snapshot.meta))
+                    })),
+                ),
+            };
+            let world_objects_wire = encoder
+                .encode_world_objects(peer_snap.tick, &peer_snap.meta.world_objects)
+                .to_vec();
+            let snapshot_delta = encoder.encode(&peer_snap);
             peer.encoder = encoder;
+            let mut tail = FrameTail::default();
             if let Some(pending) = pending_svc.as_mut() {
-                frame.svc_sounds = pending.take_for(client);
+                tail.svc_sounds = pending.take_for(client);
             }
             if let Some(pending) = pending_playercard.as_mut() {
                 let (slots, menus, splashes) = pending.take_for(client);
-                frame.svc_card_slots = slots;
-                frame.svc_open_menus = menus;
-                frame.svc_hud_splashes = splashes;
+                tail.svc_card_slots = slots;
+                tail.svc_open_menus = menus;
+                tail.svc_hud_splashes = splashes;
             }
             if let Some(pending) = pending_gamenotify.as_mut() {
-                frame.svc_game_notifies = pending.take_for(client);
+                tail.svc_game_notifies = pending.take_for(client);
             }
-
-            frame
-                .snapshot_meta
-                .journal
-                .retain(|record| !sim::sim_event_is_reliable(&record.event));
-
             if scores_due {
-                frame.svc_scores = Some(crate::format_scoreboard_from_snapshot(&peer_snap));
+                tail.svc_scores = Some(crate::format_scoreboard_from_snapshot(&peer_snap));
             }
             let snapshot_seq = peer.next_snap_seq;
             peer.next_snap_seq = snapshot_seq.wrapping_add(1);
-            peer.baseline.remember(snapshot_seq, peer_snap);
+            let parts = FrameParts::new(
+                peer_snap.tick,
+                compute_state_hash(&peer_snap.players),
+                &peer_acks,
+                &snapshot_delta,
+                meta,
+                &world_objects_wire,
+                &tail,
+            );
+            if parts
+                .segments()
+                .iter()
+                .map(|segment| segment.len())
+                .sum::<usize>()
+                > segment_delta::MAX_RECONSTRUCTED_FRAME_BYTES
+            {
+                return Err(UdpSendError::Oversized {
+                    encoded_len: parts.segments().iter().map(|segment| segment.len()).sum(),
+                    max_packet_bytes: segment_delta::MAX_RECONSTRUCTED_FRAME_BYTES,
+                });
+            }
+            let payload = match peer.baseline.baseline_parts_for_encode() {
+                Some(baseline) if baseline_seq != 0 => {
+                    let delta = segment_delta::encode(&parts, baseline, &mut meta_patches);
+                    SnapshotPayload::against_baseline(&delta, || parts.to_raw())
+                }
+                _ => SnapshotPayload::Plain(parts.to_raw()),
+            };
+            peer.baseline.remember(snapshot_seq, peer_snap, parts);
             peer.out_seq = peer.out_seq.wrapping_add(1);
             let header = PacketHeader {
                 connection: conn,
@@ -775,7 +1057,7 @@ impl UdpAuthorityHub {
                 header,
                 baseline_seq,
                 snapshot_seq,
-                payload: frame.to_bytes(),
+                payload,
             };
             let relay_bootstrap = self.bootstrap.is_some() && baseline_seq == 0;
             let already_admitted = matches!(peer.admission, PeerAdmission::Committed { .. });
@@ -784,14 +1066,6 @@ impl UdpAuthorityHub {
                     continue;
                 };
                 let epoch = lane.epoch();
-                if let PeerAdmission::Pending {
-                    epoch: pending_epoch,
-                    ..
-                } = &peer.admission
-                    && *pending_epoch == epoch
-                {
-                    continue;
-                }
                 let bootstrap_id = {
                     let id = self.next_bootstrap_id.entry(conn).or_insert(1);
                     let current = *id;
@@ -809,25 +1083,26 @@ impl UdpAuthorityHub {
                     packet_bytes,
                 ) {
                     Ok(txn) => {
-                        peer.admission = PeerAdmission::Pending {
-                            bootstrap_id,
-                            snapshot_seq,
-                            epoch,
-                            tick_b,
-                            offer_bytes: txn.offer_bytes.clone(),
+                        let offer_len = txn.offer_bytes.len();
+                        let queued = match txn.enqueue(lane, target) {
+                            Ok(queued) => queued,
+                            Err(error) => {
+                                diag::warn!(
+                                    Net,
+                                    "bootstrap offer deferred for {target:?}: {error}"
+                                );
+                                continue;
+                            }
                         };
+                        peer.admission = PeerAdmission::Pending(queued);
                         diag::info!(
                             Net,
                             "bootstrap-io session=host event=bootstrap offer encoded peer={target:?} epoch={epoch} bootstrap_id={bootstrap_id} snapshot_seq={snapshot_seq} bytes={}",
-                            txn.offer_bytes.len()
+                            offer_len
                         );
-                        if let Err(error) = lane.push_to_worker(Some(target), txn.offer_bytes) {
-                            diag::warn!(Net, "bootstrap offer dropped for {target:?}: {error}");
-                        } else {
-                            peer.sent_ticks.push_back(snapshot.tick);
-                            while peer.sent_ticks.len() > 32 {
-                                peer.sent_ticks.pop_front();
-                            }
+                        peer.sent_ticks.push_back(snapshot.tick);
+                        while peer.sent_ticks.len() > 32 {
+                            peer.sent_ticks.pop_front();
                         }
                     }
                     Err(error) => {
@@ -836,7 +1111,9 @@ impl UdpAuthorityHub {
                 }
                 continue;
             }
-            if let Err(e) = self.send_outgoing(target, &packet.to_bytes()) {
+            let bytes = packet.to_bytes();
+            perf::net_leg("snap_out", snapshot.tick.0, bytes.len() as u32);
+            if let Err(e) = self.send_outgoing(target, &bytes) {
                 last_err = Some(e);
             } else if let Some(peer) = self.replication.get_mut(&conn) {
                 peer.sent_ticks.push_back(snapshot.tick);
@@ -860,7 +1137,7 @@ pub struct UdpClientLink {
     pub connection: Option<ConnectionId>,
     pub assigned_client: Option<ClientId>,
 
-    baselines: BTreeMap<u32, Snapshot>,
+    baselines: BTreeMap<u32, (Snapshot, Vec<u8>, FrameSegments)>,
     out_seq: u32,
     in_ack: u32,
     last_snapshot_seq: Option<u32>,
@@ -874,6 +1151,11 @@ pub struct UdpClientLink {
     failed: Option<HandshakeReject>,
     bootstrap: Option<Arc<BootstrapLane>>,
     controls: Vec<crate::ReliablePayload>,
+    account_messages: Vec<AccountMessage>,
+    account_challenge: Option<crate::AccountChallenge>,
+    account_profile: Option<Vec<u8>>,
+    account_ack: Option<sim::AccountSnapshot>,
+    account_offer: Option<sim::AccountSnapshot>,
     sent_actions: HashSet<sim::ActionRequestId>,
 }
 
@@ -895,6 +1177,11 @@ impl UdpClientLink {
             last_applied_offer: None,
             pending_applied: Vec::new(),
             controls: Vec::new(),
+            account_messages: Vec::new(),
+            account_challenge: None,
+            account_profile: None,
+            account_ack: None,
+            account_offer: None,
             sent_actions: HashSet::new(),
             held_bootstrap: Vec::new(),
             failed: None,
@@ -907,9 +1194,10 @@ impl UdpClientLink {
     }
 
     fn send_bytes(&mut self, bytes: &[u8]) -> Result<(), UdpSendError> {
-        self.relay
-            .push_outbound(MemberId([0; 16]), bytes.to_vec())
-            .map_err(relay_send_error)
+        if self.relay.push_outbound(MemberId([0; 16]), bytes.to_vec()) {
+            perf::net_leg("mail_drop_out", 0, 1);
+        }
+        Ok(())
     }
 
     pub fn attach_bootstrap(&mut self, lane: Arc<BootstrapLane>) {
@@ -1015,6 +1303,11 @@ impl UdpClientLink {
         self.pending_applied.clear();
         self.held_bootstrap.clear();
         self.controls.clear();
+        self.account_messages.clear();
+        self.account_challenge = None;
+        self.account_profile = None;
+        self.account_ack = None;
+        self.account_offer = None;
         self.sent_actions.clear();
         self.failed = None;
         if let Some(lane) = &self.bootstrap {
@@ -1040,6 +1333,12 @@ impl UdpClientLink {
         }
         self.drain_bootstrap_offers(&mut ticks, &mut snap_acks)?;
         for (_, bytes) in self.relay.take_control_inbound() {
+            if let Some(message) =
+                AccountMessage::decode(&bytes).map_err(|error| error.to_string())?
+            {
+                self.account_messages.push(message);
+                continue;
+            }
             let packet = decode_server_packet(&bytes, &self.limits).map_err(|e| e.to_string())?;
             if matches!(packet, ServerPacket::Control { .. }) {
                 self.apply_server_packet(packet, &mut ticks, &mut snap_acks)?;
@@ -1052,6 +1351,136 @@ impl UdpClientLink {
             }
         }
         Ok(ticks)
+    }
+
+    pub fn poll_accounts(
+        &mut self,
+        identity: Option<crate::SessionIdentity>,
+        account: Option<&mut crate::LocalAccount>,
+        schemas: &BTreeMap<String, Arc<structured_data_iw4::DefinitionSet>>,
+        receipt: Option<&crate::AccountSaveReceipt>,
+    ) -> Result<(), String> {
+        let Some(identity) = identity else {
+            self.account_messages.clear();
+            return Ok(());
+        };
+        if self.account_challenge.is_some_and(|context| {
+            context.match_key != identity.match_key()
+                || context.member != identity.member_id
+                || context.connection != self.connection.unwrap_or(ConnectionId(0))
+        }) {
+            self.account_challenge = None;
+            self.account_profile = None;
+            self.account_ack = None;
+            self.account_offer = None;
+        }
+        let mut account = account;
+        for message in std::mem::take(&mut self.account_messages) {
+            let context = match &message {
+                AccountMessage::Challenge(context) | AccountMessage::Refused(context) => *context,
+                AccountMessage::Update { challenge, .. } => *challenge,
+                _ => continue,
+            };
+            if context.match_key != identity.match_key()
+                || context.member != identity.member_id
+                || self.connection != Some(context.connection)
+            {
+                continue;
+            }
+            let local = account
+                .as_deref_mut()
+                .ok_or("no durable local account for remote admission")?;
+            match message {
+                AccountMessage::Challenge(context) => {
+                    if self.account_challenge.is_some_and(|old| old != context) {
+                        return Err("account challenge changed within a connection".into());
+                    }
+                    if local.id != local.key.account() {
+                        return Err("local account signing owner mismatch".into());
+                    }
+                    let payload = profile_payload(local.id, local.snapshot.as_ref())
+                        .map_err(|error| error.to_string())?;
+                    let message = AccountMessage::Profile {
+                        challenge: context,
+                        proof: local.key.prove(&context, &payload),
+                        snapshot: local.snapshot.clone(),
+                    };
+                    if self.account_challenge != Some(context) {
+                        self.account_profile =
+                            Some(message.encode().map_err(|error| error.to_string())?);
+                        self.account_challenge = Some(context);
+                    }
+                }
+                AccountMessage::Update { snapshot, .. }
+                    if self.account_challenge == Some(context) =>
+                {
+                    if snapshot.account != local.id || local.id != local.key.account() {
+                        return Err("remote account update owner mismatch".into());
+                    }
+                    if self
+                        .account_offer
+                        .as_ref()
+                        .is_some_and(|old| snapshot.revision < old.revision)
+                    {
+                        continue;
+                    }
+                    if self
+                        .account_offer
+                        .as_ref()
+                        .is_some_and(|old| old.revision == snapshot.revision && old != &snapshot)
+                    {
+                        return Err("conflicting account updates at one revision".into());
+                    }
+                    let mut validation = sim::PersistentDataStore::default();
+                    validation
+                        .install_schemas(schemas.clone())
+                        .map_err(|error| format!("account schema: {error:?}"))?;
+                    validation
+                        .import(snapshot.clone())
+                        .map_err(|error| format!("account update: {error:?}"))?;
+                    self.account_offer = Some(snapshot.clone());
+                    local.snapshot = Some(snapshot);
+                }
+                AccountMessage::Refused(_) if self.account_challenge == Some(context) => {
+                    return Err("host refused account admission".into());
+                }
+                _ => {}
+            }
+        }
+        if let Some(profile) = &self.account_profile {
+            if self
+                .relay
+                .push_control_outbound(MemberId([0; 16]), profile.clone())
+                .is_err()
+            {
+                return Ok(());
+            }
+            self.account_profile = None;
+        }
+        if let (Some(context), Some(local), Some(receipt)) =
+            (self.account_challenge, account, receipt)
+            && let Some(snapshot) = &local.snapshot
+            && self.account_offer.as_ref() == Some(snapshot)
+            && receipt.0.as_ref() == Some(snapshot)
+            && self.account_ack.as_ref() != Some(snapshot)
+        {
+            let message = AccountMessage::Saved {
+                challenge: context,
+                account: local.id,
+                revision: snapshot.revision,
+            };
+            if self
+                .relay
+                .push_control_outbound(
+                    MemberId([0; 16]),
+                    message.encode().map_err(|error| error.to_string())?,
+                )
+                .is_ok()
+            {
+                self.account_ack = Some(snapshot.clone());
+            }
+        }
+        Ok(())
     }
 
     fn adopt_entered_client(&mut self) {
@@ -1219,11 +1648,18 @@ impl UdpClientLink {
                 let baseline = if baseline_seq == 0 {
                     None
                 } else {
-                    match self.baselines.get(&baseline_seq).cloned() {
+                    match self.baselines.get(&baseline_seq) {
                         Some(baseline) => Some(baseline),
                         None => return Ok(false),
                     }
                 };
+                let wire_len = payload.wire_len();
+                let Some(payload) =
+                    payload.decode(baseline.map(|(_, raw, segments)| (raw.as_slice(), segments)))
+                else {
+                    return Ok(false);
+                };
+                let baseline = baseline.map(|(snapshot, _, _)| snapshot.clone());
                 let mut decoder = SnapshotDecoder::new();
                 let mut world_decoder = WorldObjectSyncDecoder::default();
                 if let Some(baseline) = baseline.as_ref() {
@@ -1232,17 +1668,19 @@ impl UdpClientLink {
                 }
                 self.in_ack = header.sequence;
                 let mut input = WireReader::new(&payload);
-                let frame =
-                    Frame::decode(&mut input, &mut world_decoder).map_err(|e| e.to_string())?;
+                let (frame, segments) = Frame::decode_segments(&mut input, &mut world_decoder)
+                    .map_err(|e| e.to_string())?;
                 let mut snapshot = decoder
                     .decode(&frame.snapshot_delta)
                     .map_err(|e| e.to_string())?;
                 snapshot.meta = frame.snapshot_meta.clone();
                 self.note_applied_snapshot(snapshot_seq);
-                self.baselines.insert(snapshot_seq, snapshot.clone());
+                self.baselines
+                    .insert(snapshot_seq, (snapshot.clone(), payload, segments));
                 self.required_baseline_seq = self.required_baseline_seq.max(baseline_seq);
                 self.retain_applied_baseline();
                 snap_acks.push(snapshot_seq);
+                perf::net_leg("snap_in", snapshot.tick.0, wire_len as u32);
                 ticks.push(ReceivedTick { snapshot, frame });
                 Ok(true)
             }
@@ -1352,6 +1790,9 @@ impl UdpClientLink {
             actions: actions.to_vec(),
             reliable_ack,
         };
+        if let Some((seq, _, _)) = cmds.last() {
+            perf::net_leg("cmd_out", seq.0, cmds.len() as u32);
+        }
         if cmds.is_empty() {
             self.relay
                 .push_control_outbound(MemberId([0; 16]), packet.to_bytes())

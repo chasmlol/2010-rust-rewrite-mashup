@@ -232,6 +232,7 @@ pub fn xmodel_radius(
         Some(
             asset_world::MapXModelSceneAsset::Iw4(skel)
             | asset_world::MapXModelSceneAsset::Iw5(skel)
+            | asset_world::MapXModelSceneAsset::T6(skel)
             | asset_world::MapXModelSceneAsset::T5(skel),
         ) => skel.radius.unwrap_or(0.0),
         Some(asset_world::MapXModelSceneAsset::Unavailable { .. }) | None => 0.0,
@@ -251,6 +252,7 @@ pub fn xmodel_phys_hull(
         Some(
             asset_world::MapXModelSceneAsset::Iw4(skel)
             | asset_world::MapXModelSceneAsset::Iw5(skel)
+            | asset_world::MapXModelSceneAsset::T6(skel)
             | asset_world::MapXModelSceneAsset::T5(skel),
         ) => hull_from_bounds(skel.bounds).unwrap_or(fallback),
         Some(asset_world::MapXModelSceneAsset::Unavailable { .. }) | None => fallback,
@@ -279,6 +281,7 @@ fn xmodel_local_bounds(
         Some(
             asset_world::MapXModelSceneAsset::Iw4(skel)
             | asset_world::MapXModelSceneAsset::Iw5(skel)
+            | asset_world::MapXModelSceneAsset::T6(skel)
             | asset_world::MapXModelSceneAsset::T5(skel),
         ) => skel.bounds,
         Some(asset_world::MapXModelSceneAsset::Unavailable { .. }) | None => None,
@@ -504,6 +507,7 @@ fn pose_dyn_ents(
             Some(
                 asset_world::MapXModelSceneAsset::Iw4(skel)
                 | asset_world::MapXModelSceneAsset::Iw5(skel)
+                | asset_world::MapXModelSceneAsset::T6(skel)
                 | asset_world::MapXModelSceneAsset::T5(skel),
             ) => skel.as_ref(),
             Some(asset_world::MapXModelSceneAsset::Unavailable { .. }) | None => {
@@ -591,8 +595,8 @@ fn append_dynent_draws(
     let atlas_changed = atlas.as_ref().is_some_and(|a| a.is_changed());
     let tess_changed = tess.as_ref().is_some_and(|h| h.is_changed());
     let tess = tess.as_deref().expect("checked");
-    let tess_catalog = std::sync::Arc::clone(&tess.catalog);
-    let material_generation = tess.catalog.generation_id;
+    let tess_catalog = std::sync::Arc::clone(&tess.catalog());
+    let material_generation = tess.catalog().generation_id();
     let catalog_reset = catalog_changed
         || atlas_changed
         || tess_changed
@@ -678,6 +682,7 @@ fn append_dynent_draws(
                 packed_lighting: None,
                 is_scope: false,
                 scene_entnum: None,
+                body_client: None,
                 caster_bound,
             });
         }

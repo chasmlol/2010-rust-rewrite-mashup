@@ -1,9 +1,9 @@
 use fx_iw4::{
-    FX_RAND_CH_LIFE, FxElemType, FxTrailEmittedVert, FxTrailSegmentDrawState, FxTrailVertex,
-    draw_elem_handler_present, elem_norm_time, elem_random_seed, random_table_u16,
-    sample_life_span_msec, spark_fountain_cluster_draw_allows, spark_fountain_slot_for_handle,
-    trail_compute_u, trail_emit_index_quad, trail_emit_segment_verts, trail_uncompress_basis,
-    vec3_length_sq, vec3_normalize,
+    FxElemType, FxRandomChannel, FxTrailEmittedVert, FxTrailSegmentDrawState, FxTrailVertex,
+    draw_elem_handler_present, elem_norm_time, elem_random_seed, sample_life_span_msec, sample_u16,
+    spark_fountain_cluster_draw_allows, spark_fountain_slot_for_handle, trail_compute_u,
+    trail_emit_index_quad, trail_emit_segment_verts, trail_uncompress_basis, vec3_length_sq,
+    vec3_normalize,
 };
 
 use crate::elem::{FX_ELEM_HANDLE_NONE, elem_slot_for_handle};
@@ -22,7 +22,7 @@ pub struct FxDrawElemContext<'a> {
     pub age_msec: i32,
     pub life_msec: i32,
 
-    pub elem_random_seed: u32,
+    pub elem_random_seed: u64,
 
     pub sequence: u8,
     pub base_vel: [f32; 3],
@@ -46,7 +46,7 @@ pub struct FxSparkDrawQuery<'a> {
     pub age_msec: i32,
     pub life_msec: i32,
 
-    pub elem_random_seed: u32,
+    pub elem_random_seed: u64,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -69,7 +69,7 @@ pub struct FxDrawTrailSampleContext<'a> {
     pub age_msec: i32,
     pub life_msec: i32,
 
-    pub elem_random_seed: u32,
+    pub elem_random_seed: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -99,6 +99,7 @@ pub struct FxTrailSampleVisual {
 
 #[derive(Clone, Debug)]
 pub struct FxSpriteInstance {
+    pub viewmodel: bool,
     pub origin: [f32; 3],
 
     pub size0: f32,
@@ -653,7 +654,13 @@ fn draw_one_elem(
         elem_handle: handle,
     };
     match on_elem(ctx) {
-        Some(sprite) => out.sprites.push(sprite),
+        Some(mut sprite) => {
+            let dobj = fx_iw4::bolt_dobj(effect.bolt_packed);
+            sprite.viewmodel = (fx_iw4::FX_BOLT_VIEWMODEL_DOBJ_BASE
+                ..fx_iw4::FX_BOLT_VIEWMODEL_DOBJ_BASE + 2)
+                .contains(&dobj);
+            out.sprites.push(sprite);
+        }
         None => out.skipped_no_lookup = out.skipped_no_lookup.saturating_add(1),
     }
 }
@@ -721,7 +728,7 @@ fn generate_trail_verts(
     def_name: &str,
     catalog_index: u16,
     def_index: u8,
-    effect_seed: u16,
+    effect_seed: u64,
     first_elem: u16,
     last_elem: u16,
     trail_def: &FxTrailDrawDef,
@@ -805,10 +812,8 @@ fn generate_trail_verts(
             continue;
         }
 
-        let seed = (u32::from(effect_seed)
-            .wrapping_add(u32::from(elem.sequence).wrapping_mul(0x128)))
-            % 0x1df;
-        let life_rand = random_table_u16(seed, FX_RAND_CH_LIFE);
+        let seed = fx_iw4::trail_random_seed(effect_seed, elem.sequence as i8);
+        let life_rand = sample_u16(seed, FxRandomChannel::Life);
         let life_msec = sample_life_span_msec(trail_def.life_base, trail_def.life_amp, life_rand);
         let age = msec_draw.wrapping_sub(elem.msec_begin);
         let norm_time = elem_norm_time(age, life_msec);

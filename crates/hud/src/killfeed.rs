@@ -4,12 +4,12 @@ use asset_game::MenuCatalog;
 use assets::{PreparedLocalizedStrings, PreparedWeapons};
 use bevy::prelude::*;
 use hud_iw4::{
-    GAME_MSG_WIN0_HORZ_ALIGN, GAME_MSG_WIN0_LINE_COUNT, GAME_MSG_WIN0_MSG_TIME_MS,
-    GAME_MSG_WIN0_TEXT_SCALE, GAME_MSG_WIN0_TEXT_STYLE, GAME_MSG_WIN0_VERT_ALIGN, GAME_MSG_WIN0_X,
-    KILLICON_DIED, game_msg_win0_line_y, gamenotify_line, killicon_stretch_uv,
-    killicon_virtual_size, normalized_text_scale, obituary_mod, obituary_mod_killicon,
+    GAME_MSG_WIN0_FADE_IN_TIME_MS, GAME_MSG_WIN0_FADE_OUT_TIME_MS, GAME_MSG_WIN0_LINE_COUNT,
+    GAME_MSG_WIN0_MSG_TIME_MS, GAME_MSG_WIN0_SCROLL_TIME_MS, KILLICON_DIED, gamenotify_line,
+    killicon_stretch_uv, killicon_virtual_size, normalized_text_scale, obituary_mod,
+    obituary_mod_killicon,
 };
-use net::LocalPresentClient;
+use net::{FrameClock, LocalPresentClient};
 
 use crate::chrome::text_width;
 use crate::draw2d::{Draw2dCmd, Draw2dList, Draw2dOp, Draw2dProvenance, tessellate_fonts};
@@ -17,12 +17,12 @@ use crate::font_overlay::HUD_SMALL_FONT;
 use crate::gaps::{GapCause, HudGap, HudPresentationGaps};
 use crate::gpu_list::{HudTessPass, TessJob};
 use crate::images::HudImages;
-use crate::scorebar::milliseconds;
 
 #[derive(Clone, Debug)]
 enum KillfeedLine {
     Obituary {
         start_ms: i32,
+        end_ms: i32,
         icon: String,
         icon_namespace: asset_core::AssetNamespace,
         attacker: String,
@@ -37,6 +37,7 @@ enum KillfeedLine {
     },
     Notify {
         start_ms: i32,
+        end_ms: i32,
         text: String,
         name_empty: bool,
     },
@@ -46,6 +47,20 @@ impl KillfeedLine {
     fn start_ms(&self) -> i32 {
         match self {
             Self::Obituary { start_ms, .. } | Self::Notify { start_ms, .. } => *start_ms,
+        }
+    }
+
+    fn end_ms(&self) -> i32 {
+        match self {
+            Self::Obituary { end_ms, .. } | Self::Notify { end_ms, .. } => *end_ms,
+        }
+    }
+
+    fn fade_out(&mut self, now: i32) {
+        match self {
+            Self::Obituary { end_ms, .. } | Self::Notify { end_ms, .. } => {
+                *end_ms = (*end_ms).min(now.saturating_add(GAME_MSG_WIN0_FADE_OUT_TIME_MS));
+            }
         }
     }
 }
@@ -63,6 +78,20 @@ pub(crate) struct KillfeedWindow {
     lines: VecDeque<KillfeedLine>,
     bold: VecDeque<(i32, String)>,
     seen: HashSet<u32>,
+}
+
+impl KillfeedWindow {
+    fn push(&mut self, line: KillfeedLine, now: i32) {
+        self.lines.retain(|line| now < line.end_ms());
+        self.lines.push_back(line);
+        while self.lines.len() > GAME_MSG_WIN0_LINE_COUNT + 3 {
+            self.lines.pop_front();
+        }
+        if self.lines.len() > GAME_MSG_WIN0_LINE_COUNT {
+            let fading = self.lines.len() - GAME_MSG_WIN0_LINE_COUNT - 1;
+            self.lines[fading].fade_out(now);
+        }
+    }
 }
 
 const BOLD_LINE_COUNT: usize = 3;
@@ -83,7 +112,7 @@ fn hide(pass: &mut HudTessPass) {
 
 fn pick_kill_icon(
     payload: &sim::EntityEventPayload,
-    weapons: Option<&PreparedWeapons>,
+    weapons: Option<&assets::BoundWeapons<'_>>,
 ) -> KillIconPick {
     let chrome = crate::images::HUD_CHROME_NAMESPACE;
 
@@ -104,15 +133,19 @@ fn pick_kill_icon(
         };
     }
     let weapon = payload.event_parm as u32;
-    let (ratio, flip) = match weapons.and_then(|reg| reg.0.facts_of(weapon)) {
-        Some(facts) => (facts.kill_icon_ratio, facts.flip_kill_icon),
-        None => (0, false),
-    };
+    let (ratio, flip) =
+        match weapons.and_then(|reg| reg.row(weapon).and_then(|weapon| weapon.hud_facts())) {
+            Some(facts) => (facts.kill_icon_ratio, facts.flip_kill_icon),
+            None => (0, false),
+        };
     let (stem, namespace) = if let Some(reg) = weapons {
-        let ns = reg.0.namespace_of(weapon).unwrap_or(chrome);
-        if let Some(image) = reg.0.kill_icon_image_of(weapon) {
+        let ns = reg
+            .registry()
+            .component_namespace_of(weapon, asset_game::WeaponComponent::Material)
+            .unwrap_or(chrome);
+        if let Some(image) = reg.registry().kill_icon_image_of(weapon) {
             (image.to_owned(), ns)
-        } else if let Some(name) = reg.0.kill_icon_of(weapon) {
+        } else if let Some(name) = reg.registry().kill_icon_of(weapon) {
             (name.to_owned(), ns)
         } else {
             (KILLICON_DIED.to_owned(), chrome)
@@ -175,36 +208,44 @@ pub(crate) fn obituary(
     mut window: ResMut<KillfeedWindow>,
     weapons: Option<Res<PreparedWeapons>>,
     presented: Res<net::PresentedSnapshot>,
+    clock: Res<FrameClock>,
 ) {
     if obituary.in_killcam {
         return;
     }
     let payload = obituary.event.payload;
-    let pick = pick_kill_icon(&payload, weapons.as_deref());
+    let bound = weapons
+        .as_deref()
+        .and_then(|weapons| weapons.for_event(obituary.event.world).ok());
+    let pick = pick_kill_icon(&payload, bound.as_ref());
     let attacker = snapshot_client_name(&presented, payload.attacker_entity_num);
     let victim = snapshot_client_name(&presented, payload.other_entity_num);
     let attacker_team = snapshot_client_team(&presented, payload.attacker_entity_num);
     let victim_team = snapshot_client_team(&presented, payload.other_entity_num);
-    let now = milliseconds() as i32;
-    window.lines.push_back(KillfeedLine::Obituary {
-        start_ms: now,
-        icon: pick.stem,
-        icon_namespace: pick.namespace,
-        attacker,
-        has_attacker: (0..18).contains(&payload.attacker_entity_num)
-            && payload.attacker_entity_num != payload.other_entity_num,
-        victim,
-        attacker_team,
-        victim_team,
-        kill_icon_ratio: pick.ratio,
-        flip_kill_icon: pick.flip,
-    });
-    while window.lines.len() > GAME_MSG_WIN0_LINE_COUNT {
-        window.lines.pop_front();
-    }
+    let now = clock.time();
+    window.push(
+        KillfeedLine::Obituary {
+            start_ms: now,
+            end_ms: now.saturating_add(GAME_MSG_WIN0_MSG_TIME_MS),
+            icon: pick.stem,
+            icon_namespace: pick.namespace,
+            attacker,
+            has_attacker: (0..18).contains(&payload.attacker_entity_num)
+                && payload.attacker_entity_num != payload.other_entity_num,
+            victim,
+            attacker_team,
+            victim_team,
+            kill_icon_ratio: pick.ratio,
+            flip_kill_icon: pick.flip,
+        },
+        now,
+    );
 }
 
+#[allow(clippy::too_many_arguments)]
 fn text_cmd(
+    font_name: &str,
+    text_style: i32,
     x: f32,
     y: f32,
     cmd_w: f32,
@@ -227,12 +268,12 @@ fn text_cmd(
         color,
         material,
         op: Draw2dOp::TextRun {
-            font: HUD_SMALL_FONT.to_owned(),
+            font: font_name.to_owned(),
             scale: cmd_w,
             text,
             loc_key: String::new(),
 
-            style: GAME_MSG_WIN0_TEXT_STYLE,
+            style: text_style,
             fx: None,
             glow: None,
         },
@@ -245,6 +286,7 @@ fn text_cmd(
 pub(crate) fn update_killfeed(
     surface: Res<crate::surface::Hud2dSurface>,
     presented: Res<net::PresentedSnapshot>,
+    clock: Res<FrameClock>,
     local: Res<LocalPresentClient>,
     catalog: Option<Res<MenuCatalog>>,
     strings: Option<Res<PreparedLocalizedStrings>>,
@@ -269,7 +311,7 @@ pub(crate) fn update_killfeed(
         return;
     }
 
-    let now = milliseconds() as i32;
+    let now = clock.time();
     for cmd in notifies.read() {
         if !window.seen.insert(cmd.id) {
             continue;
@@ -307,18 +349,17 @@ pub(crate) fn update_killfeed(
             }
             continue;
         }
-        window.lines.push_back(KillfeedLine::Notify {
-            start_ms: now,
-            text,
-            name_empty: cmd.tag == net::SVC_DISCONNECT_NOTIFY && cmd.name.is_empty(),
-        });
-        while window.lines.len() > GAME_MSG_WIN0_LINE_COUNT {
-            window.lines.pop_front();
-        }
+        window.push(
+            KillfeedLine::Notify {
+                start_ms: now,
+                end_ms: now.saturating_add(GAME_MSG_WIN0_MSG_TIME_MS),
+                text,
+                name_empty: cmd.tag == net::SVC_DISCONNECT_NOTIFY && cmd.name.is_empty(),
+            },
+            now,
+        );
     }
-    window
-        .lines
-        .retain(|line| now.saturating_sub(line.start_ms()) < GAME_MSG_WIN0_MSG_TIME_MS);
+    window.lines.retain(|line| now < line.end_ms());
     window
         .bold
         .retain(|(start, _)| now.saturating_sub(*start) < BOLD_MSG_TIME_MS);
@@ -361,10 +402,28 @@ pub(crate) fn update_killfeed(
     }
 
     let local_team = snapshot_client_team(&presented, local.0.0 as i32);
-    let font = catalog.as_ref().and_then(|c| c.font(HUD_SMALL_FONT));
+    let Some(item) = catalog
+        .as_ref()
+        .and_then(|c| c.get("hud_fullscreen"))
+        .and_then(|menu| {
+            menu.items.iter().find(|item| {
+                item.item_type == hud_iw4::ITEM_TYPE_GAME_MESSAGE_WINDOW
+                    && item.game_msg_window_index == 0
+            })
+        })
+    else {
+        hide(&mut pass);
+        return;
+    };
+    let font_name = hud_iw4::ui_get_font_handle(
+        item.font_enum,
+        surface.scale_virtual_to_real()[1],
+        item.text_scale,
+    );
+    let font = catalog.as_ref().and_then(|c| c.font(font_name));
     let (nscale, font_material) = match font {
         Some(def) => (
-            normalized_text_scale(def.pixel_height, GAME_MSG_WIN0_TEXT_SCALE),
+            normalized_text_scale(def.pixel_height, item.text_scale),
             asset_core::AssetRef::bare_name(&def.material).to_owned(),
         ),
         None => (0.0, String::new()),
@@ -377,7 +436,7 @@ pub(crate) fn update_killfeed(
     let mut cmds = Vec::new();
     let mut fonts = HashMap::new();
     let font_tex_ok = if let Some(def) = font {
-        fonts.insert(HUD_SMALL_FONT.to_owned(), def);
+        fonts.insert(font_name.to_owned(), def);
         hud_images
             .get(
                 crate::images::HUD_CHROME_NAMESPACE,
@@ -398,32 +457,52 @@ pub(crate) fn update_killfeed(
         });
     }
 
+    let line_height = (item.text_scale * hud_iw4::GAME_MSG_CHAR_EM + 0.5).floor();
+    let icon_spacing = font.map_or(0.0, |def| text_width(def, " ") as f32 * nscale);
+    let scroll_offset: f32 = window
+        .lines
+        .iter()
+        .map(|line| {
+            let age = now.saturating_sub(line.start_ms());
+            let fraction = (1.0 - age as f32 / GAME_MSG_WIN0_SCROLL_TIME_MS as f32).clamp(0.0, 1.0);
+            (line_height * fraction + 0.5).floor()
+        })
+        .sum();
     for (i, line) in window.lines.iter().rev().enumerate() {
         let first_cmd = cmds.len();
         let age = now.saturating_sub(line.start_ms());
 
-        let alpha = (age as f32 / 250.0).clamp(0.0, 1.0)
-            * ((GAME_MSG_WIN0_MSG_TIME_MS - age) as f32 / 500.0).clamp(0.0, 1.0);
-        let y_virtual = game_msg_win0_line_y(i);
+        let alpha = (age as f32 / GAME_MSG_WIN0_FADE_IN_TIME_MS as f32).clamp(0.0, 1.0)
+            * ((line.end_ms() - now) as f32 / GAME_MSG_WIN0_FADE_OUT_TIME_MS as f32)
+                .clamp(0.0, 1.0)
+            * item.fore_color[3];
+        let y_virtual = item.rect.y + scroll_offset - line_height * (i as f32 + 1.0);
         match line {
             KillfeedLine::Notify { text, .. } => {
                 if font.is_some() && font_tex_ok {
                     let applied = surface.apply_rect(
-                        GAME_MSG_WIN0_X,
+                        item.rect.x,
                         y_virtual,
                         nscale,
                         nscale,
-                        GAME_MSG_WIN0_HORZ_ALIGN,
-                        GAME_MSG_WIN0_VERT_ALIGN,
+                        i32::from(item.rect.horz_align),
+                        i32::from(item.rect.vert_align),
                     );
                     cmds.push(text_cmd(
+                        font_name,
+                        item.text_style,
                         applied.x,
                         applied.y,
                         applied.w,
                         applied.h,
                         font_material.clone(),
                         text.clone(),
-                        [1.0; 4],
+                        [
+                            item.fore_color[0],
+                            item.fore_color[1],
+                            item.fore_color[2],
+                            1.0,
+                        ],
                         "killfeed_game_msg",
                     ));
                 }
@@ -440,7 +519,7 @@ pub(crate) fn update_killfeed(
                 flip_kill_icon,
                 ..
             } => {
-                let mut x_virtual = GAME_MSG_WIN0_X;
+                let mut x_virtual = item.rect.x;
                 let line_names = (!*has_attacker || !attacker.is_empty())
                     && !victim.is_empty()
                     && font.is_some()
@@ -453,10 +532,12 @@ pub(crate) fn update_killfeed(
                             y_virtual,
                             nscale,
                             nscale,
-                            GAME_MSG_WIN0_HORZ_ALIGN,
-                            GAME_MSG_WIN0_VERT_ALIGN,
+                            i32::from(item.rect.horz_align),
+                            i32::from(item.rect.vert_align),
                         );
                         cmds.push(text_cmd(
+                            font_name,
+                            item.text_style,
                             applied.x,
                             applied.y,
                             applied.w,
@@ -466,19 +547,21 @@ pub(crate) fn update_killfeed(
                             obituary_name_color(local_team, *attacker_team),
                             "killfeed_obituary",
                         ));
-                        x_virtual += attacker_w + GAME_MSG_WIN0_TEXT_SCALE * 4.0;
+                        x_virtual += attacker_w + icon_spacing;
                     }
                 }
 
                 let (icon_vw, icon_vh) = killicon_virtual_size(*kill_icon_ratio);
+                let icon_scale = item.text_scale / hud_iw4::GAME_MSG_WIN0_TEXT_SCALE;
+                let (icon_vw, icon_vh) = (icon_vw * icon_scale, icon_vh * icon_scale);
                 let (s0, s1) = killicon_stretch_uv(*flip_kill_icon);
                 let placed = surface.apply_rect(
                     x_virtual,
                     y_virtual - icon_vh,
                     icon_vw,
                     icon_vh,
-                    GAME_MSG_WIN0_HORZ_ALIGN,
-                    GAME_MSG_WIN0_VERT_ALIGN,
+                    i32::from(item.rect.horz_align),
+                    i32::from(item.rect.vert_align),
                 );
                 let icon_ok = hud_images.get(*icon_namespace, icon, &mut images).is_some();
                 if !icon_ok {
@@ -507,16 +590,18 @@ pub(crate) fn update_killfeed(
                     });
                 }
                 if line_names {
-                    x_virtual += icon_vw + GAME_MSG_WIN0_TEXT_SCALE * 4.0;
+                    x_virtual += icon_vw + icon_spacing;
                     let applied = surface.apply_rect(
                         x_virtual,
                         y_virtual,
                         nscale,
                         nscale,
-                        GAME_MSG_WIN0_HORZ_ALIGN,
-                        GAME_MSG_WIN0_VERT_ALIGN,
+                        i32::from(item.rect.horz_align),
+                        i32::from(item.rect.vert_align),
                     );
                     cmds.push(text_cmd(
+                        font_name,
+                        item.text_style,
                         applied.x,
                         applied.y,
                         applied.w,
@@ -533,9 +618,22 @@ pub(crate) fn update_killfeed(
             cmd.color[3] *= alpha;
         }
     }
-    if let Some(def) = font.filter(|_| font_tex_ok) {
+    if let Some(def) = catalog
+        .as_ref()
+        .and_then(|c| c.font(HUD_SMALL_FONT))
+        .filter(|_| !window.bold.is_empty())
+    {
+        let font_material = asset_core::AssetRef::bare_name(&def.material).to_owned();
+        fonts.insert(HUD_SMALL_FONT.to_owned(), def);
+        let bold_font_tex_ok = hud_images
+            .get(
+                crate::images::HUD_CHROME_NAMESPACE,
+                &font_material,
+                &mut images,
+            )
+            .is_some();
         let scale = normalized_text_scale(def.pixel_height, BOLD_TEXT_SCALE);
-        for (i, (start, text)) in window.bold.iter().enumerate() {
+        for (i, (start, text)) in window.bold.iter().enumerate().filter(|_| bold_font_tex_ok) {
             let age = now.saturating_sub(*start);
             let alpha = ((BOLD_MSG_TIME_MS - age) as f32 / 500.0).clamp(0.0, 1.0);
             let width = text_width(def, text) as f32 * scale;
@@ -549,6 +647,8 @@ pub(crate) fn update_killfeed(
                 hud_iw4::ALIGN_VIEWABLE,
             );
             cmds.push(text_cmd(
+                HUD_SMALL_FONT,
+                hud_iw4::GAME_MSG_WIN0_TEXT_STYLE,
                 applied.x,
                 applied.y,
                 applied.w,

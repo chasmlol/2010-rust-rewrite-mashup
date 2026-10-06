@@ -107,7 +107,7 @@ impl Parser {
                     }
                     let value = if t.string {
                         self.pos += 1;
-                        Value::String(t.text.into())
+                        self.string_value(&t.text)
                     } else {
                         let text = &self.tokens[self.pos].text;
                         let text = if negative {

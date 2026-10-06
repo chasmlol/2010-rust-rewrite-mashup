@@ -2,7 +2,7 @@ use crate::frame::FrameWorld;
 use crate::world::ClientId;
 use entity_iw4::{TR_GRAVITY, TR_INTERPOLATE, Trajectory, evaluate_trajectory};
 use playerstate_iw4::{
-    AnimPair, ENTITYNUM_NONE, LINK_FLAGS_FORCE_THIRD_PERSON, MAX_CLIENT_CORPSES,
+    AnimPair, ENTITYNUM_NONE, LINK_FLAGS_WEAPON_VIEW_ONLY, MAX_CLIENT_CORPSES,
     PLAYER_CORPSE_ENTITY_BASE, PlayerState,
 };
 
@@ -184,7 +184,7 @@ pub(crate) fn occupy_player_clone(
 }
 
 fn client_think_entity_yaw(ps: &PlayerState) -> f32 {
-    if (ps.link_flags & LINK_FLAGS_FORCE_THIRD_PERSON) != 0 {
+    if (ps.link_flags & LINK_FLAGS_WEAPON_VIEW_ONLY) != 0 {
         ps.link_weapon_angles[1]
     } else {
         ps.viewangles[1]

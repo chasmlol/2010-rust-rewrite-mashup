@@ -11,6 +11,7 @@ pub mod spawn;
 pub mod sun_stage;
 pub mod view_parms;
 pub mod world;
+pub(crate) mod world_bindings;
 pub mod world_gpu;
 pub mod world_images;
 pub mod world_occupancy;

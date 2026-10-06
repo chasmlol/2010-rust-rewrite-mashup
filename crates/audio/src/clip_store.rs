@@ -1,5 +1,4 @@
 use std::collections::{HashMap, HashSet};
-use std::hash::Hash;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{Sender, channel};
 use std::sync::{Arc, Mutex};
@@ -10,39 +9,44 @@ use asset_core::AssetNamespace;
 use assets::NamespaceSoundIwd;
 use bevy::prelude::*;
 
-use crate::pcm::{PcmAudio, decode_audio_bytes};
-use crate::start::SoundClass;
+use crate::media::PcmBuffer;
+use crate::media_queue::{ClipJob, MediaJobQueue, MediaPriority, QueueRefusal};
+use crate::pcm::decode_audio_bytes;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub(crate) enum ClipKey {
+pub(crate) struct ClipKey {
+    revision: u64,
+    locator: ClipLocator,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+enum ClipLocator {
     Loaded(usize),
     Streamed {
         ns: AssetNamespace,
         dir: String,
         name: String,
+        decode: asset_audio::StreamedDecodePolicy,
     },
 }
 
-/// A queued clip and the instant it was queued, so a worker can say how long
-/// the job sat before anyone picked it up. The wait is the queue's, not the
-/// clip's: it is what the store owed and could not pay yet.
-struct ClipJob {
-    key: ClipKey,
-    queued_at: Instant,
+impl ClipKey {
+    fn revision(&self) -> u64 {
+        self.revision
+    }
+    pub(crate) fn is_loaded(&self) -> bool {
+        matches!(&self.locator, ClipLocator::Loaded(_))
+    }
 }
 
-/// Which decoder a clip went through. Every clip takes exactly one of these,
-/// and they cost wildly different things — an external process per XWMA clip,
-/// a loop over bytes for everything else — so the report separates them rather
-/// than averaging one number over all of them.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ClipPath {
-    /// Linear PCM straight out of the zone, converted to float and nothing else.
+    /// Linear PCM read in place from the zone.
     Pcm,
     /// T5 ADPCM, decoded in process.
     Adpcm,
-    /// T5 XWMA, decoded by an external `ffmpeg` or read from the artifact cache.
     Xwma,
+    Sab,
     /// A clip read out of an IWD rather than out of the zone.
     Streamed,
     /// No decoder claims the key: the bank holds nothing at that index, or it
@@ -58,6 +62,7 @@ impl ClipPath {
         Self::Pcm,
         Self::Adpcm,
         Self::Xwma,
+        Self::Sab,
         Self::Streamed,
         Self::Unresolved,
     ];
@@ -67,6 +72,7 @@ impl ClipPath {
             Self::Pcm => "pcm",
             Self::Adpcm => "t5 adpcm",
             Self::Xwma => "t5 xwma",
+            Self::Sab => "t6 sab",
             Self::Streamed => "streamed",
             Self::Unresolved => "unresolved",
         }
@@ -76,20 +82,43 @@ impl ClipPath {
 #[derive(Clone, Debug)]
 pub(crate) enum ClipError {
     Decode,
+    UnsupportedCodec(asset_audio::SabCodec),
+    MetadataMismatch,
+    ForeignOwner,
+    Xwma(asset_audio::XwmaDecodeError),
+    InvalidPcm(crate::media::PcmError),
     Read,
     QueueClosed,
+    RequestLimit,
 }
 
-#[derive(Clone, Debug)]
-pub(crate) struct PreparedPcm {
-    samples: Arc<[f32]>,
-    channels: u16,
-    sample_rate: u32,
+impl From<crate::pcm::DecodeError> for ClipError {
+    fn from(error: crate::pcm::DecodeError) -> Self {
+        match error {
+            crate::pcm::DecodeError::Decode => Self::Decode,
+            crate::pcm::DecodeError::Read => Self::Read,
+            crate::pcm::DecodeError::UnsupportedCodec(codec) => Self::UnsupportedCodec(codec),
+            crate::pcm::DecodeError::MetadataMismatch => Self::MetadataMismatch,
+            crate::pcm::DecodeError::Pcm(error) => Self::InvalidPcm(error),
+        }
+    }
 }
 
-#[derive(Clone)]
+pub(crate) enum MediaRequest {
+    Existing,
+    Resident,
+    Submitted,
+    Deferred,
+    Refused,
+}
+
+// Bump when PCM decode, layout or trim rules change.
+const PCM_CONVERSION_REVISION: u32 = 1;
+
+#[derive(Clone, PartialEq, Eq, Hash)]
 struct LoadedClipKey {
-    encoded: Arc<[u8]>,
+    content: [u8; 32],
+    conversion_revision: u32,
     format: i32,
     rate: u32,
     bits: i32,
@@ -99,52 +128,19 @@ struct LoadedClipKey {
     seek_table: Vec<u32>,
 }
 
-impl PartialEq for LoadedClipKey {
-    fn eq(&self, other: &Self) -> bool {
-        Arc::ptr_eq(&self.encoded, &other.encoded)
-            && self.format == other.format
-            && self.rate == other.rate
-            && self.bits == other.bits
-            && self.channels == other.channels
-            && self.samples == other.samples
-            && self.block_size == other.block_size
-            && self.seek_table == other.seek_table
+fn resident_clip_key(bank: &SoundCatalog, key: &ClipKey) -> Option<(LoadedClipKey, bool)> {
+    if key.revision() != bank.revision() {
+        return None;
     }
-}
-
-impl Eq for LoadedClipKey {}
-
-impl std::hash::Hash for LoadedClipKey {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        (Arc::as_ptr(&self.encoded) as *const u8 as usize).hash(state);
-        self.format.hash(state);
-        self.rate.hash(state);
-        self.bits.hash(state);
-        self.channels.hash(state);
-        self.samples.hash(state);
-        self.block_size.hash(state);
-        self.seek_table.hash(state);
-    }
-}
-
-#[derive(Clone, PartialEq, Eq, Hash)]
-enum ResidentClipKey {
-    Common(LoadedClipKey),
-    Map(LoadedClipKey),
-    Streamed(ClipKey),
-}
-
-impl ResidentClipKey {
-    fn common(&self) -> bool {
-        matches!(self, Self::Common(_))
-    }
-}
-
-fn resident_clip_key(bank: &SoundCatalog, key: &ClipKey) -> Option<ResidentClipKey> {
-    let ClipKey::Loaded(index) = key else {
-        return Some(ResidentClipKey::Streamed(key.clone()));
+    let ClipLocator::Loaded(index) = &key.locator else {
+        return None;
     };
     let sound = bank.pcm_at(*index)?;
+    // SAB capture has a locator, not a verified payload hash. Never reuse it
+    // under the empty encoded-content hash shared by descriptor-only entries.
+    if sound.sab_media.is_some() {
+        return None;
+    }
     let common = matches!(
         sound.zone.as_str(),
         "code_post_gfx_mp"
@@ -153,40 +149,56 @@ fn resident_clip_key(bank: &SoundCatalog, key: &ClipKey) -> Option<ResidentClipK
             | "common_mp"
             | "localized_common_mp"
     );
-    let loaded = LoadedClipKey {
-        encoded: sound.encoded_arc(),
-        format: sound.format(),
-        rate: sound.rate,
-        bits: sound.bits(),
-        channels: sound.channels(),
-        samples: sound.samples,
-        block_size: sound.block_size,
-        seek_table: sound.seek_table.clone(),
-    };
-    Some(if common {
-        ResidentClipKey::Common(loaded)
-    } else {
-        ResidentClipKey::Map(loaded)
-    })
+    Some((
+        LoadedClipKey {
+            content: sound.encoded_content_id(),
+            conversion_revision: PCM_CONVERSION_REVISION,
+            format: sound.format(),
+            rate: sound.rate,
+            bits: sound.bits(),
+            channels: sound.channels(),
+            samples: sound.samples,
+            block_size: sound.block_size,
+            seek_table: sound.seek_table.clone(),
+        },
+        common,
+    ))
+}
+
+struct PreparedClip {
+    pcm: PcmBuffer,
+    common: bool,
 }
 
 #[derive(Default)]
-struct ResidentClipCacheInner {
+struct PreparedClipCacheInner {
     profile_id: u64,
     bank: std::sync::Weak<SoundCatalog>,
-    prepared: HashMap<ResidentClipKey, PreparedPcm>,
-    dry_handles: HashMap<ResidentClipKey, Handle<PcmAudio>>,
+    prepared: HashMap<LoadedClipKey, PreparedClip>,
 }
 
+#[derive(Clone, Default)]
+struct PreparedClipCache(Arc<Mutex<PreparedClipCacheInner>>);
+
 #[derive(Resource, Clone, Default)]
-pub(crate) struct ResidentClipCache(Arc<Mutex<ResidentClipCacheInner>>);
+pub(crate) struct ResidentClipCache {
+    prepared: PreparedClipCache,
+}
 
 impl ResidentClipCache {
+    fn use_profile(&self, profile_id: u64) {
+        self.prepared.use_profile(profile_id);
+    }
+    fn use_bank(&self, bank: &Arc<SoundCatalog>) {
+        self.prepared.use_bank(bank);
+    }
+}
+
+impl PreparedClipCache {
     fn use_profile(&self, profile_id: u64) {
         let mut inner = self.0.lock().unwrap_or_else(|poison| poison.into_inner());
         if inner.profile_id != profile_id {
             inner.prepared.clear();
-            inner.dry_handles.clear();
             inner.profile_id = profile_id;
         }
     }
@@ -196,68 +208,44 @@ impl ResidentClipCache {
         if std::sync::Weak::ptr_eq(&inner.bank, &Arc::downgrade(bank)) {
             return;
         }
-        inner.prepared.retain(|key, _| key.common());
-        inner.dry_handles.retain(|key, _| key.common());
+        inner.prepared.retain(|_, entry| entry.common);
         inner.bank = Arc::downgrade(bank);
     }
 
-    fn ready(&self, profile_id: u64, key: &ResidentClipKey) -> Option<PreparedPcm> {
-        let inner = self.0.lock().unwrap_or_else(|poison| poison.into_inner());
-        (profile_id != 0 && inner.profile_id == profile_id)
-            .then(|| inner.prepared.get(key).cloned())
-            .flatten()
-    }
-
-    fn remember(&self, profile_id: u64, key: ResidentClipKey, pcm: PreparedPcm) {
-        let mut inner = self.0.lock().unwrap_or_else(|poison| poison.into_inner());
-        if profile_id != 0 && inner.profile_id == profile_id {
-            inner.prepared.entry(key).or_insert(pcm);
-        }
-    }
-
-    fn dry_handle(
-        &self,
-        profile_id: u64,
-        key: ResidentClipKey,
-        assets: &mut Assets<PcmAudio>,
-        pcm: &PcmAudio,
-    ) -> Option<(Handle<PcmAudio>, bool)> {
+    fn ready(&self, profile_id: u64, key: &LoadedClipKey, common: bool) -> Option<PcmBuffer> {
         let mut inner = self.0.lock().unwrap_or_else(|poison| poison.into_inner());
         if profile_id == 0 || inner.profile_id != profile_id {
             return None;
         }
-        if let Some(handle) = inner.dry_handles.get(&key)
-            && assets.get(handle.id()).is_some()
-        {
-            return Some((handle.clone(), true));
+        let entry = inner.prepared.get_mut(key)?;
+        entry.common |= common;
+        Some(entry.pcm.clone())
+    }
+
+    fn remember(&self, profile_id: u64, key: LoadedClipKey, common: bool, pcm: PcmBuffer) {
+        let mut inner = self.0.lock().unwrap_or_else(|poison| poison.into_inner());
+        if profile_id != 0 && inner.profile_id == profile_id {
+            inner
+                .prepared
+                .entry(key)
+                .and_modify(|entry| entry.common |= common)
+                .or_insert(PreparedClip { pcm, common });
         }
-        let handle = assets.add(pcm.clone());
-        inner.dry_handles.insert(key, handle.clone());
-        Some((handle, false))
     }
 }
 
-impl PreparedPcm {
-    pub(crate) fn into_audio(self) -> Option<PcmAudio> {
-        PcmAudio::from_prepared(self.samples, self.channels, self.sample_rate)
-    }
-}
+pub(crate) const MEDIA_REQUEST_LIMIT: usize = 4096;
 
-/// How many queued jobs a worker takes at once. It bounds how long the store
-/// can hold a clip's outcome back — every job in a batch is published when the
-/// last of them is prepared — and it is the XWMA decoder's batch, which is the
-/// only decoder here that gains anything from the grouping.
-pub const PREP_BATCH: usize = 64;
-
-/// Kept after the sender so the channel closes before these workers are joined.
 struct ClipWorkers {
     handles: Vec<std::thread::JoinHandle<()>>,
     stop: Arc<AtomicBool>,
+    queue: Arc<MediaJobQueue>,
 }
 
 impl Drop for ClipWorkers {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Release);
+        self.queue.close();
         let mut joined = 0;
         for handle in self.handles.drain(..) {
             if handle.join().is_err() {
@@ -273,23 +261,82 @@ impl Drop for ClipWorkers {
 
 #[derive(Resource)]
 pub struct ClipStore {
+    service: MediaService,
+}
+
+#[derive(Clone)]
+pub(crate) struct MediaService(Arc<MediaServiceInner>);
+
+struct MediaServiceInner {
     bank: Arc<SoundCatalog>,
-    tx: Sender<ClipJob>,
-    queued: HashSet<ClipKey>,
-    outcomes: Arc<Mutex<HashMap<ClipKey, Result<PreparedPcm, ClipError>>>>,
-    workers: ClipWorkers,
-    clip_cache: Option<ResidentClipCache>,
+    queue: Arc<MediaJobQueue>,
+    requests: Arc<Mutex<MediaRequests>>,
+    outcomes: Arc<Mutex<Outcomes>>,
+    workers: Option<ClipWorkers>,
+    retirement: Sender<ClipWorkers>,
+    clip_cache: Option<PreparedClipCache>,
     common_profile_id: u64,
+}
+
+impl Drop for MediaServiceInner {
+    fn drop(&mut self) {
+        if let Some(workers) = self.workers.take() {
+            workers.stop.store(true, Ordering::Release);
+            self.queue.close();
+            if let Err(error) = self.retirement.send(workers) {
+                let mut workers = error.0;
+                // Joining here would stall control; the closed queue wakes stopped workers.
+                workers.handles.clear();
+            }
+        }
+    }
+}
+
+type Outcomes = HashMap<ClipKey, (Result<PcmBuffer, ClipError>, u64)>;
+
+static USE_TICK: AtomicU64 = AtomicU64::new(0);
+
+fn evict_idle_streamed(requests: &Mutex<MediaRequests>, outcomes: &Mutex<Outcomes>) -> usize {
+    let mut requests = requests.lock().unwrap_or_else(|poison| poison.into_inner());
+    let mut outcomes = outcomes.lock().unwrap_or_else(|poison| poison.into_inner());
+    let mut idle: Vec<(u64, ClipKey, usize)> = outcomes
+        .iter()
+        .filter_map(|(key, (result, used))| match (&key.locator, result) {
+            (ClipLocator::Streamed { .. }, Ok(pcm)) if !pcm.shared() => {
+                Some((*used, key.clone(), pcm.resident_bytes()))
+            }
+            _ => None,
+        })
+        .collect();
+    idle.sort_unstable_by_key(|(used, ..)| *used);
+    let goal = crate::pcm_memory().limit_bytes / 4;
+    let mut freed = 0;
+    for (_, key, bytes) in idle {
+        if freed >= goal {
+            break;
+        }
+        outcomes.remove(&key);
+        requests.queued.remove(&key);
+        freed += bytes;
+    }
+    EVICTED_BYTES.fetch_add(freed as u64, Ordering::Relaxed);
+    freed
+}
+
+#[derive(Default)]
+struct MediaRequests {
+    queued: HashSet<ClipKey>,
     reused_clips: usize,
     reused_bytes: u64,
-
     match_live: bool,
     late_prepares: u32,
 }
 
 impl ClipStore {
     pub fn start(bank: Arc<SoundCatalog>, iwd: Option<Arc<NamespaceSoundIwd>>) -> Self {
-        Self::start_with_common(bank, iwd, 0, None)
+        Self {
+            service: MediaService::start_with_common(bank, iwd, 0, None),
+        }
     }
 
     pub(crate) fn start_with_common(
@@ -302,250 +349,322 @@ impl ClipStore {
             cache.use_profile(common_profile_id);
             cache.use_bank(&bank);
         }
+        let prepared = clip_cache.as_ref().map(|cache| cache.prepared.clone());
+        Self {
+            service: MediaService::start_with_common(bank, iwd, common_profile_id, prepared),
+        }
+    }
+
+    pub(crate) fn service(&self) -> MediaService {
+        self.service.clone()
+    }
+    pub fn workers(&self) -> usize {
+        self.service.workers()
+    }
+    pub fn reused_resident(&self) -> (usize, u64) {
+        self.service.reused_resident()
+    }
+    pub fn arm_match_live(&mut self) {
+        self.service.arm_match_live();
+    }
+    pub fn late_prepares(&self) -> u32 {
+        self.service.late_prepares()
+    }
+    pub(crate) fn prefetch(&mut self, key: ClipKey) -> MediaRequest {
+        self.service.submit_request(key, MediaPriority::Prewarm)
+    }
+    pub(crate) fn ready(&self, key: &ClipKey) -> Option<Result<PcmBuffer, ClipError>> {
+        self.service.ready(key)
+    }
+}
+
+impl MediaService {
+    fn start_with_common(
+        bank: Arc<SoundCatalog>,
+        iwd: Option<Arc<NamespaceSoundIwd>>,
+        common_profile_id: u64,
+        clip_cache: Option<PreparedClipCache>,
+    ) -> Self {
+        if let Some(cache) = &clip_cache {
+            cache.use_profile(common_profile_id);
+            cache.use_bank(&bank);
+        }
+        let (retirement, retired_workers) = channel::<ClipWorkers>();
+        if let Err(error) = std::thread::Builder::new()
+            .name("audio-media-retire".into())
+            .spawn(move || {
+                if let Ok(workers) = retired_workers.recv() {
+                    drop(workers);
+                }
+            })
+        {
+            diag::warn!(
+                Audio,
+                "audio: media retirement thread not started ({error})"
+            );
+        }
         let workers = std::thread::available_parallelism()
-            .map(|n| n.get().saturating_sub(2).clamp(1, 4))
-            .unwrap_or(1);
-        let (tx, rx) = channel::<ClipJob>();
-        let rx = Arc::new(Mutex::new(rx));
-        let outcomes = Arc::new(Mutex::new(HashMap::new()));
+            .map(|n| n.get().saturating_sub(2).clamp(2, 4))
+            .unwrap_or(2);
+        let queue = Arc::new(MediaJobQueue::new());
+        let outcomes = Arc::new(Mutex::new(Outcomes::new()));
+        let requests = Arc::new(Mutex::new(MediaRequests::default()));
         let stop = Arc::new(AtomicBool::new(false));
         let mut handles = Vec::with_capacity(workers);
+        let mut urgent_started = false;
+        let mut general_started = false;
         for slot in 0..workers {
-            let rx = Arc::clone(&rx);
+            let queue_worker = Arc::clone(&queue);
             let bank = Arc::clone(&bank);
             let iwd = iwd.clone();
             let outcomes = Arc::clone(&outcomes);
+            let requests = Arc::clone(&requests);
             let clip_cache = clip_cache.clone();
             let stop_worker = Arc::clone(&stop);
 
             let spawned = std::thread::Builder::new()
                 .name(format!("clip-prep-{slot}"))
                 .spawn(move || {
+                    assets::session_load::use_process_cpus();
+                    crate::diagnostics::thread(&format!("clip-prep-{slot}"));
                     loop {
                         if stop_worker.load(Ordering::Acquire) {
                             return;
                         }
-                        // A match queues every clip it needs at once, and one
-                        // of the decoders below is an external process whose
-                        // startup costs more than the decode. So a worker takes
-                        // what is already waiting rather than one job at a time:
-                        // the queue is where the batch comes from. A clip asked
-                        // for on its own — a late prepare, a reload — still
-                        // arrives alone and is prepared alone.
-                        let jobs = {
-                            let guard = rx.lock().unwrap_or_else(|poison| poison.into_inner());
-                            let Ok(first) = guard.recv() else {
-                                return;
-                            };
-                            let mut jobs = vec![first];
-                            while jobs.len() < PREP_BATCH {
-                                let Ok(next) = guard.try_recv() else { break };
-                                jobs.push(next);
-                            }
-                            jobs
+                        let Some(job) = queue_worker.pop(slot == 0) else {
+                            return;
                         };
                         if stop_worker.load(Ordering::Acquire) {
                             return;
                         }
-                        for job in &jobs {
-                            QUEUE_WAIT_NS.fetch_add(
-                                job.queued_at.elapsed().as_nanos() as u64,
-                                Ordering::Relaxed,
-                            );
+                        QUEUE_WAIT_NS.fetch_add(job.queued_at.elapsed().as_nanos() as u64, Ordering::Relaxed);
+                        let prepare_at = Instant::now();
+                        let (path, mut result) = prepare_clip_now(&bank, iwd.as_deref(), &job.key);
+                        note_prepared(path, prepare_at, result.as_ref());
+                        if matches!(result, Err(ClipError::InvalidPcm(crate::media::PcmError::MemoryLimit)))
+                            && !stop_worker.load(Ordering::Acquire)
+                            && evict_idle_streamed(&requests, &outcomes) != 0
+                        {
+                            let retry_at = Instant::now();
+                            let (path, retry) = prepare_clip_now(&bank, iwd.as_deref(), &job.key);
+                            note_prepared(path, retry_at, retry.as_ref());
+                            result = retry;
                         }
-                        let prepared = prepare_jobs(&bank, iwd.as_deref(), &jobs);
                         if stop_worker.load(Ordering::Acquire) {
                             return;
                         }
-                        if let Some(cache) = &clip_cache {
-                            for (job, result) in jobs.iter().zip(&prepared) {
-                                if let Ok(pcm) = result
-                                    && let Some(key) = resident_clip_key(&bank, &job.key)
-                                {
-                                    cache.remember(common_profile_id, key, pcm.clone());
-                                }
-                            }
+                        if let Some(cache) = &clip_cache
+                            && let Ok(pcm) = &result
+                            && let Some((key, common)) = resident_clip_key(&bank, &job.key)
+                        {
+                            cache.remember(common_profile_id, key, common, pcm.clone());
                         }
-                        let mut guard =
-                            outcomes.lock().unwrap_or_else(|poison| poison.into_inner());
-                        for (job, result) in jobs.into_iter().zip(prepared) {
-                            guard.insert(job.key, result);
+                        if crate::diagnostics::enabled() {
+                            let result_detail = match &result {
+                                Ok(pcm) => format!("ready frames={} rate={}", pcm.len() / usize::from(pcm.channels()), pcm.rate()),
+                                Err(error) => format!("failed {error:?}"),
+                            };
+                            crate::diagnostics::emit(format!("audio diag: media key={:?} queued_to_publish_ms={:.3} prepare_ms={:.3} {result_detail}", job.key, job.queued_at.elapsed().as_secs_f64()*1000.0, prepare_at.elapsed().as_secs_f64()*1000.0));
                         }
+                        outcomes.lock().unwrap_or_else(|poison| poison.into_inner())
+                            .insert(job.key, (result, USE_TICK.fetch_add(1, Ordering::Relaxed)));
                     }
                 });
             match spawned {
-                Ok(handle) => handles.push(handle),
+                Ok(handle) => {
+                    urgent_started |= slot == 0;
+                    general_started |= slot != 0;
+                    handles.push(handle);
+                }
                 Err(e) => diag::warn!(Audio, "audio: clip prep worker {slot} not started ({e})"),
             }
         }
+        if !urgent_started || !general_started {
+            stop.store(true, Ordering::Release);
+            queue.close();
+        }
         WORKERS.fetch_add(handles.len() as u64, Ordering::Relaxed);
-        Self {
+        Self(Arc::new(MediaServiceInner {
             bank,
-            tx,
-            queued: HashSet::new(),
+            queue: Arc::clone(&queue),
+            requests,
             outcomes,
-            workers: ClipWorkers { handles, stop },
+            workers: Some(ClipWorkers {
+                handles,
+                stop,
+                queue,
+            }),
+            retirement,
             clip_cache,
             common_profile_id,
-            reused_clips: 0,
-            reused_bytes: 0,
-            match_live: false,
-            late_prepares: 0,
+        }))
+    }
+
+    pub(crate) fn same_owner(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+
+    pub(crate) fn bank_revision(&self) -> u64 {
+        self.0.bank.revision()
+    }
+
+    fn workers(&self) -> usize {
+        self.0
+            .workers
+            .as_ref()
+            .map_or(0, |workers| workers.handles.len())
+    }
+
+    fn reused_resident(&self) -> (usize, u64) {
+        let requests = self
+            .0
+            .requests
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        (requests.reused_clips, requests.reused_bytes)
+    }
+
+    fn arm_match_live(&self) {
+        self.0
+            .requests
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .match_live = true;
+    }
+
+    fn late_prepares(&self) -> u32 {
+        self.0
+            .requests
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .late_prepares
+    }
+
+    pub(crate) fn request(&self, key: ClipKey) -> bool {
+        matches!(
+            self.submit_request(key, MediaPriority::Urgent),
+            MediaRequest::Submitted
+        )
+    }
+
+    fn submit_request(&self, key: ClipKey, priority: MediaPriority) -> MediaRequest {
+        if key.revision() != self.bank_revision() {
+            return MediaRequest::Refused;
         }
-    }
-
-    pub fn workers(&self) -> usize {
-        self.workers.handles.len()
-    }
-
-    pub fn reused_resident(&self) -> (usize, u64) {
-        (self.reused_clips, self.reused_bytes)
-    }
-
-    pub(crate) fn resident_dry_handle(
-        &self,
-        clip: &ClipKey,
-        assets: &mut Assets<PcmAudio>,
-        pcm: &PcmAudio,
-    ) -> Option<(Handle<PcmAudio>, bool)> {
-        let cache = self.clip_cache.as_ref()?;
-        let key = resident_clip_key(&self.bank, clip)?;
-        cache.dry_handle(self.common_profile_id, key, assets, pcm)
-    }
-
-    pub fn arm_match_live(&mut self) {
-        self.match_live = true;
-    }
-
-    /// This store's count. A store lives as long as one installed sound bank,
-    /// so a map change starts a new one — which is the scope the console asks
-    /// about. The process total is in [`clip_prep_cost`], for the exit hook
-    /// that has no store to ask.
-    pub fn late_prepares(&self) -> u32 {
-        self.late_prepares
-    }
-
-    fn note_late(&mut self, key: &ClipKey) {
-        if !self.match_live {
-            return;
-        }
-        self.late_prepares = self.late_prepares.saturating_add(1);
-        LATE.fetch_add(1, Ordering::Relaxed);
-        diag::warn!(Audio, "audio: clip prepare after AudioReady ({key:?})");
-    }
-
-    pub fn request_alias(&mut self, ns: AssetNamespace, alias: &str) -> usize {
-        let mut queued = 0;
-        for key in clip_keys_for_alias(&self.bank, ns, alias) {
-            if self.request(key) {
-                queued += 1;
-            }
-        }
-        queued
-    }
-
-    pub(crate) fn request(&mut self, key: ClipKey) -> bool {
         REQUESTS.fetch_add(1, Ordering::Relaxed);
-        if self.ready(&key).is_some() {
-            return false;
+        let lock_at = Instant::now();
+        let mut requests = self
+            .0
+            .requests
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        let _ = crate::diagnostics::slow_stage("media_request_lock", lock_at);
+        if requests.queued.contains(&key) {
+            if priority == MediaPriority::Urgent {
+                self.0.queue.promote(&key);
+            }
+            return MediaRequest::Existing;
         }
-        if let Some(pcm) = self.clip_cache.as_ref().and_then(|cache| {
-            resident_clip_key(&self.bank, &key)
-                .and_then(|source| cache.ready(self.common_profile_id, &source))
+        if requests.queued.len() == MEDIA_REQUEST_LIMIT {
+            REQUEST_LIMIT.fetch_add(1, Ordering::Relaxed);
+            return MediaRequest::Refused;
+        }
+        requests.queued.insert(key.clone());
+        if let Some(pcm) = self.0.clip_cache.as_ref().and_then(|cache| {
+            resident_clip_key(&self.0.bank, &key)
+                .and_then(|(source, common)| cache.ready(self.0.common_profile_id, &source, common))
         }) {
-            self.reused_clips += 1;
-            self.reused_bytes += (pcm.samples.len() * size_of::<f32>()) as u64;
-            self.outcomes
+            requests.reused_clips += 1;
+            requests.reused_bytes += pcm.resident_bytes() as u64;
+            self.0
+                .outcomes
                 .lock()
                 .unwrap_or_else(|poison| poison.into_inner())
-                .insert(key, Ok(pcm));
-            return false;
+                .insert(key, (Ok(pcm), USE_TICK.fetch_add(1, Ordering::Relaxed)));
+            return MediaRequest::Resident;
         }
-        if !self.queued.insert(key.clone()) {
-            return false;
+        if requests.match_live && key.is_loaded() {
+            requests.late_prepares = requests.late_prepares.saturating_add(1);
+            LATE.fetch_add(1, Ordering::Relaxed);
         }
-        self.note_late(&key);
-        QUEUED.fetch_add(1, Ordering::Relaxed);
         let job = ClipJob {
             key: key.clone(),
             queued_at: Instant::now(),
         };
-        if self.tx.send(job).is_err() {
-            self.outcomes
-                .lock()
-                .unwrap_or_else(|poison| poison.into_inner())
-                .insert(key, Err(ClipError::QueueClosed));
-            return false;
+        match self.0.queue.push(job, priority) {
+            Ok(()) => {
+                QUEUED.fetch_add(1, Ordering::Relaxed);
+                MediaRequest::Submitted
+            }
+            Err(error) => {
+                let reason = match error {
+                    QueueRefusal::Full => {
+                        requests.queued.remove(&key);
+                        QUEUE_DEFERRED.fetch_add(1, Ordering::Relaxed);
+                        return MediaRequest::Deferred;
+                    }
+                    QueueRefusal::Closed => ClipError::QueueClosed,
+                };
+                self.0
+                    .outcomes
+                    .lock()
+                    .unwrap_or_else(|poison| poison.into_inner())
+                    .insert(key, (Err(reason), 0));
+                MediaRequest::Refused
+            }
         }
-        true
     }
 
-    pub(crate) fn ready(&self, key: &ClipKey) -> Option<Result<PcmAudio, ClipError>> {
-        let guard = self
+    pub(crate) fn ready(&self, key: &ClipKey) -> Option<Result<PcmBuffer, ClipError>> {
+        if key.revision() != self.bank_revision() {
+            return Some(Err(ClipError::ForeignOwner));
+        }
+        let lock_at = Instant::now();
+        let at_limit = {
+            let requests = self
+                .0
+                .requests
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner());
+            !requests.queued.contains(key) && requests.queued.len() == MEDIA_REQUEST_LIMIT
+        };
+        let lock_at = crate::diagnostics::slow_stage("media_ready_requests_lock", lock_at);
+        if at_limit {
+            return Some(Err(ClipError::RequestLimit));
+        }
+        let mut outcomes = self
+            .0
             .outcomes
             .lock()
             .unwrap_or_else(|poison| poison.into_inner());
-        match guard.get(key) {
-            Some(Ok(prepared)) => prepared
-                .clone()
-                .into_audio()
-                .map(Ok)
-                .or(Some(Err(ClipError::Decode))),
-            Some(Err(err)) => Some(Err(err.clone())),
-            None => None,
-        }
+        let _ = crate::diagnostics::slow_stage("media_ready_outcomes_lock", lock_at);
+        let (result, used) = outcomes.get_mut(key)?;
+        *used = USE_TICK.fetch_add(1, Ordering::Relaxed);
+        Some(result.clone())
     }
 }
 
-pub(crate) struct PendingOneshot {
-    pub namespace: AssetNamespace,
-    pub alias: String,
-    pub bound: Option<usize>,
-    pub variant: usize,
-    pub volume: f32,
-    pub pitch: f32,
-    pub origin_inches: Option<[f32; 3]>,
-    pub snd_ent: Option<u32>,
-    pub clip: ClipKey,
-    pub layer: Option<String>,
-    pub class: SoundClass,
-    pub epoch: u64,
-    pub deadline: Instant,
+pub(crate) struct CueFeedbackEntry {
+    pub handle: crate::cue::CueHandle,
 }
 
 #[derive(Resource, Default)]
-pub(crate) struct PendingStarts {
-    pub entries: Vec<PendingOneshot>,
+pub(crate) struct CueFeedback {
+    pub cues: Vec<CueFeedbackEntry>,
+    pub dropped: u64,
 }
 
-impl PendingStarts {
-    pub fn push_oneshot(&mut self, pending: PendingOneshot) {
-        self.entries.push(pending);
+impl CueFeedback {
+    pub(crate) fn push(&mut self, handle: crate::cue::CueHandle) {
+        if self.cues.len() == crate::runtime::LOGICAL_INSTANCES {
+            self.cues.remove(0);
+            self.dropped = self.dropped.saturating_add(1);
+        }
+        self.cues.push(CueFeedbackEntry { handle });
     }
-
-    pub fn cancel_alias(
-        &mut self,
-        namespace: AssetNamespace,
-        alias: &str,
-        snd_ent: Option<u32>,
-        epoch: u64,
-    ) {
-        self.entries.retain(|e| {
-            !(e.namespace == namespace
-                && e.alias == alias
-                && e.snd_ent == snd_ent
-                && e.epoch == epoch
-                && e.class.scope() == crate::backend::AudioScope::Match)
-        });
-    }
-
     pub fn clear(&mut self) {
-        self.entries.clear();
+        self.cues.clear();
     }
-}
-
-pub(crate) fn deadline_for(class: SoundClass) -> Instant {
-    Instant::now() + class.oneshot_wait()
 }
 
 pub(crate) fn clip_keys_for_alias(
@@ -569,68 +688,72 @@ fn collect_clip_keys(
     seen_key: &mut HashSet<ClipKey>,
     out: &mut Vec<ClipKey>,
 ) {
-    if depth > 10 || !seen_alias.insert(alias.to_owned()) {
+    if depth > asset_audio::MAX_SECONDARY_DEPTH || !seen_alias.insert(alias.to_owned()) {
         return;
     }
-    let Some(sound) = bank.sound_in(ns, alias) else {
+    let Some(index) = bank.index_in(ns, alias) else {
         return;
     };
-    for (vi, row) in sound.aliases.iter().enumerate() {
-        if let Some(idx) = row.loaded.bound_index() {
-            let key = ClipKey::Loaded(idx);
-            if seen_key.insert(key.clone()) {
-                out.push(key);
-            }
-        } else if let Some((sns, dir, name)) = bank.streamed_for_variant(ns, alias, vi) {
-            let key = ClipKey::Streamed { ns: sns, dir, name };
+    let Some(sound) = bank.sound_at(index) else {
+        return;
+    };
+    for vi in 0..sound.aliases.len() {
+        let Ok(bound) = bank.bind_published_alias(index, vi) else {
+            continue;
+        };
+        if let Ok(Some(key)) = clip_key_for_sound(bound) {
             if seen_key.insert(key.clone()) {
                 out.push(key);
             }
         }
-        if let Some(sec) = row.secondary.as_deref()
-            && !sec.is_empty()
+        if let Some(secondary) = bank
+            .playback_policy(index, vi)
+            .and_then(|policy| policy.composition.secondary.as_ref())
         {
-            collect_clip_keys(bank, ns, sec, depth + 1, seen_alias, seen_key, out);
+            collect_clip_keys(
+                bank,
+                ns,
+                &secondary.alias,
+                depth + 1,
+                seen_alias,
+                seen_key,
+                out,
+            );
         }
     }
 }
 
-pub(crate) fn clip_key_for_variant(
-    bank: &SoundCatalog,
-    ns: AssetNamespace,
-    alias: &str,
-    bound: Option<usize>,
-    variant: usize,
-    loaded_name: Option<&str>,
-    loaded_ns: Option<AssetNamespace>,
-) -> Option<ClipKey> {
-    if let (Some(name), Some(loaded_ns)) = (loaded_name, loaded_ns)
-        && let Some(idx) = bank.loaded_index_in(loaded_ns, name)
-    {
-        return Some(ClipKey::Loaded(idx));
-    }
-    let sound = match bound {
-        Some(index) => bank.sound_at(index),
-        None => bank.sound_in(ns, alias),
-    };
-    if let Some(idx) = sound
-        .and_then(|s| s.aliases.get(variant))
-        .and_then(|row| row.loaded.bound_index())
-    {
-        return Some(ClipKey::Loaded(idx));
-    }
-    match bound {
-        Some(index) => bank.streamed_for_variant_at(index, variant),
-        None => bank.streamed_for_variant(ns, alias, variant),
-    }
-    .map(|(sns, dir, name)| ClipKey::Streamed { ns: sns, dir, name })
+pub(crate) fn clip_key_for_sound(
+    bound: asset_audio::BoundSound<'_>,
+) -> Result<Option<ClipKey>, asset_audio::SoundBindingRefusal> {
+    let revision = bound.revision();
+    Ok(bound.media()?.map(|media| ClipKey {
+        revision,
+        locator: match media {
+            asset_audio::BoundSoundMedia::Loaded { index, .. } => ClipLocator::Loaded(index),
+            asset_audio::BoundSoundMedia::Streamed {
+                namespace,
+                dir,
+                name,
+                decode,
+            } => ClipLocator::Streamed {
+                ns: namespace,
+                dir,
+                name,
+                decode,
+            },
+        },
+    }))
 }
 
 static WORKERS: AtomicU64 = AtomicU64::new(0);
 static REQUESTS: AtomicU64 = AtomicU64::new(0);
+static QUEUE_DEFERRED: AtomicU64 = AtomicU64::new(0);
+static REQUEST_LIMIT: AtomicU64 = AtomicU64::new(0);
 static QUEUED: AtomicU64 = AtomicU64::new(0);
 static QUEUE_WAIT_NS: AtomicU64 = AtomicU64::new(0);
 static LATE: AtomicU64 = AtomicU64::new(0);
+static EVICTED_BYTES: AtomicU64 = AtomicU64::new(0);
 static PREPARED: [AtomicU64; ClipPath::COUNT] = [const { AtomicU64::new(0) }; ClipPath::COUNT];
 static FAILED: [AtomicU64; ClipPath::COUNT] = [const { AtomicU64::new(0) }; ClipPath::COUNT];
 static WALL_NS: [AtomicU64; ClipPath::COUNT] = [const { AtomicU64::new(0) }; ClipPath::COUNT];
@@ -643,8 +766,6 @@ pub struct ClipPathCost {
     pub failed: u64,
     /// Worker time inside this decoder, summed over the prep threads.
     pub wall_ms: f64,
-    /// Resident `f32` samples this decoder produced. The store keeps them for
-    /// the life of the match, so this is memory and not throughput.
     pub sample_bytes: u64,
 }
 
@@ -662,8 +783,11 @@ pub struct ClipPrepCost {
     pub workers: u64,
     pub requests: u64,
     pub queued: u64,
+    pub queue_deferred: u64,
+    pub request_limit: u64,
     pub queue_wait_ms: f64,
     pub late: u64,
+    pub evicted_bytes: u64,
     pub paths: Vec<(ClipPath, ClipPathCost)>,
 }
 
@@ -672,8 +796,11 @@ pub fn clip_prep_cost() -> ClipPrepCost {
         workers: WORKERS.load(Ordering::Relaxed),
         requests: REQUESTS.load(Ordering::Relaxed),
         queued: QUEUED.load(Ordering::Relaxed),
+        queue_deferred: QUEUE_DEFERRED.load(Ordering::Relaxed),
+        request_limit: REQUEST_LIMIT.load(Ordering::Relaxed),
         queue_wait_ms: QUEUE_WAIT_NS.load(Ordering::Relaxed) as f64 / 1.0e6,
         late: LATE.load(Ordering::Relaxed),
+        evicted_bytes: EVICTED_BYTES.load(Ordering::Relaxed),
         paths: ClipPath::ALL
             .into_iter()
             .map(|path| {
@@ -692,101 +819,41 @@ pub fn clip_prep_cost() -> ClipPrepCost {
     }
 }
 
-fn note_prepared(path: ClipPath, prepare_at: Instant, result: Result<&PreparedPcm, &ClipError>) {
+fn note_prepared(path: ClipPath, prepare_at: Instant, result: Result<&PcmBuffer, &ClipError>) {
     note_wall(path, prepare_at.elapsed());
     note_outcome(path, result);
 }
 
-/// Worker time this decoder spent, whether it spent it on one clip or on the
-/// sixty-four it was handed together. A batched decoder has no per-clip time to
-/// report — what it has is a total and a count, and the report divides them.
 fn note_wall(path: ClipPath, wall: std::time::Duration) {
     WALL_NS[path as usize].fetch_add(wall.as_nanos() as u64, Ordering::Relaxed);
 }
 
-fn note_outcome(path: ClipPath, result: Result<&PreparedPcm, &ClipError>) {
+fn note_outcome(path: ClipPath, result: Result<&PcmBuffer, &ClipError>) {
     let slot = path as usize;
     match result {
         Ok(prepared) => {
             PREPARED[slot].fetch_add(1, Ordering::Relaxed);
-            SAMPLE_BYTES[slot].fetch_add(
-                (prepared.samples.len() * size_of::<f32>()) as u64,
-                Ordering::Relaxed,
-            );
+            SAMPLE_BYTES[slot].fetch_add(prepared.resident_bytes() as u64, Ordering::Relaxed);
         }
-        Err(_) => {
+        Err(error) => {
+            if let ClipError::Xwma(error) = error {
+                diag::warn!(Audio, "audio: {error}");
+            }
             FAILED[slot].fetch_add(1, Ordering::Relaxed);
         }
     }
-}
-
-/// One worker's drained jobs, prepared together.
-///
-/// The XWMA clips among them go to their decoder in one call, because that
-/// decoder leaves the process: one `ffmpeg` for the batch instead of one per
-/// clip. Every other path is a loop over bytes in this process and is prepared
-/// one clip at a time, exactly as before.
-fn prepare_jobs(
-    bank: &SoundCatalog,
-    iwd: Option<&NamespaceSoundIwd>,
-    jobs: &[ClipJob],
-) -> Vec<Result<PreparedPcm, ClipError>> {
-    let mut out: Vec<Option<Result<PreparedPcm, ClipError>>> = vec![None; jobs.len()];
-
-    let asked: Vec<(usize, &asset_audio::LoadedSoundPcm)> = jobs
-        .iter()
-        .enumerate()
-        .filter_map(|(i, job)| match job.key {
-            ClipKey::Loaded(index) => {
-                let sound = bank.pcm_at(index)?;
-                (loaded_path(sound) == Some(ClipPath::Xwma)).then_some((i, sound))
-            }
-            ClipKey::Streamed { .. } => None,
-        })
-        .collect();
-    if !asked.is_empty() {
-        let clips: Vec<asset_audio::XwmaClip<'_>> = asked
-            .iter()
-            .map(|(_, sound)| asset_audio::XwmaClip {
-                packets: sound.encoded_bytes(),
-                seek_table: &sound.seek_table,
-                channels: sound.channels().max(0) as u32,
-                rate: sound.rate,
-            })
-            .collect();
-        let decode_at = Instant::now();
-        let decoded = asset_audio::decode_t5_xwma_batch(&clips);
-        note_wall(ClipPath::Xwma, decode_at.elapsed());
-        for ((i, sound), pcm) in asked.into_iter().zip(decoded) {
-            let result = pcm
-                .map_err(|_| ClipError::Decode)
-                .and_then(|bytes| pcm_from_bytes(16, &bytes, sound.channels(), sound.rate));
-            note_outcome(ClipPath::Xwma, result.as_ref());
-            out[i] = Some(result);
-        }
-    }
-
-    for (i, job) in jobs.iter().enumerate() {
-        if out[i].is_some() {
-            continue;
-        }
-        let prepare_at = Instant::now();
-        let (path, result) = prepare_clip_now(bank, iwd, &job.key);
-        note_prepared(path, prepare_at, result.as_ref());
-        out[i] = Some(result);
-    }
-    out.into_iter()
-        .map(|result| result.unwrap_or(Err(ClipError::Decode)))
-        .collect()
 }
 
 fn prepare_clip_now(
     bank: &SoundCatalog,
     iwd: Option<&NamespaceSoundIwd>,
     key: &ClipKey,
-) -> (ClipPath, Result<PreparedPcm, ClipError>) {
-    match key {
-        ClipKey::Loaded(index) => {
+) -> (ClipPath, Result<PcmBuffer, ClipError>) {
+    if key.revision() != bank.revision() {
+        return (ClipPath::Unresolved, Err(ClipError::ForeignOwner));
+    }
+    match &key.locator {
+        ClipLocator::Loaded(index) => {
             let Some(sound) = bank.pcm_at(*index) else {
                 return (ClipPath::Unresolved, Err(ClipError::Decode));
             };
@@ -795,9 +862,15 @@ fn prepare_clip_now(
             };
             (path, prepare_loaded(sound))
         }
-        ClipKey::Streamed { ns, dir, name } => (
+        ClipLocator::Streamed {
+            ns,
+            dir,
+            name,
+            decode,
+            ..
+        } => (
             ClipPath::Streamed,
-            prepare_streamed(iwd, *ns, dir, name).and_then(|pcm| pcm.ok_or(ClipError::Decode)),
+            prepare_streamed(iwd, *ns, dir, name, *decode),
         ),
     }
 }
@@ -806,7 +879,9 @@ fn prepare_clip_now(
 /// decides — the two read the same fields in the same order, so a clip cannot
 /// be counted under one path and decoded by another.
 fn loaded_path(sound: &asset_audio::LoadedSoundPcm) -> Option<ClipPath> {
-    if sound.t5_adpcm_bytes().is_some() {
+    if sound.sab_media.is_some() {
+        Some(ClipPath::Sab)
+    } else if sound.t5_adpcm_bytes().is_some() {
         Some(ClipPath::Adpcm)
     } else if sound.is_t5_xwma() {
         Some(ClipPath::Xwma)
@@ -817,68 +892,53 @@ fn loaded_path(sound: &asset_audio::LoadedSoundPcm) -> Option<ClipPath> {
     }
 }
 
-fn prepare_loaded(sound: &asset_audio::LoadedSoundPcm) -> Result<PreparedPcm, ClipError> {
+fn prepare_loaded(sound: &asset_audio::LoadedSoundPcm) -> Result<PcmBuffer, ClipError> {
+    if let Some(source) = &sound.sab_media {
+        return crate::pcm::sab_media::prepare(source).map_err(ClipError::from);
+    }
+    let channels = u16::try_from(sound.channels())
+        .map_err(|_| ClipError::InvalidPcm(crate::media::PcmError::UnsupportedChannels))?;
+    PcmBuffer::validate_geometry(channels, sound.rate).map_err(ClipError::InvalidPcm)?;
     if let Some(bytes) = sound.t5_adpcm_bytes() {
-        let channels = u16::try_from(sound.channels().max(1)).map_err(|_| ClipError::Decode)?;
         let pcm = crate::pcm::t5_stream::decode_adpcm(
             bytes,
             sound.samples,
             sound.rate,
             u32::from(channels),
         )
-        .ok_or(ClipError::Decode)?;
-        return Ok(PreparedPcm {
-            samples: Arc::clone(pcm.samples()),
-            channels: pcm.channel_count(),
-            sample_rate: pcm.rate(),
-        });
+        .map_err(ClipError::from)?;
+        return Ok(pcm);
     }
-    let decoded;
-    let (bits, bytes) = if sound.is_t5_xwma() {
-        decoded = asset_audio::decode_t5_xwma(
+    if sound.is_t5_xwma() {
+        let mut samples =
+            crate::decode_budget::DecodeSamples::new().map_err(ClipError::InvalidPcm)?;
+        asset_audio::decode_t5_xwma(
             sound.encoded_bytes(),
             &sound.seek_table,
-            sound.channels().max(0) as u32,
+            u32::from(channels),
             sound.rate,
+            &mut samples,
         )
-        .map_err(|_| ClipError::Decode)?;
-        (16, decoded.as_slice())
-    } else if sound.format() == 1 {
-        (sound.bits(), sound.encoded_bytes())
-    } else {
-        return Err(ClipError::Decode);
-    };
-    pcm_from_bytes(bits, bytes, sound.channels(), sound.rate)
-}
-
-/// Encoded samples as the mixer wants them: interleaved `f32`, a whole number
-/// of frames, and never empty — a clip with no samples is a failed decode and
-/// not a silent clip.
-fn pcm_from_bytes(
-    bits: i32,
-    bytes: &[u8],
-    channels: i32,
-    rate: u32,
-) -> Result<PreparedPcm, ClipError> {
-    let mut samples: Vec<f32> = match bits {
-        8 => bytes.iter().map(|&b| (b as f32 - 128.0) / 128.0).collect(),
-        16 => bytes
-            .chunks_exact(2)
-            .map(|b| i16::from_le_bytes([b[0], b[1]]) as f32 / 32768.0)
-            .collect(),
-        _ => return Err(ClipError::Decode),
-    };
-    let lanes = channels.max(1) as usize;
-    samples.truncate(samples.len() / lanes * lanes);
-    if samples.is_empty() {
+        .map_err(|error| match error {
+            asset_audio::XwmaDecodeError::MemoryLimit => {
+                ClipError::InvalidPcm(crate::media::PcmError::MemoryLimit)
+            }
+            asset_audio::XwmaDecodeError::CacheRead => ClipError::Read,
+            error => ClipError::Xwma(error),
+        })?;
+        return samples
+            .into_pcm(channels, sound.rate)
+            .map_err(ClipError::InvalidPcm);
+    }
+    if sound.format() != 1 {
         return Err(ClipError::Decode);
     }
-    let channels = u16::try_from(channels.max(1)).map_err(|_| ClipError::Decode)?;
-    Ok(PreparedPcm {
-        samples: samples.into(),
-        channels,
-        sample_rate: rate.max(1),
-    })
+    PcmBuffer::from_zone(sound.encoded_shared(), sound.bits(), channels, sound.rate).map_err(
+        |error| match error {
+            crate::media::PcmError::Empty => ClipError::Decode,
+            error => ClipError::InvalidPcm(error),
+        },
+    )
 }
 
 fn prepare_streamed(
@@ -886,7 +946,8 @@ fn prepare_streamed(
     ns: AssetNamespace,
     dir: &str,
     name: &str,
-) -> Result<Option<PreparedPcm>, ClipError> {
+    decode: asset_audio::StreamedDecodePolicy,
+) -> Result<PcmBuffer, ClipError> {
     let iwd = iwd.ok_or(ClipError::Read)?;
     let rel = format!("{dir}/{name}");
     let bytes: Vec<u8> = match iwd.read_sound(ns, &rel) {
@@ -904,57 +965,12 @@ fn prepare_streamed(
             return Err(ClipError::Read);
         }
     };
-    let pcm = if ns == AssetNamespace::T5 && !bytes.starts_with(b"RIFF") {
+    let pcm = if decode == asset_audio::StreamedDecodePolicy::WmaContainerWithWaveCompatibility
+        && !bytes.starts_with(b"RIFF")
+    {
         crate::pcm::t5_stream::decode(&bytes)
     } else {
         decode_audio_bytes(&bytes)
     };
-    let Some(pcm) = pcm else {
-        diag::warn!(
-            Audio,
-            "audio: failed to decode streamed `{}:{rel}`",
-            ns.as_str()
-        );
-        return Err(ClipError::Decode);
-    };
-    Ok(Some(PreparedPcm {
-        samples: Arc::clone(pcm.samples()),
-        channels: pcm.channel_count(),
-        sample_rate: pcm.rate(),
-    }))
-}
-
-pub(crate) fn alias_for_clip<'a>(
-    bank: &'a SoundCatalog,
-    namespace: AssetNamespace,
-    alias: &str,
-    key: &ClipKey,
-) -> Option<&'a asset_audio::CapturedAlias> {
-    fn find<'a>(
-        bank: &'a SoundCatalog,
-        namespace: AssetNamespace,
-        alias: &str,
-        key: &ClipKey,
-        depth: u8,
-        seen: &mut HashSet<String>,
-    ) -> Option<&'a asset_audio::CapturedAlias> {
-        if depth > 10 || !seen.insert(alias.to_owned()) {
-            return None;
-        }
-        let sound = bank.sound_in(namespace, alias)?;
-        for (variant, row) in sound.aliases.iter().enumerate() {
-            if clip_key_for_variant(bank, namespace, alias, None, variant, None, None).as_ref()
-                == Some(key)
-            {
-                return Some(row);
-            }
-            if let Some(secondary) = row.secondary.as_deref()
-                && let Some(row) = find(bank, namespace, secondary, key, depth + 1, seen)
-            {
-                return Some(row);
-            }
-        }
-        None
-    }
-    find(bank, namespace, alias, key, 0, &mut HashSet::new())
+    pcm.map_err(ClipError::from)
 }

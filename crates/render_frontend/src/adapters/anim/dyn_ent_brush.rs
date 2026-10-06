@@ -224,6 +224,7 @@ fn exec_cell_dyn_brush_cmds(
     }
     let baked_material_keys: Vec<Option<u64>> = scene
         .runtime_material_catalog
+        .parts()
         .materials
         .iter()
         .map(|material| material.baked_draw_surf)

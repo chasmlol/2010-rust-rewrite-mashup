@@ -135,6 +135,7 @@ fn play_pending_fx_sounds(
             Some(asset_game::FxBankSound::Silent) => {}
             Some(asset_game::FxBankSound::Play { namespace, alias }) => {
                 output.write(audio::AliasCommand::Play(audio::PlayAlias {
+                    event: None,
                     namespace,
                     alias: alias.to_owned(),
                     fallback: None,

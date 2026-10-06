@@ -46,8 +46,17 @@ struct Parser {
     loops: Vec<(Vec<usize>, Option<Vec<usize>>)>,
     constants: BTreeMap<String, Value>,
     animtree: Option<String>,
+    single_byte_source: bool,
 }
 impl Parser {
+    fn string_value(&self, text: &str) -> Value {
+        if self.single_byte_source {
+            Value::byte_string(&text.chars().map(|ch| ch as u8).collect::<Vec<_>>())
+        } else {
+            Value::string(text)
+        }
+    }
+
     fn location(&self) -> Location {
         let t = &self.tokens[self.pos];
         Location {
@@ -314,6 +323,7 @@ pub(super) fn compile(
             loops: Vec::new(),
             constants: BTreeMap::new(),
             animtree: None,
+            single_byte_source: std::str::from_utf8(&bytes).is_err(),
         };
         for function in parser.module()? {
             let key = format!("{}::{}", module, function.location.function);
@@ -328,6 +338,7 @@ pub(super) fn compile(
         modules.push(ModuleIdentity {
             site: Site::Server,
             realm: catalog.realm(),
+            origin: resolver.origin(&module),
             module,
             sha256: Sha256::digest(&bytes).into(),
         });
@@ -410,6 +421,9 @@ pub(super) fn compile(
     }
     modules.sort_by(|a, b| a.module.cmp(&b.module));
     Ok(Program {
+        impure_scripts: modules
+            .iter()
+            .any(|module| module.origin == super::SourceOrigin::External),
         functions,
         names,
         modules,

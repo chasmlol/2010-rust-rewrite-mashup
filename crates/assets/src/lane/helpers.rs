@@ -828,6 +828,9 @@ pub(super) fn decode_reflection_probes(
         .iter()
         .map(|probe| {
             let source = materials.images.get(probe.image?)?;
+            if let Some(decoded) = &source.decoded {
+                return Some(decoded.as_ref().clone());
+            }
             asset_material::decode_reflection_probe_cubemap(source)
                 .map_err(|error| {
                     report.push(format!("reflection probe {} gap: {error}", source.name))

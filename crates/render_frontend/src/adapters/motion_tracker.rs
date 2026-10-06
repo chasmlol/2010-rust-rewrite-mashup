@@ -87,13 +87,8 @@ pub(crate) fn draw_motion_tracker(
         };
     }
     let weapon = weapon_iw4::get_viewmodel_weapon_index(ps);
-    let active = table.facts_of(weapon).is_some_and(|f| {
-        f.motion_tracker
-            || (f.inventory_type == 3
-                && table
-                    .facts_of(ps.weapon_primary)
-                    .is_some_and(|parent| parent.motion_tracker))
-    }) && ps.other_flags & (1 << 10) == 0
+    let active = table.motion_tracker(weapon, ps.weapon_primary)
+        && ps.other_flags & (1 << 10) == 0
         && meta.lifecycle == sim::ClientLifecycle::Alive;
     let origin = Vec2::new(ps.origin[0], ps.origin[1]);
     let dt = tracker.last_time.map_or(0, |t| now.saturating_sub(t));
@@ -110,6 +105,7 @@ pub(crate) fn draw_motion_tracker(
     let mut play = |alias: &str, pitch: f32| {
         sound.write(audio::AliasCommand::PlayPitched {
             sound: audio::PlayAlias {
+                event: None,
                 namespace: asset_core::AssetNamespace::Iw4,
                 alias: alias.to_owned(),
                 fallback: None,

@@ -29,6 +29,8 @@ pub(crate) struct MenuPlugin;
 impl Plugin for MenuPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<MenuMapList>()
+            .init_resource::<crate::CommunityServers>()
+            .init_resource::<crate::barracks::BarracksProfile>()
             .init_resource::<crate::ClassLoadoutCatalog>()
             .init_resource::<frame::GameSettings>()
             .init_resource::<crate::BindingView>()
@@ -42,6 +44,8 @@ impl Plugin for MenuPlugin {
                 (
                     crate::options::apply_window_settings,
                     load_class_store,
+                    crate::barracks::load_profile,
+                    crate::barracks::save_profile,
                     sync_host_class_loadouts,
                     save_class_store,
                 )
@@ -54,11 +58,60 @@ impl Plugin for MenuPlugin {
 pub fn install_frontend_menus(catalog: &mut asset_game::MenuCatalog) -> Result<(), String> {
     catalog.load_definitions(include_str!("../menus/frontend.json"))?;
     catalog.load_definitions(include_str!("../menus/connection_error.json"))?;
+    catalog.load_definitions(include_str!("../menus/map_error.json"))?;
     catalog.load_definitions(include_str!("../menus/classes.json"))?;
+    catalog.load_definitions(include_str!("../menus/barracks.json"))?;
     catalog.load_definitions(include_str!("../menus/settings.json"))?;
     catalog.load_definitions(include_str!("../menus/controller.json"))?;
-    let has_controller_page = catalog.get("options_controller").is_some();
+    catalog.load_definitions(include_str!("../menus/game_folders.json"))?;
+    catalog.load_definitions(include_str!("../menus/community_servers.json"))?;
+    if let Some(item) = catalog
+        .menus
+        .get_mut("options_community_servers")
+        .and_then(|menu| {
+            menu.items
+                .iter_mut()
+                .find(|item| item.name == "community_server")
+        })
+    {
+        item.choices = crate::CommunityServers::default().choices;
+    }
+    let slider = catalog
+        .get("pc_options_video")
+        .and_then(|menu| {
+            menu.items
+                .iter()
+                .find(|item| item.name == "video_brightness")
+        })
+        .cloned();
     for (name, menu) in &mut catalog.menus {
+        if name == "pc_options_look"
+            && let Some(template) = &slider
+            && let Some(y) = menu
+                .items
+                .iter()
+                .find(|item| item.text_key == "@MENU_MOUSE_SENSITIVITY")
+                .map(|label| label.rect.y)
+            && let Some(item) = menu
+                .items
+                .iter_mut()
+                .find(|item| item.item_type == asset_game::ITEM_TYPE_SLIDER)
+        {
+            *item = asset_game::MenuItem {
+                name: "look_sensitivity".into(),
+                dvar: "ui_sensitivity".into(),
+                slider: Some(asset_game::MenuSlider {
+                    min: 0.1,
+                    max: 30.0,
+                    step: 0.1,
+                    display_range: None,
+                    decimals: 1,
+                    suffix: String::new(),
+                }),
+                ..template.clone()
+            };
+            item.rect.y = y;
+        }
         if matches!(name.as_str(), "popup_endgame" | "popup_endgame_ranked") {
             for item in &mut menu.items {
                 if item.name == "button_yes" {
@@ -91,16 +144,31 @@ pub fn install_frontend_menus(catalog: &mut asset_game::MenuCatalog) -> Result<(
                 "play mouse_click; close self; open options_multi;".into(),
             )];
             let mut controller = multiplayer.clone();
+            let mut game_folders = multiplayer.clone();
             menu.items.push(multiplayer);
-            if has_controller_page {
-                controller.name = "controller_settings".into();
-                controller.text_key = "Controller".into();
-                controller.rect.y = 108.0;
-                controller.handlers.action = vec![asset_game::MenuEvent::Script(
-                    "play mouse_click; close self; open options_controller;".into(),
-                )];
-                menu.items.push(controller);
-            }
+            controller.name = "controller_settings".into();
+            controller.text_key = "Controller".into();
+            controller.rect.y = 108.0;
+            controller.handlers.action = vec![asset_game::MenuEvent::Script(
+                "play mouse_click; close self; open options_controller;".into(),
+            )];
+            menu.items.push(controller);
+            game_folders.name = "game_folders_settings".into();
+            game_folders.text_key = "Game Folders".into();
+            game_folders.rect.y = 128.0;
+            game_folders.handlers.action = vec![asset_game::MenuEvent::Script(
+                "play mouse_click; close self; open options_game_folders;".into(),
+            )];
+            let mut community_servers = game_folders.clone();
+            menu.items.push(game_folders);
+            community_servers.name = "community_servers_settings".into();
+            community_servers.text_key = "Community Servers".into();
+            community_servers.rect.y = 148.0;
+            community_servers.vis_exp = "op 38 s:75695f636f6d6d756e6974795f6d656e75 op 1".into();
+            community_servers.handlers.action = vec![asset_game::MenuEvent::Script(
+                "play mouse_click; close self; open options_community_servers;".into(),
+            )];
+            menu.items.push(community_servers);
         }
 
         let removed_rows: Vec<_> = menu
@@ -121,6 +189,8 @@ pub fn install_frontend_menus(catalog: &mut asset_game::MenuCatalog) -> Result<(
                     && item.rect.y == y
                     && item.name != "multiplayer_settings"
                     && item.name != "controller_settings"
+                    && item.name != "game_folders_settings"
+                    && item.name != "community_servers_settings"
             })
         });
         if name == "pc_options_controls" {

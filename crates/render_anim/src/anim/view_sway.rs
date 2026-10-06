@@ -1,58 +1,49 @@
 use weapon_iw4::{
-    SwayContribution, SwaySpringState, WeaponSwayParams, calculate_weapon_movement_sway,
-    lerp_sway_params, sway_contribution,
+    LookSway, SwaySpringState, WeaponSwayParams, lerp_sway_params, sway_config, sway_from_drive,
 };
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ViewSwayState {
-    springs: SwaySpringState,
-    prev_view_angles: Option<[f32; 3]>,
-    last: SwayContribution,
+    look: LookSway,
+    contribution: SwaySpringState,
 }
-
 impl ViewSwayState {
     pub fn reset(&mut self) {
         *self = Self::default();
     }
-
     pub fn springs(&self) -> SwaySpringState {
-        self.springs
+        self.contribution
     }
-
     pub fn advance(
         &mut self,
         hip: WeaponSwayParams,
         ads: WeaponSwayParams,
-        view_angles: [f32; 3],
-        weapon_pos_frac: f32,
-        aim_down_sight: bool,
-        overlay_active: bool,
+        angles: [f32; 3],
+        frac: f32,
+        ads_enabled: bool,
+        overlay: bool,
         landing_scale: f32,
-        dt_secs: f32,
+        dt: f32,
     ) {
-        if !dt_secs.is_finite() || dt_secs <= 0.0 {
+        if !dt.is_finite() || dt <= 0.0 {
             return;
         }
-        if overlay_active && weapon_pos_frac > 0.0 {
+        let config = sway_config();
+        let sample = [f64::from(angles[0]), f64::from(angles[1])];
+        if overlay && frac > 0.0 {
+            if self.look.observe_only(sample, f64::from(dt), config) {
+                self.contribution = SwaySpringState::default();
+            }
             return;
         }
-        let Some(prev) = self.prev_view_angles.replace(view_angles) else {
-            self.last = sway_contribution(self.springs);
+        if !self.look.sample(sample, f64::from(dt), config) {
             return;
-        };
-        let params = if aim_down_sight {
-            lerp_sway_params(hip, ads, weapon_pos_frac)
+        }
+        let params = if ads_enabled {
+            lerp_sway_params(hip, ads, frac)
         } else {
             hip
         };
-        calculate_weapon_movement_sway(
-            &mut self.springs,
-            view_angles,
-            prev,
-            params,
-            landing_scale,
-            dt_secs,
-        );
-        self.last = sway_contribution(self.springs);
+        self.contribution = sway_from_drive(self.look.drive(config), params, landing_scale);
     }
 }

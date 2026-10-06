@@ -3,140 +3,63 @@ use bevy::render::render_resource::{
 };
 use d3d9_state::BlendFactor;
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub enum DrawBlendOperation {
-    Add,
-    Subtract,
-    ReverseSubtract,
-    Min,
-    Max,
-    Unknown(u8),
-}
+pub use render_material::state::{
+    AuthoredStateFields, DrawBlendComponent, DrawBlendOperation, UnsupportedStateFields,
+};
 
-impl DrawBlendOperation {
-    fn from_raw(raw: u8) -> Self {
-        match raw {
-            1 => Self::Add,
-            2 => Self::Subtract,
-            3 => Self::ReverseSubtract,
-            4 => Self::Min,
-            5 => Self::Max,
-            value => Self::Unknown(value),
-        }
-    }
-
-    fn to_wgpu(self) -> Option<BlendOperation> {
-        Some(match self {
-            Self::Add => BlendOperation::Add,
-            Self::Subtract => BlendOperation::Subtract,
-            Self::ReverseSubtract => BlendOperation::ReverseSubtract,
-            Self::Min => BlendOperation::Min,
-            Self::Max => BlendOperation::Max,
-            Self::Unknown(_) => return None,
-        })
-    }
-}
-
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub struct DrawBlendComponent {
-    pub src: BlendFactor,
-    pub dst: BlendFactor,
-    pub operation: DrawBlendOperation,
-}
-
-impl DrawBlendComponent {
-    fn from_bits(bits: u32) -> Self {
-        Self {
-            src: BlendFactor::from_raw(bits & 0xf),
-            dst: BlendFactor::from_raw((bits >> 4) & 0xf),
-            operation: DrawBlendOperation::from_raw(((bits >> 8) & 0x7) as u8),
-        }
-    }
-
-    fn to_wgpu(self) -> BlendComponent {
-        BlendComponent {
-            src_factor: d3d_blend_to_wgpu(self.src)
-                .expect("unsupported D3D9 source blend factor reached the GPU adapter"),
-            dst_factor: d3d_blend_to_wgpu(self.dst)
-                .expect("unsupported D3D9 destination blend factor reached the GPU adapter"),
-            operation: self
-                .operation
-                .to_wgpu()
-                .expect("unsupported D3D9 blend operation reached the GPU adapter"),
-        }
-    }
-}
-
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
-pub enum DrawBlend {
-    #[default]
-    Opaque,
-
-    Factors {
-        colour: DrawBlendComponent,
-        alpha: DrawBlendComponent,
-    },
-
-    Multiply {
-        alpha: DrawBlendComponent,
-    },
-}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct DrawBlend(render_material::state::DrawBlend);
 
 impl DrawBlend {
-    pub fn from_word0(word0: u32, multiply_pass: bool) -> Self {
-        if multiply_pass {
-            let colour = DrawBlendComponent {
-                src: BlendFactor::Zero,
-                dst: BlendFactor::SrcColor,
-                operation: DrawBlendOperation::Add,
-            };
-            let alpha_bits = (word0 >> 16) & 0x7ff;
-            let alpha = if alpha_bits & 0x700 == 0 {
-                colour
-            } else {
-                DrawBlendComponent::from_bits(alpha_bits)
-            };
-            return Self::Multiply { alpha };
-        }
-        let blend_op = (word0 >> 8) & 0b111;
-        let src = word0 & 0xf;
-        let dst = (word0 >> 4) & 0xf;
-        if blend_op == 0 {
-            return Self::Opaque;
-        }
-
-        let colour = DrawBlendComponent::from_bits(word0);
-        let alpha_bits = (word0 >> 16) & 0x7ff;
-        let alpha = if alpha_bits & 0x700 == 0 {
-            colour
-        } else {
-            DrawBlendComponent::from_bits(alpha_bits)
-        };
-        if blend_op == 1 && src == 1 && dst == 3 {
-            Self::Multiply { alpha }
-        } else {
-            Self::Factors { colour, alpha }
-        }
-    }
-
     pub fn blend_state(self) -> Option<BlendState> {
-        let (color, alpha) = match self {
-            Self::Opaque => return None,
-            Self::Factors { colour, alpha } => (colour.to_wgpu(), alpha.to_wgpu()),
+        let (color, alpha) = match self.0 {
+            render_material::state::DrawBlend::Opaque => return None,
+            render_material::state::DrawBlend::Factors { colour, alpha } => {
+                (blend_component(colour), blend_component(alpha))
+            }
 
-            Self::Multiply { alpha } => (
+            render_material::state::DrawBlend::Multiply { alpha } => (
                 BlendComponent {
                     src_factor: WgpuBlendFactor::Zero,
                     dst_factor: WgpuBlendFactor::Src,
                     operation: BlendOperation::Add,
                 },
-                alpha.to_wgpu(),
+                blend_component(alpha),
             ),
         };
         Some(BlendState { color, alpha })
     }
 }
-
+fn blend_component(component: DrawBlendComponent) -> BlendComponent {
+    if matches!(
+        component.operation,
+        DrawBlendOperation::Min | DrawBlendOperation::Max
+    ) {
+        return BlendComponent {
+            src_factor: WgpuBlendFactor::One,
+            dst_factor: WgpuBlendFactor::One,
+            operation: blend_operation(component.operation).unwrap(),
+        };
+    }
+    BlendComponent {
+        src_factor: d3d_blend_to_wgpu(component.src)
+            .expect("unsupported D3D9 source blend factor reached the GPU adapter"),
+        dst_factor: d3d_blend_to_wgpu(component.dst)
+            .expect("unsupported D3D9 destination blend factor reached the GPU adapter"),
+        operation: blend_operation(component.operation)
+            .expect("unsupported D3D9 blend operation reached the GPU adapter"),
+    }
+}
+fn blend_operation(operation: DrawBlendOperation) -> Option<BlendOperation> {
+    Some(match operation {
+        DrawBlendOperation::Add => BlendOperation::Add,
+        DrawBlendOperation::Subtract => BlendOperation::Subtract,
+        DrawBlendOperation::ReverseSubtract => BlendOperation::ReverseSubtract,
+        DrawBlendOperation::Min => BlendOperation::Min,
+        DrawBlendOperation::Max => BlendOperation::Max,
+        DrawBlendOperation::Unknown(_) => return None,
+    })
+}
 fn d3d_blend_to_wgpu(factor: BlendFactor) -> Option<WgpuBlendFactor> {
     Some(match factor {
         BlendFactor::Zero => WgpuBlendFactor::Zero,
@@ -191,131 +114,46 @@ pub struct ChangeState1Host {
     pub polyoffset_level: u8,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct GfxPassState {
-    pub word0: u32,
-    pub word1: u32,
-    alpha_test: Option<d3d9_state::AlphaTest>,
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct UnsupportedStateFields {
-    pub unknown_blend_factor: bool,
-    pub unknown_blend_operation: bool,
-    pub stencil: bool,
-}
-
-impl UnsupportedStateFields {
-    pub fn any(self) -> bool {
-        self.unknown_blend_factor || self.unknown_blend_operation || self.stencil
-    }
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct AuthoredStateFields {
-    pub non_add_blend: bool,
-    pub independent_alpha_blend: bool,
-    pub partial_colour_write: bool,
-    pub line_fill: bool,
-    pub stencil: bool,
-}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GfxPassState(render_material::CompiledPassState);
 
 impl GfxPassState {
-    pub fn from_state_bits(word0: u32, word1: u32) -> Self {
-        Self::for_material(asset_core::AssetNamespace::Iw4, [word0, word1])
+    pub fn from_prepared(state: render_material::CompiledPassState) -> Self {
+        Self(state)
     }
-
-    pub fn for_material(namespace: asset_core::AssetNamespace, bits: [u32; 2]) -> Self {
-        Self {
-            word0: bits[0],
-            word1: bits[1],
-            alpha_test: asset_material::material_alpha_test(namespace, bits),
-        }
+    pub fn authored_words(self) -> [u32; 2] {
+        self.0.authored_words()
     }
-
-    pub fn from_bits(bits: render_material::GfxPassStateBits) -> Self {
-        Self::for_material(bits.namespace, [bits.word0, bits.word1])
-    }
-
-    pub fn draw_mode(self) -> asset_material::MaterialDrawMode {
-        asset_material::MaterialDrawMode::from_state_bits([self.word0, self.word1])
-    }
-
-    pub fn to_draw_blend(self, multiply_pass: bool) -> DrawBlend {
-        DrawBlend::from_word0(self.word0, multiply_pass)
-    }
-
     pub fn srgb_write_enable(self) -> bool {
-        asset_material::srgb_write_enable_from_state_bits([self.word0, self.word1])
+        self.0.srgb_write_enable()
     }
-
-    pub fn cull_face(self) -> asset_material::MaterialCullFace {
-        asset_material::cull_face_from_state_bits([self.word0, self.word1])
+    pub fn authored_host_fields(self) -> AuthoredStateFields {
+        self.0.authored_host_fields()
     }
-
+    pub fn unsupported_host_fields(self) -> Option<UnsupportedStateFields> {
+        self.0.unsupported_host_fields()
+    }
     pub fn apply_change_state_0_host(
         self,
         _alpha_mode: bevy::prelude::AlphaMode,
         multiply_pass: bool,
     ) -> ChangeState0Host {
-        let cull = match self.cull_face() {
-            asset_material::MaterialCullFace::Back => 1,
-            asset_material::MaterialCullFace::Front => 2,
-            asset_material::MaterialCullFace::None => 0,
-        };
         ChangeState0Host {
-            blend: self.to_draw_blend(multiply_pass),
-            cull,
-            srgb_write: self.srgb_write_enable(),
-            colour_write: u8::from(self.word0 & 0x0800_0000 != 0)
-                | (u8::from(self.word0 & 0x1000_0000 != 0) << 1),
-            line_fill: self.word0 & 0x8000_0000 != 0,
-            alpha_test: self.authored_alpha_test(),
+            blend: DrawBlend(self.0.blend(multiply_pass)),
+            cull: self.0.cull(),
+            srgb_write: self.0.srgb_write_enable(),
+            colour_write: self.0.colour_write(),
+            line_fill: self.0.line_fill(),
+            alpha_test: self.0.alpha_test(),
         }
     }
-
-    pub fn authored_host_fields(self) -> AuthoredStateFields {
-        let colour_op = ((self.word0 >> 8) & 0x7) as u8;
-        let colour_blend = self.word0 & 0x7ff;
-        let alpha_blend = (self.word0 >> 16) & 0x7ff;
-        let alpha_op = ((alpha_blend >> 8) & 0x7) as u8;
-        AuthoredStateFields {
-            non_add_blend: colour_op > 1 || (colour_op != 0 && alpha_op > 1),
-            independent_alpha_blend: colour_op != 0 && alpha_op != 0 && alpha_blend != colour_blend,
-            partial_colour_write: self.word0 & 0x1800_0000 != 0x1800_0000,
-            line_fill: self.word0 & 0x8000_0000 != 0,
-            stencil: self.word1 & 0xc0 != 0,
-        }
-    }
-
-    pub fn authored_alpha_test(self) -> Option<d3d9_state::AlphaTest> {
-        self.alpha_test
-    }
-
-    pub fn unsupported_host_fields(self) -> Option<UnsupportedStateFields> {
-        let blend_op = ((self.word0 >> 8) & 0x7) as u8;
-        let colour = DrawBlendComponent::from_bits(self.word0);
-        let alpha_blend = (self.word0 >> 16) & 0x7ff;
-        let alpha_blend_op = (alpha_blend >> 8) & 0x7;
-        let alpha = DrawBlendComponent::from_bits(alpha_blend);
-        let fields = UnsupportedStateFields {
-            unknown_blend_factor: blend_op != 0
-                && (!colour.src.is_known()
-                    || !colour.dst.is_known()
-                    || (alpha_blend_op != 0 && (!alpha.src.is_known() || !alpha.dst.is_known()))),
-            unknown_blend_operation: blend_op > 5 || (blend_op != 0 && alpha_blend_op > 5),
-            stencil: false,
-        };
-        fields.any().then_some(fields)
-    }
-
     pub fn apply_change_state_1_host(self) -> ChangeState1Host {
         ChangeState1Host {
-            stencil: self.word1 & 0xffff_ffc0,
-            depth_write: asset_iw4::depth_write_enable(self.word1),
-            depth_test_enable: asset_iw4::depth_test_enable(self.word1),
-            depth_func: ((self.word1 >> 2) & 3) as u8,
-            polyoffset_level: asset_iw4::polygon_offset_level(self.word1) as u8,
+            stencil: self.0.stencil(),
+            depth_write: self.0.depth_write(),
+            depth_test_enable: self.0.depth_test_enable(),
+            depth_func: self.0.depth_func(),
+            polyoffset_level: self.0.polyoffset_level(),
         }
     }
 }

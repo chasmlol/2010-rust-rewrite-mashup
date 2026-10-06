@@ -62,8 +62,8 @@ impl PendingPlayerCard {
         });
     }
 
-    pub fn adopt_from_world(&mut self, world: &mut sim::SimWorld) {
-        for ev in world.take_pending_player_cards() {
+    pub fn adopt_events(&mut self, effects: &[sim::PendingPlayerCardEvent]) {
+        for ev in effects.iter().cloned() {
             match ev.kind {
                 sim::PendingPlayerCardKind::SetSlot { source, slot } => {
                     self.push_slot(ev.recipient, source, slot);

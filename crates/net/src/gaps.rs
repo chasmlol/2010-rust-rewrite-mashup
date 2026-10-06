@@ -78,6 +78,24 @@ pub enum NetGapCause {
         number: i32,
     },
 
+    EventRetryExpired {
+        number: i32,
+        sequence: sim::EventSequence,
+    },
+    EventRetryBudget {
+        number: i32,
+        sequence: sim::EventSequence,
+    },
+    EventRetryScopeChanged {
+        number: i32,
+        sequence: sim::EventSequence,
+    },
+    EventTargetLifeChanged {
+        number: i32,
+        expected: sim::LifeSequence,
+        current: Option<sim::LifeSequence>,
+    },
+
     NotifyClientHasNoEntity {
         client: ClientId,
         notify: ScriptNotify,
@@ -93,7 +111,11 @@ impl ledger::GapCause for NetGapCause {
                 NetGap::CEntityNumber
             }
             NetGapCause::EventNumberHasNoEntity { .. }
-            | NetGapCause::EventNumberOutOfRange { .. } => NetGap::EntityEventTarget,
+            | NetGapCause::EventNumberOutOfRange { .. }
+            | NetGapCause::EventRetryExpired { .. }
+            | NetGapCause::EventRetryBudget { .. }
+            | NetGapCause::EventRetryScopeChanged { .. }
+            | NetGapCause::EventTargetLifeChanged { .. } => NetGap::EntityEventTarget,
             NetGapCause::NotifyClientHasNoEntity { .. } => NetGap::ScriptNotifyTarget,
         }
     }
@@ -119,6 +141,30 @@ impl fmt::Display for NetGapCause {
             NetGapCause::EventNumberOutOfRange { number } => {
                 write!(f, "entity number {number} is not a u16 entity number")
             }
+            NetGapCause::EventRetryExpired { number, sequence } => write!(
+                f,
+                "event {} for entity {number} expired while waiting for its target",
+                sequence.0
+            ),
+            NetGapCause::EventRetryBudget { number, sequence } => write!(
+                f,
+                "event {} for entity {number} exceeded the target retry budget",
+                sequence.0
+            ),
+            NetGapCause::EventRetryScopeChanged { number, sequence } => write!(
+                f,
+                "event {} for entity {number} belongs to an earlier presentation scope",
+                sequence.0
+            ),
+            NetGapCause::EventTargetLifeChanged {
+                number,
+                expected,
+                current,
+            } => write!(
+                f,
+                "event for entity {number} requires life {}, current life is {current:?}",
+                expected.0
+            ),
             NetGapCause::NotifyClientHasNoEntity { client, notify } => {
                 write!(f, "{notify} for client {} has no player entity", client.0)
             }

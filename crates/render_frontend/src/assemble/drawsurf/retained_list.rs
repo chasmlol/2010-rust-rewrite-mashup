@@ -99,6 +99,21 @@ const fn bsp_lane(kind: asset_world::CameraRangeKind) -> BspCameraLane {
 
 pub use render_frame::SmodelPretessRange;
 
+// The packed key holds only a 12-bit sort band; maps with more materials alias in it.
+fn world_surface_rank(
+    cull: Option<&crate::prepare::scene::world::WorldCull>,
+    surf: usize,
+    packed: u64,
+    catalog: &super::material_runtime::RuntimeMaterialCatalog,
+) -> u32 {
+    cull.and_then(|cull| cull.surface_materials.get(surf).copied().flatten())
+        .and_then(|id| catalog.ordinal_for_asset_id(id))
+        .map_or_else(
+            || u32::from(GfxDrawSurf::from_packed(packed).material_sorted_index()),
+            |ordinal| ordinal.get(),
+        )
+}
+
 fn with_catalog(
     key: u64,
     material_rank: u32,
@@ -119,13 +134,7 @@ fn with_catalog(
             render_material::MaterialDrawKey::new(key, material_rank),
         )
         .ok()
-        .map(|m| {
-            if m.namespace == asset_core::AssetNamespace::T5 && m.camera_region == 3 {
-                asset_iw4::CAMERA_REGION_NONE
-            } else {
-                m.camera_region
-            }
-        }),
+        .map(|material| material.draw_rules.colour_camera_region),
     }
 }
 
@@ -358,6 +367,8 @@ fn sort_fx_draw_lane(lane: &mut FxDrawLane, eye: [f32; 3], glass: Option<&GfxGla
 
 pub(crate) fn mix_draw_membership(id: &mut u64, item: &RetainedDrawItem) {
     super::list::mix_content_id(id, item.key);
+    super::list::mix_content_id(id, u64::from(item.material_rank));
+    super::list::mix_content_id(id, item.material_id.map_or(0, |id| u64::from(id.0) + 1));
     let encode = |value: Option<u8>| value.map_or(0, |value| u64::from(value) + 1);
     super::list::mix_content_id(
         id,
@@ -437,12 +448,32 @@ pub(crate) fn mix_draw_membership(id: &mut u64, item: &RetainedDrawItem) {
     super::list::mix_content_id(id, c);
 }
 
+fn xmodel_camera_material(
+    xmodel: &XModelDrawPlan,
+    draw: &super::tess::xmodel::XModelSurfaceDraw,
+    catalog: &super::RuntimeMaterialCatalog,
+    thermal: &super::thermal_body::ThermalBodySelection,
+) -> Option<(u32, bool)> {
+    if let Some(ordinal) = thermal.for_draw(draw) {
+        let ordinal = *ordinal.as_ref().ok()?;
+        let material = catalog.material_for_sorted_ordinal(ordinal)?;
+        Some((ordinal, material.takes_model_lighting))
+    } else {
+        let material = xmodel.materials.get(draw.material as usize)?;
+        Some((
+            material.material_sorted_index?,
+            material.model_lighting_required,
+        ))
+    }
+}
+
 fn xmodel_lane_layout_hash(
     xmodel: &XModelDrawPlan,
     catalog: &super::material_runtime::RuntimeMaterialCatalog,
+    thermal: &super::thermal_body::ThermalBodySelection,
 ) -> u64 {
     let mut id = super::list::CONTENT_ID_SEED;
-    super::list::mix_content_id(&mut id, catalog.generation_id.0);
+    super::list::mix_content_id(&mut id, catalog.generation_id().get());
     super::list::mix_content_id(&mut id, xmodel.topology_revision);
     super::list::mix_content_id(&mut id, xmodel.draws.len() as u64);
     for draw in &xmodel.draws {
@@ -456,16 +487,12 @@ fn xmodel_lane_layout_hash(
             None => 0,
         };
         super::list::mix_content_id(&mut id, refusal);
-        let lighting_skip = xmodel
-            .materials
-            .get(draw.material as usize)
-            .is_some_and(|mat| mat.model_lighting_required && draw.lighting_handle == 0);
+        let material = xmodel_camera_material(xmodel, draw, catalog, thermal);
+        let lighting_skip =
+            material.is_some_and(|(_, required)| required && draw.lighting_handle == 0);
         super::list::mix_content_id(&mut id, u64::from(lighting_skip));
-        let ordinal = xmodel
-            .materials
-            .get(draw.material as usize)
-            .and_then(|mat| mat.material_sorted_index)
-            .map(u64::from)
+        let ordinal = material
+            .map(|(ordinal, _)| u64::from(ordinal))
             .unwrap_or(u64::MAX);
         super::list::mix_content_id(&mut id, ordinal);
     }
@@ -740,7 +767,7 @@ fn smodel_drawsurf_key(
     .packed
 }
 
-fn t5_smodel_camera_emits(
+fn smodel_colour_emits(
     pass: SmodelDestinationPass,
     catalog: &super::RuntimeMaterialCatalog,
     authored: Option<assets::MaterialIndex>,
@@ -750,13 +777,7 @@ fn t5_smodel_camera_emits(
     }
     authored
         .and_then(|id| catalog.derived(id))
-        .is_none_or(|material| {
-            material.namespace != asset_core::AssetNamespace::T5
-                || asset_material::t5_smodel_camera_emits(
-                    material.info_game_flags,
-                    material.camera_region,
-                )
-        })
+        .is_none_or(|material| material.draw_rules.smodel_colour_emits)
 }
 
 fn smodel_sun_shadow_emits(
@@ -1289,7 +1310,7 @@ fn expand_smodel_destination(
         return stats;
     };
     for &(surface, authored) in lod_surfs {
-        if !t5_smodel_camera_emits(source.pass, catalog, authored) {
+        if !smodel_colour_emits(source.pass, catalog, authored) {
             continue;
         }
         if !smodel_sun_shadow_emits(source.pass, catalog, authored) {
@@ -1385,7 +1406,7 @@ fn push_smodel_destination(
     out: &mut Vec<SmodelDestinationRecord>,
 ) -> SmodelExpandStats {
     let mut stats = SmodelExpandStats::default();
-    if !t5_smodel_camera_emits(source.pass, catalog, authored) {
+    if !smodel_colour_emits(source.pass, catalog, authored) {
         return stats;
     }
     if !smodel_sun_shadow_emits(source.pass, catalog, authored) {
@@ -1741,6 +1762,11 @@ pub(crate) fn rebuild_xmodel_draw_lane(
     prepared: Option<Res<PreparedSceneView>>,
     runtime: Res<super::MaterialGeneration>,
     mut lane: ResMut<XModelDrawLane>,
+    presentation: (
+        Res<net::PresentedSnapshot>,
+        Res<frame::ScreenEffectsView>,
+        Res<render_anim::gaps::RenderPresentationGaps>,
+    ),
 ) {
     let (fpv, bodies, scripts, missiles, items, fx_models, dynents, gfx_scene) = plans;
     let empty_fpv = super::tess::xmodel::FpvDrawPlan::default();
@@ -1764,7 +1790,24 @@ pub(crate) fn rebuild_xmodel_draw_lane(
             .zip(prepared.as_ref().filter(|v| v.ready).map(|v| v.eye)),
     );
 
-    let layout = xmodel_lane_layout_hash(&xmodel, &runtime.catalog);
+    let (presented, effects, gaps) = presentation;
+    let thermal =
+        super::thermal_body::ThermalBodySelection::new(&presented, &effects, &runtime.catalog);
+    if let Some(name) = xmodel
+        .draws
+        .iter()
+        .find_map(|draw| match thermal.for_draw(draw) {
+            Some(Err(name)) => Some(name),
+            _ => None,
+        })
+    {
+        gaps.raise(
+            render_anim::gaps::RenderGapCause::ThermalBodyMaterialMissing { name: name.clone() },
+        );
+    } else {
+        gaps.clear(render_anim::gaps::RenderGap::ThermalBodyMaterial);
+    }
+    let layout = xmodel_lane_layout_hash(&xmodel, &runtime.catalog, &thermal);
     lane.merge_packed_n = xmodel.packed_rows().map(|rows| rows.len() as u32);
     lane.fx_object_id_exhausted = xmodel.fx_object_id_exhausted;
     if layout == lane.membership_hash && overlay_xmodel_lane_payload(&xmodel, &mut lane) {
@@ -1798,17 +1841,16 @@ pub(crate) fn rebuild_xmodel_draw_lane(
             lane.skipped_camera_frustum = lane.skipped_camera_frustum.saturating_add(1);
             continue;
         }
-        let Some(mat) = xmodel.materials.get(draw.material as usize) else {
-            continue;
-        };
-        if mat.model_lighting_required && draw.lighting_handle == 0 {
-            lane.skipped_no_lighting = lane.skipped_no_lighting.saturating_add(1);
-            continue;
-        }
-        let Some(material_sorted_index) = mat.material_sorted_index else {
+        let Some((material_sorted_index, model_lighting_required)) =
+            xmodel_camera_material(&xmodel, draw, &runtime.catalog, &thermal)
+        else {
             lane.skipped_no_ordinal = lane.skipped_no_ordinal.saturating_add(1);
             continue;
         };
+        if model_lighting_required && draw.lighting_handle == 0 {
+            lane.skipped_no_lighting = lane.skipped_no_lighting.saturating_add(1);
+            continue;
+        }
         let Some(baked) = runtime
             .catalog
             .material_for_sorted_ordinal(material_sorted_index)
@@ -2218,7 +2260,12 @@ fn emit_world_static_lane(
             }
         };
 
-        let world_rank = u32::from(GfxDrawSurf::from_packed(item.key).material_sorted_index());
+        let world_rank = world_surface_rank(
+            scene.and_then(|scene| scene.cull.as_ref()),
+            usize::from(item.surf),
+            item.key,
+            catalog,
+        );
         list.world_items.push(with_catalog(
             item.key,
             world_rank,
@@ -2466,7 +2513,7 @@ pub(crate) fn rebuild_static_draw_lane(
     let eye = prepared.as_ref().filter(|v| v.ready).map(|v| v.eye);
     let lod_args = lod_ramp.args();
     let eye_key = eye_lod_reuse_key(eye, lod_args);
-    let generation_hold = list.generation_id == runtime.catalog.generation_id
+    let generation_hold = list.generation_id == runtime.catalog.generation_id()
         && list.world_generation == world_generation;
     let reuse = static_list_reusable(
         list.last_static,
@@ -2476,7 +2523,7 @@ pub(crate) fn rebuild_static_draw_lane(
         generation_hold,
         !list.static_items.is_empty(),
     );
-    list.generation_id = runtime.catalog.generation_id;
+    list.generation_id = runtime.catalog.generation_id();
     list.world_generation = world_generation;
     if reuse {
         list.census.rebuild_skip = 1;
@@ -2756,7 +2803,7 @@ fn emit_world_sun_shadow_surf(
         .copied()
         .unwrap_or_default();
 
-    let world_rank = u32::from(GfxDrawSurf::from_packed(packed).material_sorted_index());
+    let world_rank = world_surface_rank(Some(cull), surf, packed, catalog);
     plan.items.push(with_catalog(
         packed,
         world_rank,
@@ -2975,7 +3022,7 @@ pub fn bake_sun_shadow_caster_plan(
     smodel_ids: &mut Vec<u16>,
 ) -> SunShadowCasterPlan {
     let mut plan = SunShadowCasterPlan {
-        generation_id: catalog.generation_id,
+        generation_id: catalog.generation_id(),
         ..Default::default()
     };
     let mut queues = SmodelBucketEmitQueues::default();
@@ -3221,57 +3268,67 @@ fn collect_xmodel_sun_shadow_casters(
             continue;
         }
         plan.xmodel_eligible = plan.xmodel_eligible.saturating_add(1);
-        let Some(mat) = xmodel.materials.get(draw.material as usize) else {
+        let Some(item) = xmodel_shadow_draw(xmodel, draw, catalog) else {
             plan.xmodel_missing_key = plan.xmodel_missing_key.saturating_add(1);
             continue;
         };
-        let Some(material_sorted_index) = mat.material_sorted_index else {
-            plan.xmodel_missing_key = plan.xmodel_missing_key.saturating_add(1);
-            continue;
-        };
-        let Some(baked) = catalog
-            .material_for_sorted_ordinal(material_sorted_index)
-            .and_then(|material| material.baked_draw_surf)
-        else {
-            plan.xmodel_missing_key = plan.xmodel_missing_key.saturating_add(1);
-            continue;
-        };
-        let key =
-            pack_xmodel_rigid_skinned_draw_surf(GfxDrawSurf::from_packed(baked), draw.object_id)
-                .packed;
-
         if !super::material_runtime::add_surf_has_technique(
             catalog,
-            render_material::MaterialDrawKey::new(key, material_sorted_index),
+            render_material::MaterialDrawKey::new(item.key, item.material_rank),
             super::TechType(super::SUN_SHADOW_CASTER_TECH),
         ) {
             plan.xmodel_no_technique = plan.xmodel_no_technique.saturating_add(1);
             continue;
         }
         items.push(DynamicSunCaster {
-            item: with_catalog(
-                key,
-                material_sorted_index,
-                RetainedDrawKind::XModel {
-                    surface: draw.surface,
-                    material: draw.material,
-                    object_id: draw.object_id,
-                    world_from_local: draw.world_from_local,
-                    lighting_handle: draw.lighting_handle,
-                    packed_lighting: draw.packed_lighting,
-                    is_scope: draw.is_scope,
-                    scene_entnum: draw.scene_entnum,
-                },
-                super::SurfaceSamplerInputs {
-                    reflection_probe: Some(super::SurfaceReflectionProbeId(
-                        draw.reflection_probe_index,
-                    )),
-                    ..Default::default()
-                },
-                catalog,
-            ),
+            item,
             bound: draw.caster_bound,
         });
     }
     items
+}
+
+pub(super) fn xmodel_shadow_materials(
+    xmodel: &XModelDrawPlan,
+    catalog: &super::RuntimeMaterialCatalog,
+) -> Vec<RetainedDrawItem> {
+    xmodel
+        .draws
+        .iter()
+        .filter(|draw| draw.object_id != XMODEL_OBJECT_ID_VIEWMODEL && !draw.is_scope)
+        .filter_map(|draw| xmodel_shadow_draw(xmodel, draw, catalog))
+        .collect()
+}
+
+fn xmodel_shadow_draw(
+    xmodel: &XModelDrawPlan,
+    draw: &super::tess::xmodel::XModelSurfaceDraw,
+    catalog: &super::RuntimeMaterialCatalog,
+) -> Option<RetainedDrawItem> {
+    let material = xmodel.materials.get(draw.material as usize)?;
+    let ordinal = material.material_sorted_index?;
+    let baked = catalog
+        .material_for_sorted_ordinal(ordinal)?
+        .baked_draw_surf?;
+    let key =
+        pack_xmodel_rigid_skinned_draw_surf(GfxDrawSurf::from_packed(baked), draw.object_id).packed;
+    Some(with_catalog(
+        key,
+        ordinal,
+        RetainedDrawKind::XModel {
+            surface: draw.surface,
+            material: draw.material,
+            object_id: draw.object_id,
+            world_from_local: draw.world_from_local,
+            lighting_handle: draw.lighting_handle,
+            packed_lighting: draw.packed_lighting,
+            is_scope: draw.is_scope,
+            scene_entnum: draw.scene_entnum,
+        },
+        super::SurfaceSamplerInputs {
+            reflection_probe: Some(super::SurfaceReflectionProbeId(draw.reflection_probe_index)),
+            ..Default::default()
+        },
+        catalog,
+    ))
 }

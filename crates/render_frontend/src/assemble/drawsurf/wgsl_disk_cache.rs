@@ -5,7 +5,7 @@ use d3d9_sm3::{PassLoweringAbi, PassWgsl};
 use super::material_runtime::RuntimeShaderPair;
 
 // Bump when emitted WGSL changes as well as when the binary format changes.
-pub const WGSL_CACHE_FORMAT: u32 = 5;
+pub const WGSL_CACHE_FORMAT: u32 = 6;
 
 const MAGIC: &[u8; 8] = b"IWLWGSL\n";
 

@@ -77,7 +77,8 @@ pub(crate) fn advance(world: &mut FrameWorld, tick: Tick) {
             .iter()
             .zip(dir)
             .map(|(v, d)| v * d)
-            .sum::<f32>();
+            .sum::<f32>()
+            .max(0.0);
         if link.armed && !link.boosted && link.attack {
             speed = SPEED_RANGE[1];
             link.boosted = true;

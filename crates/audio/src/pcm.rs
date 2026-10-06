@@ -1,323 +1,25 @@
+#[path = "sab_media.rs"]
+pub(crate) mod sab_media;
+
 #[path = "t5_stream.rs"]
 pub(crate) mod t5_stream;
 
-use std::sync::atomic::{AtomicU32, Ordering};
-use std::{num::NonZero, sync::Arc, time::Duration};
+use crate::decode_budget::{DecodeReservation, DecodeSamples};
+use crate::media::PcmBuffer;
 
-use bevy::{
-    audio::{ChannelCount, Decodable, PlaybackSettings, SampleRate, Source, Volume},
-    prelude::*,
-};
-
-#[derive(Clone, Debug)]
-pub struct LivePan {
-    left: Arc<AtomicU32>,
-    right: Arc<AtomicU32>,
+#[derive(Debug)]
+pub(crate) enum DecodeError {
+    Decode,
+    Read,
+    UnsupportedCodec(asset_audio::SabCodec),
+    MetadataMismatch,
+    Pcm(crate::media::PcmError),
 }
 
-impl LivePan {
-    pub fn unity() -> Self {
-        Self::new(1.0, 1.0)
+pub(crate) fn decode_audio_bytes(bytes: &[u8]) -> Result<PcmBuffer, DecodeError> {
+    if let Some(pcm) = riff_pcm(bytes) {
+        return pcm;
     }
-
-    pub fn new(left: f32, right: f32) -> Self {
-        Self {
-            left: Arc::new(AtomicU32::new(left.to_bits())),
-            right: Arc::new(AtomicU32::new(right.to_bits())),
-        }
-    }
-
-    pub fn set(&self, left: f32, right: f32) {
-        self.left.store(left.to_bits(), Ordering::Relaxed);
-        self.right.store(right.to_bits(), Ordering::Relaxed);
-    }
-
-    pub fn get(&self) -> (f32, f32) {
-        (
-            f32::from_bits(self.left.load(Ordering::Relaxed)),
-            f32::from_bits(self.right.load(Ordering::Relaxed)),
-        )
-    }
-}
-
-#[derive(Clone, Debug)]
-pub(crate) struct LiveGain(Arc<AtomicU32>);
-
-impl Default for LiveGain {
-    fn default() -> Self {
-        Self(Arc::new(AtomicU32::new(1.0f32.to_bits())))
-    }
-}
-
-impl LiveGain {
-    pub(crate) fn set(&self, gain: f32) {
-        self.0.store(gain.to_bits(), Ordering::Relaxed);
-    }
-    fn get(&self) -> f32 {
-        f32::from_bits(self.0.load(Ordering::Relaxed))
-    }
-}
-
-#[derive(Asset, TypePath, Clone)]
-pub struct PcmAudio {
-    samples: Arc<[f32]>,
-    channels: u16,
-    sample_rate: u32,
-    live_pan: Option<LivePan>,
-    live_gain: Option<LiveGain>,
-    channel_gain: Option<LiveGain>,
-}
-
-#[derive(Asset, TypePath, Clone)]
-pub struct LoopingPcmAudio(PcmAudio);
-
-#[derive(Bundle)]
-pub struct LoopingPcmPlayback {
-    player: AudioPlayer<LoopingPcmAudio>,
-    settings: PlaybackSettings,
-}
-
-impl LoopingPcmPlayback {
-    pub fn new(handle: Handle<LoopingPcmAudio>, volume: Volume) -> Self {
-        Self {
-            player: AudioPlayer(handle),
-            settings: PlaybackSettings::ONCE.with_volume(volume),
-        }
-    }
-}
-
-impl PcmAudio {
-    pub(crate) fn from_prepared(
-        samples: Arc<[f32]>,
-        channels: u16,
-        sample_rate: u32,
-    ) -> Option<Self> {
-        if samples.is_empty() || channels == 0 || sample_rate == 0 {
-            return None;
-        }
-        Some(Self {
-            samples,
-            channels,
-            sample_rate,
-            live_pan: None,
-            live_gain: None,
-            channel_gain: None,
-        })
-    }
-
-    pub(crate) fn samples(&self) -> &Arc<[f32]> {
-        &self.samples
-    }
-
-    pub(crate) fn channel_count(&self) -> u16 {
-        self.channels
-    }
-
-    pub(crate) fn rate(&self) -> u32 {
-        self.sample_rate
-    }
-
-    pub fn with_live_pan(&self) -> Self {
-        Self {
-            samples: Arc::clone(&self.samples),
-            channels: self.channels,
-            sample_rate: self.sample_rate,
-            live_pan: Some(LivePan::unity()),
-            live_gain: self.live_gain.clone(),
-            channel_gain: self.channel_gain.clone(),
-        }
-    }
-
-    pub fn live_pan(&self) -> Option<&LivePan> {
-        self.live_pan.as_ref()
-    }
-
-    pub(crate) fn with_gain(&self, gain: &LiveGain) -> Self {
-        let mut pcm = self.clone();
-        pcm.live_gain = Some(gain.clone());
-        pcm
-    }
-
-    pub(crate) fn gain_bound_to(&self, gain: &LiveGain) -> bool {
-        self.live_gain
-            .as_ref()
-            .is_some_and(|current| Arc::ptr_eq(&current.0, &gain.0))
-    }
-
-    pub(crate) fn with_channel_gain(&self, gain: &LiveGain) -> Self {
-        let mut pcm = self.clone();
-        pcm.channel_gain = Some(gain.clone());
-        pcm
-    }
-
-    pub(crate) fn channel_gain_bound_to(&self, gain: &LiveGain) -> bool {
-        self.channel_gain
-            .as_ref()
-            .is_some_and(|current| Arc::ptr_eq(&current.0, &gain.0))
-    }
-
-    pub fn into_looping(self) -> LoopingPcmAudio {
-        LoopingPcmAudio(self)
-    }
-
-    fn decoder_with_looping(&self, looping: bool) -> PcmDecoder {
-        PcmDecoder {
-            samples: Arc::clone(&self.samples),
-            pos: 0,
-            src_channels: self.channels,
-            sample_rate: self.sample_rate,
-            live: self.live_pan.clone(),
-            gain: self.live_gain.clone(),
-            channel_gain: self.channel_gain.clone(),
-            pending_right: None,
-            looping,
-        }
-    }
-}
-
-impl LoopingPcmAudio {
-    pub(crate) fn with_channel_gain(&self, gain: &LiveGain) -> Self {
-        Self(self.0.with_channel_gain(gain))
-    }
-    pub(crate) fn channel_gain_bound_to(&self, gain: &LiveGain) -> bool {
-        self.0.channel_gain_bound_to(gain)
-    }
-    pub(crate) fn with_gain(&self, gain: &LiveGain) -> Self {
-        Self(self.0.with_gain(gain))
-    }
-    pub(crate) fn gain_bound_to(&self, gain: &LiveGain) -> bool {
-        self.0.gain_bound_to(gain)
-    }
-
-    pub fn live_pan(&self) -> Option<&LivePan> {
-        self.0.live_pan()
-    }
-}
-
-pub struct PcmDecoder {
-    samples: Arc<[f32]>,
-
-    pos: usize,
-    src_channels: u16,
-    sample_rate: u32,
-    live: Option<LivePan>,
-    gain: Option<LiveGain>,
-    channel_gain: Option<LiveGain>,
-    pending_right: Option<f32>,
-    looping: bool,
-}
-
-impl PcmDecoder {
-    fn next_sample(&mut self) -> Option<f32> {
-        if let Some(right) = self.pending_right.take() {
-            return Some(right);
-        }
-        if !self.rewind_for_loop() {
-            return None;
-        }
-        let Some(live) = &self.live else {
-            let sample = self.samples[self.pos];
-            self.pos += 1;
-            return Some(sample);
-        };
-        let (gain_l, gain_r) = live.get();
-        let ch = self.src_channels.max(1) as usize;
-        let left = *self.samples.get(self.pos)?;
-        let right = self.samples.get(self.pos + 1).copied().unwrap_or(left);
-        self.pos += ch;
-        self.pending_right = Some(right * gain_r);
-        Some(left * gain_l)
-    }
-
-    fn remaining_out(&self) -> usize {
-        if self.live.is_some() {
-            let extra = usize::from(self.pending_right.is_some());
-            let ch = self.src_channels.max(1) as usize;
-            let frames_left = self.samples.len().saturating_sub(self.pos) / ch;
-            extra + frames_left * 2
-        } else {
-            self.samples.len().saturating_sub(self.pos)
-        }
-    }
-
-    fn rewind_for_loop(&mut self) -> bool {
-        if self.pos < self.samples.len() {
-            return true;
-        }
-        if !self.looping || self.samples.is_empty() {
-            return false;
-        }
-        self.pos = 0;
-        true
-    }
-}
-
-impl Iterator for PcmDecoder {
-    type Item = f32;
-
-    fn next(&mut self) -> Option<f32> {
-        self.next_sample().map(|sample| {
-            sample
-                * self.gain.as_ref().map_or(1.0, LiveGain::get)
-                * self.channel_gain.as_ref().map_or(1.0, LiveGain::get)
-        })
-    }
-
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        if self.looping {
-            return (0, None);
-        }
-        let remaining = self.remaining_out();
-        (remaining, Some(remaining))
-    }
-}
-
-impl Source for PcmDecoder {
-    fn current_span_len(&self) -> Option<usize> {
-        (!self.looping).then(|| self.remaining_out())
-    }
-
-    fn channels(&self) -> ChannelCount {
-        let n = if self.live.is_some() {
-            2
-        } else {
-            self.src_channels.max(1)
-        };
-        NonZero::new(n).unwrap_or(NonZero::new(1).unwrap())
-    }
-
-    fn sample_rate(&self) -> SampleRate {
-        NonZero::new(self.sample_rate).unwrap_or(NonZero::new(22_050).unwrap())
-    }
-
-    fn total_duration(&self) -> Option<Duration> {
-        if self.looping {
-            return None;
-        }
-        let frames = self.samples.len() as u64 / self.src_channels.max(1) as u64;
-        Some(Duration::from_secs_f64(
-            frames as f64 / self.sample_rate.max(1) as f64,
-        ))
-    }
-}
-
-impl Decodable for PcmAudio {
-    type Decoder = PcmDecoder;
-
-    fn decoder(&self) -> Self::Decoder {
-        self.decoder_with_looping(false)
-    }
-}
-
-impl Decodable for LoopingPcmAudio {
-    type Decoder = PcmDecoder;
-
-    fn decoder(&self) -> Self::Decoder {
-        self.0.decoder_with_looping(true)
-    }
-}
-
-pub fn decode_audio_bytes(bytes: &[u8]) -> Option<PcmAudio> {
     use symphonia::core::audio::SampleBuffer;
     use symphonia::core::codecs::{CODEC_TYPE_NULL, DecoderOptions};
     use symphonia::core::formats::FormatOptions;
@@ -325,6 +27,7 @@ pub fn decode_audio_bytes(bytes: &[u8]) -> Option<PcmAudio> {
     use symphonia::core::meta::MetadataOptions;
     use symphonia::core::probe::Hint;
 
+    let _input = DecodeReservation::reserve(bytes.len()).map_err(DecodeError::Pcm)?;
     let cursor = std::io::Cursor::new(bytes.to_vec());
     let mss = MediaSourceStream::new(Box::new(cursor), Default::default());
     let probed = symphonia::default::get_probe()
@@ -334,19 +37,20 @@ pub fn decode_audio_bytes(bytes: &[u8]) -> Option<PcmAudio> {
             &FormatOptions::default(),
             &MetadataOptions::default(),
         )
-        .ok()?;
+        .map_err(|_| DecodeError::Decode)?;
     let mut format = probed.format;
     let track = format
         .tracks()
         .iter()
-        .find(|t| t.codec_params.codec != CODEC_TYPE_NULL)?;
+        .find(|t| t.codec_params.codec != CODEC_TYPE_NULL)
+        .ok_or(DecodeError::Decode)?;
     let track_id = track.id;
-    let sample_rate = track.codec_params.sample_rate?;
+    let sample_rate = track.codec_params.sample_rate.ok_or(DecodeError::Decode)?;
     let mut decoder = symphonia::default::get_codecs()
         .make(&track.codec_params, &DecoderOptions::default())
-        .ok()?;
+        .map_err(|_| DecodeError::Decode)?;
 
-    let mut samples: Vec<f32> = Vec::new();
+    let mut samples = DecodeSamples::new().map_err(DecodeError::Pcm)?;
     let mut channels: u16 = 0;
     loop {
         let packet = match format.next_packet() {
@@ -361,20 +65,85 @@ pub fn decode_audio_bytes(bytes: &[u8]) -> Option<PcmAudio> {
             Ok(decoded) => decoded,
             Err(_) => continue,
         };
-        channels = channels.max(decoded.spec().channels.count() as u16);
-        let mut interleaved = SampleBuffer::<f32>::new(decoded.capacity() as u64, *decoded.spec());
+        let count = decoded.spec().channels.count();
+        if !(1..=2).contains(&count) {
+            return Err(DecodeError::Pcm(
+                crate::media::PcmError::UnsupportedChannels,
+            ));
+        }
+        channels = channels.max(count as u16);
+        let bytes = decoded
+            .capacity()
+            .checked_mul(count)
+            .and_then(|n| n.checked_mul(size_of::<i16>()))
+            .ok_or(DecodeError::Pcm(crate::media::PcmError::MemoryLimit))?;
+        let _interleaved = DecodeReservation::reserve(bytes).map_err(DecodeError::Pcm)?;
+        let mut interleaved = SampleBuffer::<i16>::new(decoded.capacity() as u64, *decoded.spec());
         interleaved.copy_interleaved_ref(decoded);
-        samples.extend_from_slice(interleaved.samples());
+        samples
+            .extend(interleaved.samples())
+            .map_err(DecodeError::Pcm)?;
     }
-    if samples.is_empty() || channels == 0 {
+    samples
+        .into_pcm(channels, sample_rate)
+        .map_err(DecodeError::Pcm)
+}
+
+fn riff_pcm(bytes: &[u8]) -> Option<Result<PcmBuffer, DecodeError>> {
+    if bytes.get(..4)? != b"RIFF" || bytes.get(8..12)? != b"WAVE" {
         return None;
     }
-    Some(PcmAudio {
-        samples: samples.into(),
-        channels,
-        sample_rate,
-        live_pan: None,
-        live_gain: None,
-        channel_gain: None,
-    })
+    let mut fmt = None;
+    let mut data = None;
+    let mut at = 12usize;
+    while let Some(header) = bytes.get(at..at.checked_add(8)?) {
+        let size = u32::from_le_bytes(header[4..8].try_into().ok()?) as usize;
+        let body = at + 8;
+        let Some(end) = body.checked_add(size) else {
+            return Some(Err(DecodeError::Decode));
+        };
+        let Some(chunk) = bytes.get(body..end) else {
+            return Some(Err(DecodeError::Decode));
+        };
+        match &header[..4] {
+            b"fmt " if chunk.len() >= 16 => fmt = Some(chunk),
+            b"data" => data = Some(chunk),
+            _ => {}
+        }
+        at = body.checked_add(size)?.checked_add(size & 1)?;
+    }
+    let fmt = fmt?;
+    let field = |offset: usize| u16::from_le_bytes([fmt[offset], fmt[offset + 1]]);
+    let (tag, channels, bits) = (field(0), field(2), field(14));
+    let rate = u32::from_le_bytes(fmt[4..8].try_into().ok()?);
+    if tag != 1 || !matches!(bits, 8 | 16) {
+        return None;
+    }
+    let data = data?;
+    Some((|| {
+        PcmBuffer::validate_geometry(channels, rate).map_err(DecodeError::Pcm)?;
+        let width = usize::from(bits / 8);
+        let frame_bytes = width * usize::from(channels);
+        if !data.len().is_multiple_of(frame_bytes) {
+            return Err(DecodeError::Pcm(crate::media::PcmError::PartialFrame));
+        }
+        let mut samples = DecodeSamples::for_frames(data.len() / frame_bytes, channels, rate)
+            .map_err(DecodeError::Pcm)?;
+        let mut block = [0i16; 4096];
+        for frame in data.chunks(block.len() * width) {
+            if bits == 16 {
+                for (sample, pair) in block.iter_mut().zip(frame.as_chunks::<2>().0) {
+                    *sample = i16::from_le_bytes([pair[0], pair[1]]);
+                }
+            } else {
+                for (sample, &byte) in block.iter_mut().zip(frame) {
+                    *sample = (i16::from(byte) - 128) << 8;
+                }
+            }
+            samples
+                .extend(&block[..frame.len() / width])
+                .map_err(DecodeError::Pcm)?;
+        }
+        samples.into_pcm(channels, rate).map_err(DecodeError::Pcm)
+    })())
 }

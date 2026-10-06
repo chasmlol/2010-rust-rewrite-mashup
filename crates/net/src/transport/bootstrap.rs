@@ -15,7 +15,34 @@ pub struct BootstrapTransaction {
     pub offer_bytes: Vec<u8>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct QueuedBootstrap {
+    pub epoch: u32,
+    pub bootstrap_id: u32,
+    pub tick_b: u32,
+    pub snapshot_seq: u32,
+    pub connection: ConnectionId,
+}
+
 impl BootstrapTransaction {
+    pub fn enqueue(
+        self,
+        lane: &BootstrapLane,
+        member: master_protocol::MemberId,
+    ) -> Result<QueuedBootstrap, &'static str> {
+        if !epoch_applies(self.epoch, lane.epoch()) {
+            return Err("bootstrap epoch is no longer live");
+        }
+        lane.push_to_worker(Some(member), self.offer_bytes)?;
+        Ok(QueuedBootstrap {
+            epoch: self.epoch,
+            bootstrap_id: self.bootstrap_id,
+            tick_b: self.tick_b,
+            snapshot_seq: self.snapshot_seq,
+            connection: self.connection,
+        })
+    }
+
     pub fn from_snapshot(
         epoch: u32,
         bootstrap_id: u32,

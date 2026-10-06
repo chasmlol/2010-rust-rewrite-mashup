@@ -653,6 +653,8 @@ pub const T5_CODE_VARIANT_WIND_SPRING_0: u16 = 0x62;
 
 pub const T5_CODE_VARIANT_WIND_SPRING_15: u16 = 0x71;
 
+pub const T5_CODE_CHARACTER_CHARRED_AMOUNT: u16 = 0x76;
+
 pub const T5_CODE_TREECANOPY_PARMS: u16 = 0x77;
 
 pub const T5_CODE_CUSTOMWIND_CENTER: u16 = 0xc0;
@@ -712,6 +714,7 @@ pub fn leftover_t5_code_bank(t5: u16) -> Option<u16> {
         | T5_CODE_WIND_DIRECTION
         | T5_CODE_GRASS_WIND_FORCE0
         | T5_CODE_TREECANOPY_PARMS
+        | T5_CODE_CHARACTER_CHARRED_AMOUNT
         | T5_CODE_CUSTOMWIND_CENTER
         | T5_CODE_CUSTOMWIND_SPRING => Some(LEFTOVER_T5_CODE_BASE.checked_add(t5)?),
         T5_CODE_POSTFX_CONTROL0..=T5_CODE_POSTFX_CONTROL6
@@ -741,4 +744,18 @@ pub fn remap_code_texture_index(t5: u32) -> Option<u32> {
 pub fn terrain_scorch_binding_hash(layer: usize) -> u32 {
     let name = format!("iw4l_t5_terrain_scorch_{layer}");
     crate::fnv1a64(name.as_bytes()) as u32
+}
+
+pub fn iw4_code_const_index(name: &str) -> Option<u16> {
+    IW4_CODE_CONST
+        .iter()
+        .find(|(known, _)| *known == name)
+        .map(|(_, index)| *index)
+}
+
+pub fn iw4_code_texture_index(name: &str) -> Option<u32> {
+    IW4_CODE_TEXTURE
+        .iter()
+        .find(|(known, _)| *known == name)
+        .map(|(_, index)| u32::from(*index))
 }

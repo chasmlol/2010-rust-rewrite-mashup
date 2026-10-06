@@ -626,6 +626,14 @@ impl HostMatchCore {
                 let Some(phase) = self.peers.get(&member).map(|peer| peer.phase) else {
                     return self.reject(&ids, before, "applied unknown peer");
                 };
+                if self
+                    .peers
+                    .get(&member)
+                    .and_then(|peer| peer.connection_id)
+                    .is_some_and(|expected| connection_id != Some(expected))
+                {
+                    return self.reject(&ids, before, "applied connection mismatch");
+                }
                 let repeat = match phase {
                     PeerPhase::Syncing {
                         bootstrap_id: pending,
@@ -863,12 +871,16 @@ impl ClientMatchCore {
         if load_key.match_key != self.match_key && !self.match_key.is_none() {
             return;
         }
+        if self.installed != Some(load_key) {
+            self.presentation_ready = false;
+            self.local_authority_ready = false;
+        }
         self.installed = Some(load_key);
     }
 
-    pub fn apply_presentation(&mut self, load_key: LocalLoadKey) {
+    pub fn apply_presentation(&mut self, load_key: LocalLoadKey, ready: bool) {
         if self.installed == Some(load_key) {
-            self.presentation_ready = true;
+            self.presentation_ready = ready;
         }
     }
 
@@ -898,8 +910,10 @@ impl ClientMatchCore {
         self.match_key = match_key;
     }
 
-    pub fn apply_local_authority_ready(&mut self, ready: bool) {
-        self.local_authority_ready = ready;
+    pub fn apply_local_authority_ready(&mut self, load_key: LocalLoadKey, ready: bool) {
+        if self.installed == Some(load_key) {
+            self.local_authority_ready = ready;
+        }
     }
 
     pub fn installed(&self) -> Option<LocalLoadKey> {

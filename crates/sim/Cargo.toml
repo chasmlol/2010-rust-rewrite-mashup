@@ -6,6 +6,8 @@ license.workspace = true
 description = "The funnel: UserCmd in, Snapshot out. The single simulation path shared by live play, prediction and replay."
 
 [dependencies]
+asset_core.workspace = true
+structured_data_iw4.workspace = true
 bevy_ecs.workspace = true
 sha2.workspace = true
 diag.workspace = true

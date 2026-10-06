@@ -20,17 +20,25 @@ pub fn refresh(
     frame.viewmodel_near = res.viewmodel_near;
     frame.primary_lights.clear();
     frame.attenuation.clear();
-    frame.t5_falloff.clear();
+    frame.local_light_bindings.clear();
+    frame.reflection_probe_sh.clear();
     frame.spot_receivers.clear();
     let Some(inputs) = inputs else {
         frame.inv_image_height = None;
+        frame.smodel_lighting_sh = Default::default();
         return;
     };
+    frame.smodel_lighting_sh = inputs.smodel_lighting_sh.clone();
     frame.inv_image_height = inputs.inv_image_height;
     frame
         .primary_lights
         .extend_from_slice(&inputs.primary_lights);
     frame.attenuation.extend_from_slice(&inputs.attenuation);
-    frame.t5_falloff.extend_from_slice(&inputs.t5_falloff);
+    frame
+        .local_light_bindings
+        .clone_from(&inputs.local_light_bindings);
+    frame
+        .reflection_probe_sh
+        .extend_from_slice(&inputs.reflection_probe_sh);
     frame.spot_receivers.clone_from(&res.spot_receivers);
 }

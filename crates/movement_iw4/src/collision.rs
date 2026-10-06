@@ -16,5 +16,13 @@ pub trait CollisionBackend {
         correct_solid(origin, mins, maxs, tracemask, self)
     }
 
+    fn penetrations(
+        &self,
+        _input: GroundTraceInput,
+        _contacts: &mut crate::recovery::ContactBuffer,
+    ) -> crate::recovery::Coverage {
+        crate::recovery::Coverage::Unsupported
+    }
+
     fn touch_entity(&self, _entity: i32) {}
 }

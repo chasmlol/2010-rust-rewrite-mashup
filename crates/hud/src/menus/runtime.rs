@@ -352,12 +352,10 @@ impl Runner<'_, '_> {
         }
         self.menus.stack.push(OpenMenu {
             name: def.name.clone(),
+            captures_input: def.static_flags & super::WINDOW_DECORATION == 0,
             focus: None,
             hover: None,
             items: vec![ItemState::default(); def.items.len()],
-            captures: def.fullscreen != 0
-                || !def.on_esc.is_empty()
-                || def.items.iter().any(super::is_focusable),
         });
         diag::info!(Ui, "menu open: {}", def.name);
         let name = def.name.clone();

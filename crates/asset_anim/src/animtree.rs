@@ -15,6 +15,7 @@ pub const PLAYERANIM_TYPES_PATH: &str = "mp/playeranimtypes.txt";
 
 #[derive(Clone, Debug, Default, Resource)]
 pub struct PlayerAnimSources {
+    family: Option<asset_core::FamilyId>,
     multiplayer_atr: Option<Vec<u8>>,
     playeranim_script: Option<Vec<u8>>,
     playeranim_types: Option<Vec<u8>>,
@@ -30,7 +31,31 @@ pub struct PlayerAnimSources {
 }
 
 impl PlayerAnimSources {
-    pub fn capture(&mut self, name: &str, data: &[u8], zlib_compressed: bool) {
+    pub fn family(&self) -> Option<asset_core::FamilyId> {
+        self.family
+    }
+    pub fn capture(
+        &mut self,
+        family: asset_core::FamilyId,
+        name: &str,
+        data: &[u8],
+        zlib_compressed: bool,
+    ) {
+        if ![
+            MULTIPLAYER_ANIMTREE_PATH,
+            PLAYERANIM_SCRIPT_PATH,
+            PLAYERANIM_TYPES_PATH,
+        ]
+        .contains(&name)
+        {
+            return;
+        }
+        if self.family.is_some_and(|owner| owner != family) {
+            self.decode_errors
+                .push("character animation source family mismatch");
+            return;
+        }
+        self.family = Some(family);
         let (target, path) = match name {
             MULTIPLAYER_ANIMTREE_PATH => (&mut self.multiplayer_atr, MULTIPLAYER_ANIMTREE_PATH),
             PLAYERANIM_SCRIPT_PATH => (&mut self.playeranim_script, PLAYERANIM_SCRIPT_PATH),
@@ -143,6 +168,9 @@ impl PlayerAnimSources {
         let Some(Ok(tree)) = self.compiled.as_ref() else {
             return;
         };
+        let Some(family) = self.family else {
+            return;
+        };
         let leaves: Vec<(usize, String)> = tree
             .nodes()
             .iter()
@@ -156,7 +184,7 @@ impl PlayerAnimSources {
         let mut missing_leaves = 0usize;
         let mut first_missing = None;
         for (index, name) in leaves {
-            if catalog.get(crate::AssetNamespace::Iw4, &name).is_some() {
+            if catalog.get(family, &name).is_some() {
                 bound[index] = true;
                 bound_leaves += 1;
             } else {

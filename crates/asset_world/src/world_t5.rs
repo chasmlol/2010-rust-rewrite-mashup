@@ -528,10 +528,11 @@ pub fn build_t5_world_draw(
             outdoor_image: None,
             outdoor_lookup: [0; 16],
             sun_effects: None,
-            t5_sky_dynamic_intensity: geometry
+            sky_dynamic_intensity: geometry
                 .sky_dynamic_intensity_bits
                 .map(|v| v.map(f32::from_bits))
                 .filter(|v| v.iter().all(|f| f.is_finite())),
+            t6_exposure: None,
             t5_sun_parse_exposure: geometry
                 .sun_parse_exposure_bits
                 .map(f32::from_bits)
@@ -979,6 +980,7 @@ fn extract_t5_reflection_probes(
         let probe = probes.at(i * T5_GFX_REFLECTION_PROBE);
         out.push(WorldReflectionProbe {
             image: materials.image_index(iw4_ptr(probe.at(T5_PROBE_IMAGE))),
+            lighting_sh: None,
             origin: [
                 s.f32_at(probe, 0).map_err(|_| WorldMeshError::NoGeometry)?,
                 s.f32_at(probe, 4).map_err(|_| WorldMeshError::NoGeometry)?,
@@ -1007,7 +1009,7 @@ struct BatchBuilder {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn make_material_batches(
+pub(crate) fn make_material_batches(
     positions: &[[f32; 3]],
     normals: &[[f32; 3]],
     tangents: &[[f32; 4]],

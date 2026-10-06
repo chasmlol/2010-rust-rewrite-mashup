@@ -1,4 +1,4 @@
-use crate::random::{FX_RAND_CH_INITIAL_ROTATION, random_table_f32};
+use crate::random::{FxRandomChannel, sample_f32};
 
 pub const FX_RAND_ROT_DEGREES: f64 = 360.0;
 
@@ -7,8 +7,8 @@ pub const FX_DEG_TO_RAD: f64 = 0.017_453_292_384_743_69;
 pub const FX_RAD_TO_DEG: f64 = 57.295_776_367_187_5;
 
 #[inline]
-pub fn runner_rand_rot_degrees(random_seed: u32) -> f32 {
-    (f64::from(random_table_f32(random_seed, FX_RAND_CH_INITIAL_ROTATION)) * FX_RAND_ROT_DEGREES)
+pub fn runner_rand_rot_degrees(random_seed: u64) -> f32 {
+    (f64::from(sample_f32(random_seed, FxRandomChannel::InitialRotation)) * FX_RAND_ROT_DEGREES)
         as f32
 }
 
@@ -54,7 +54,7 @@ pub fn impact_mark_axis(axis_in: [[f32; 3]; 3], orientation_radians: f32) -> [[f
 }
 
 #[inline]
-pub fn randomly_rotate_axis(axis_in: [[f32; 3]; 3], random_seed: u32) -> [[f32; 3]; 3] {
+pub fn randomly_rotate_axis(axis_in: [[f32; 3]; 3], random_seed: u64) -> [[f32; 3]; 3] {
     let degrees = runner_rand_rot_degrees(random_seed);
     let forward = axis_in[0];
     let right = rotate_point_around_vector(forward, axis_in[1], degrees);

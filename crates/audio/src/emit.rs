@@ -42,12 +42,14 @@ pub fn emit_footstep_on_bob_wrap(
     }
     let (alias, fallback) = footstep_aliases(gait, surface_flags, local_player, quieter);
     footsteps.write(Footstep {
+        event: None,
         alias,
         fallback,
         origin_inches,
         snd_ent,
     });
     weapon_sounds.write(WeaponSound {
+        event: None,
         namespace: asset_core::AssetNamespace::Iw4,
         alias: gear_rattle_alias(gait, local_player).to_owned(),
         origin_inches,
@@ -69,6 +71,7 @@ pub fn emit_weapon_fire(
         return false;
     };
     weapon_sounds.write(WeaponSound {
+        event: None,
         namespace,
         alias: alias.to_owned(),
         origin_inches,

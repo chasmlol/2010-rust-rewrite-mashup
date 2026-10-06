@@ -10,7 +10,7 @@ use crate::adapters::fx::present::{FxElemInfoCache, play_named_oriented_in_world
 use crate::adapters::fx::world_mark::FrontendFxScene;
 use crate::prepare::scene::cull::DynEntModelEntity;
 use crate::prepare::scene::world::{WorldDynEntInstance, WorldScene};
-use assets::PreparedWeapons;
+use assets::{BoundWeapons, PreparedWeapons};
 use net::{
     ClientPredictionState, EntityBulletHit, EntityEventSound, EntityExplosion, EntityPhysicsSphere,
 };
@@ -346,8 +346,8 @@ fn can_wake(inst: &WorldDynEntInstance) -> Option<&asset_world::OwnedPhysPreset>
     Some(preset)
 }
 
-fn weapon_radii(weapons: Option<&PreparedWeapons>, weapon: u32) -> Option<(f32, f32)> {
-    let facts = weapons?.0.facts_of(weapon)?;
+fn weapon_radii(weapons: Option<&BoundWeapons<'_>>, weapon: u32) -> Option<(f32, f32)> {
+    let facts = weapons?.row(weapon)?.event_facts()?;
     let outer = facts.explosion_radius.max(0) as f32;
     if outer <= 0.0 {
         return None;
@@ -356,16 +356,16 @@ fn weapon_radii(weapons: Option<&PreparedWeapons>, weapon: u32) -> Option<(f32, 
     Some((inner, outer))
 }
 
-fn weapon_explosion_damage(weapons: Option<&PreparedWeapons>, weapon: u32) -> (i32, i32) {
+fn weapon_explosion_damage(weapons: Option<&BoundWeapons<'_>>, weapon: u32) -> (i32, i32) {
     weapons
-        .and_then(|w| w.0.facts_of(weapon))
+        .and_then(|w| w.row(weapon).and_then(|weapon| weapon.event_facts()))
         .map(|f| (f.explosion_inner_damage, f.explosion_outer_damage))
         .unwrap_or((0, 0))
 }
 
-fn weapon_hit_damage(weapons: Option<&PreparedWeapons>, weapon: u32) -> i32 {
+fn weapon_hit_damage(weapons: Option<&BoundWeapons<'_>>, weapon: u32) -> i32 {
     weapons
-        .and_then(|w| w.0.facts_of(weapon))
+        .and_then(|w| w.row(weapon).and_then(|weapon| weapon.event_facts()))
         .map(|f| f.damage)
         .unwrap_or(0)
 }
@@ -489,11 +489,14 @@ pub(crate) fn on_entity_explosion(
     scene: Option<Res<WorldScene>>,
     entity_marks: Res<EntityMarks>,
 ) {
+    let weapons = weapons
+        .as_deref()
+        .and_then(|weapons| weapons.for_event(explosion.event.world).ok());
     let payload = explosion.event.payload;
-    let Some((inner, outer)) = weapon_radii(weapons.as_deref(), payload.weapon) else {
+    let Some((inner, outer)) = weapon_radii(weapons.as_ref(), payload.weapon) else {
         return;
     };
-    let (inner_damage, outer_damage) = weapon_explosion_damage(weapons.as_deref(), payload.weapon);
+    let (inner_damage, outer_damage) = weapon_explosion_damage(weapons.as_ref(), payload.weapon);
     let origin = Vec3::from_array(payload.origin);
     let explicit = if matches!(
         explosion.event.event,
@@ -686,6 +689,9 @@ pub(crate) fn on_entity_bullet_hit(
     scene: Option<Res<WorldScene>>,
     entity_marks: Res<EntityMarks>,
 ) {
+    let weapons = weapons
+        .as_deref()
+        .and_then(|weapons| weapons.for_event(hit.event.world).ok());
     let payload = hit.event.payload;
     let start = Vec3::from_array(payload.origin2);
     let end = Vec3::from_array(payload.origin);
@@ -703,7 +709,7 @@ pub(crate) fn on_entity_bullet_hit(
             start,
             end,
             bullet_scale,
-            weapon_hit_damage(weapons.as_deref(), payload.weapon),
+            weapon_hit_damage(weapons.as_ref(), payload.weapon),
             &mut instances,
             &mut impulses,
             phys.as_mut(),
@@ -717,11 +723,11 @@ pub(crate) fn on_entity_bullet_hit(
         hit.event.event,
         EntityEventKind::BULLET_HIT_EXPLODE | EntityEventKind::BULLET_HIT_CLIENT_EXPLODE
     ) {
-        let Some((inner, outer)) = weapon_radii(weapons.as_deref(), payload.weapon) else {
+        let Some((inner, outer)) = weapon_radii(weapons.as_ref(), payload.weapon) else {
             return;
         };
         let (inner_damage, outer_damage) =
-            weapon_explosion_damage(weapons.as_deref(), payload.weapon);
+            weapon_explosion_damage(weapons.as_ref(), payload.weapon);
         let origin = end;
         let started = Instant::now();
         if let Some(candidates) = broadphase.sphere_candidates(origin, outer) {
@@ -801,6 +807,9 @@ pub(crate) fn on_entity_event_sound(
     if sound.event.event != EntityEventKind::MELEE_HIT {
         return;
     }
+    let weapons = weapons
+        .as_deref()
+        .and_then(|weapons| weapons.for_event(sound.event.world).ok());
     let payload = sound.event.payload;
     let start = Vec3::from_array(payload.origin2);
     let end = Vec3::from_array(payload.origin);
@@ -820,7 +829,7 @@ pub(crate) fn on_entity_event_sound(
         start,
         end,
         bullet_scale,
-        weapon_hit_damage(weapons.as_deref(), payload.weapon),
+        weapon_hit_damage(weapons.as_ref(), payload.weapon),
         &mut instances,
         &mut impulses,
         phys.as_mut(),

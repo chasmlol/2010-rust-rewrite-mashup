@@ -116,6 +116,7 @@ impl PlayerDrawGate {
 pub enum RemoteBodySubmitKind {
     NotInSnap,
     Corpse,
+    Hidden,
     Dead,
     SelfFpv,
     Player,
@@ -130,6 +131,7 @@ impl RemoteBodySubmitKind {
         match self {
             Self::NotInSnap => "not_in_snap",
             Self::Corpse => "corpse",
+            Self::Hidden => "hidden",
             Self::Dead => "dead",
             Self::SelfFpv => "self_fpv",
             Self::Player => "ok",
@@ -154,6 +156,9 @@ pub fn remote_body_submit_kind(
         } else {
             RemoteBodySubmitKind::NotInSnap
         };
+    }
+    if runtime.next_state.e_flags & playerstate_iw4::eflags::NODRAW != 0 {
+        return RemoteBodySubmitKind::Hidden;
     }
     if runtime.next_state.e_flags & EFLAGS_DEAD != 0 {
         return RemoteBodySubmitKind::Dead;
@@ -282,6 +287,7 @@ pub fn player_state_to_entity_state(client: ClientId, ps: &PlayerState) -> Entit
     es.legs_anim = ps.legs_anim;
     es.torso_anim = ps.torso_anim;
     es.index = i32::try_from(ps.weapon).unwrap_or(0);
+    es.weapon_model = weapon_iw4::weapon_model_for_held(&ps.weapons, &ps.weapon_data, ps.weapon);
     es
 }
 
@@ -292,6 +298,7 @@ pub struct RemotePoseSample {
     pub rate_origin: [f32; 3],
     pub rate_time_ms: i32,
     pub weapon: u32,
+    pub weapon_model: u8,
     pub view_pitch_deg: f32,
 
     pub prone: bool,
@@ -316,6 +323,7 @@ pub fn remote_pose_sample(runtime: &CEntityRuntime) -> RemotePoseSample {
             torso_anim: state.torso_anim,
         },
         weapon: u32::try_from(state.index).unwrap_or(0),
+        weapon_model: state.weapon_model,
         view_pitch_deg: runtime.angles[0],
         prone: state.e_flags & eflags::PRONE != 0,
         crouch: state.e_flags & eflags::DUCK != 0,

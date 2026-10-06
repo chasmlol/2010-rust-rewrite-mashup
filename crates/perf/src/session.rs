@@ -202,11 +202,7 @@ fn arm_atexit() {
     if ATEXIT_ARMED.swap(true, Ordering::SeqCst) {
         return;
     }
-    unsafe extern "C" {
-        fn atexit(callback: extern "C" fn()) -> i32;
-    }
-    extern "C" fn flush_atexit() {
-        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(flush));
-    }
-    let _ = unsafe { atexit(flush_atexit) };
+    diag::exit::at_exit(|| {
+        let _ = flush();
+    });
 }

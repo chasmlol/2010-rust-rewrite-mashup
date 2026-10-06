@@ -56,8 +56,8 @@ pub(crate) fn team_voice_aliases(
         .flatten()
         .chain(["generic_death_"])
         .collect();
-    let mut aliases: Vec<String> = (0..bank.sounds.len())
-        .filter(|&index| bank.namespace_of_alias(index) == AssetNamespace::Iw4)
+    let mut aliases: Vec<String> = (0..bank.sounds().len())
+        .filter(|&index| bank.namespace_of_alias(index) == Some(AssetNamespace::Iw4))
         .filter_map(|index| bank.name_at(index))
         .filter(|name| prefixes.iter().any(|prefix| name.starts_with(prefix)))
         .map(str::to_owned)
@@ -125,6 +125,18 @@ const T5_LINES: &[(&str, &str)] = &[
     ("tm_death", "tdm_start"),
 ];
 
+const T6_LINES: &[(&str, &str)] = &[
+    ("captureflag", "ctf_start"),
+    ("demolition", "demo_start"),
+    ("domination", "dom_start"),
+    ("freeforall", "ffa_start"),
+    ("headquarters", "hq_start"),
+    ("obj_defend", "defend_start"),
+    ("obj_destroy", "destroy_start"),
+    ("searchdestroy", "sd_start"),
+    ("tm_death", "tdm_start"),
+];
+
 #[derive(Resource, Default)]
 pub(crate) struct AnnouncerRoutes(HashMap<String, (AssetNamespace, String)>);
 
@@ -149,6 +161,7 @@ impl AnnouncerRoutes {
         let lines: &[(&str, &str)] = match namespace {
             AssetNamespace::Iw4 => return Self::default(),
             AssetNamespace::T5 => T5_LINES,
+            AssetNamespace::T6 => T6_LINES,
             AssetNamespace::Iw5 => &[],
         };
         let Some(native) = native else {

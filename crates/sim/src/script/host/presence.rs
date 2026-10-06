@@ -52,7 +52,7 @@ fn vector(runtime: &mut Runtime, id: u64, name: &str) -> [f32; 3] {
 
 fn model_field(runtime: &mut Runtime, id: u64) -> Option<Arc<str>> {
     match runtime.object_field(id, "model") {
-        Value::String(model) if !model.is_empty() && !model.starts_with('*') => Some(model),
+        Value::String(model) if !model.is_empty() && !model.starts_with('*') => Some(model.into()),
         _ => None,
     }
 }
@@ -76,7 +76,7 @@ pub(crate) fn initialize_map_models(world: &mut World) {
         .filter_map(|(object, entity)| Some((*object, models.get(&entity.presence?)?.clone())))
         .collect();
     for (object, model) in objects {
-        runtime.set_object_field(object, "model", Value::String(model));
+        runtime.set_object_field(object, "model", Value::String(model.into()));
     }
 }
 

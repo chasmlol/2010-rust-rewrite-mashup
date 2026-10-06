@@ -273,25 +273,29 @@
       {
         "index": 34,
         "fields": {
-          "vis_exp": "0"
+          "vis_exp": "op 38 s:75695f636c6173735f63616d6f5f696d6167655f30 op 1 op 13 s:",
+          "material_exp": "op 38 s:75695f636c6173735f63616d6f5f696d6167655f30 op 1"
         }
       },
       {
         "index": 35,
         "fields": {
-          "vis_exp": "0"
+          "vis_exp": "op 38 s:75695f636c6173735f63616d6f5f696d6167655f30 op 1 op 13 s:",
+          "material_exp": "op 38 s:75695f636c6173735f63616d6f5f696d6167655f30 op 1"
         }
       },
       {
         "index": 44,
         "fields": {
-          "vis_exp": "0"
+          "vis_exp": "op 38 s:75695f636c6173735f63616d6f5f696d6167655f31 op 1 op 13 s:",
+          "material_exp": "op 38 s:75695f636c6173735f63616d6f5f696d6167655f31 op 1"
         }
       },
       {
         "index": 45,
         "fields": {
-          "vis_exp": "0"
+          "vis_exp": "op 38 s:75695f636c6173735f63616d6f5f696d6167655f31 op 1 op 13 s:",
+          "material_exp": "op 38 s:75695f636c6173735f63616d6f5f696d6167655f31 op 1"
         }
       },
       {
@@ -1166,7 +1170,7 @@
     "name": "class_games",
     "base": "popup_cac_weapon_primary",
     "fields": {
-      "vis_exp": "op 7 op 57 s:636c6173735f63617465676f72696573 op 1",
+      "vis_exp": "op 7 op 57 s:636c6173735f63617465676f72696573 op 1 op 14 op 7 op 57 s:636c6173735f7069636b6572 op 1",
       "float_exp": [
         [
           1,
@@ -2996,7 +3000,7 @@
       "float_exp": [
         [
           1,
-          "op 80 s:75695f636c6173735f616e63686f72 op 1 op 5 op 16 1 op 5 op 16 op 35 s:75695f636c6173735f6e6573746564 op 1 op 2 2 op 1 op 1 op 2 20"
+          "op 80 s:75695f636c6173735f616e63686f72 op 1 op 5 op 16 op 35 s:75695f636c6173735f7069636b65725f6465707468 op 1 op 1 op 2 20"
         ],
         [
           3,
@@ -3009,7 +3013,7 @@
             "SetLocalVar": {
               "kind": 4,
               "name": "ui_tabDepth",
-              "expr": "1 op 5 op 16 op 35 s:75695f636c6173735f6e6573746564 op 1 op 2 2 op 1"
+              "expr": "op 35 s:75695f636c6173735f7069636b65725f6465707468 op 1"
             }
           },
           {
@@ -3042,7 +3046,7 @@
             "SetLocalVar": {
               "kind": 4,
               "name": "ui_tabDepth",
-              "expr": "op 16 1 op 5 op 16 op 35 s:75695f636c6173735f6e6573746564 op 1 op 2 2 op 1 op 1 op 6 1"
+              "expr": "op 16 op 35 s:75695f636c6173735f7069636b65725f6465707468 op 1 op 1 op 6 1"
             }
           }
         ],

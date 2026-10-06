@@ -12,6 +12,7 @@ pub mod weap_anim_event {
     pub const MELEE_CHARGE: u32 = 9;
     pub const DROP: u32 = 0xa;
     pub const RAISE: u32 = 0xb;
+    pub const FIRST_RAISE: u32 = 0xc;
     pub const RELOAD: u32 = 0xd;
     pub const RELOAD_EMPTY: u32 = 0xe;
     pub const RELOAD_START: u32 = 0xf;

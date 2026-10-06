@@ -209,6 +209,7 @@ fn advance_motions(world: &mut World, now: i64) {
 }
 
 fn advance_bodies(world: &mut World) {
+    let mut crushed = Vec::new();
     world.resource_scope::<Mechanics, _>(|world, mut mechanics| {
         let Mechanics {
             bodies, finished, ..
@@ -242,7 +243,7 @@ fn advance_bodies(world: &mut World) {
                 end,
                 body.mins,
                 body.maxs,
-                crate::bullet_collision::MASK_PLAYER_SOLID,
+                crate::bullet_collision::MASK_PHYS_WORLD,
             );
             let fraction = if trace.startsolid != 0 {
                 0.0
@@ -251,6 +252,13 @@ fn advance_bodies(world: &mut World) {
             };
             let at: [f32; 3] =
                 std::array::from_fn(|i| origin[i] + body.velocity[i] * TICK_S * fraction);
+            if body.velocity[2] < 0.0 {
+                crushed.extend(
+                    crush_victims(world, *object, origin, at, body)
+                        .into_iter()
+                        .map(|(victim, point)| (victim, *object, point)),
+                );
+            }
             body.ticks += 1;
             let rested = fraction < 1.0 || body.ticks >= SETTLE_TICKS;
             let mut runtime = world.resource_mut::<Runtime>();
@@ -264,6 +272,67 @@ fn advance_bodies(world: &mut World) {
             true
         });
     });
+    for (victim, pusher, point) in crushed {
+        super::players::crush_player(world, victim, pusher, point);
+    }
+}
+
+fn crush_victims(
+    world: &mut World,
+    object: u64,
+    origin: [f32; 3],
+    at: [f32; 3],
+    body: &Body,
+) -> Vec<(crate::ClientId, [f32; 3])> {
+    let presence = world.resource::<Runtime>().entities[&object].presence;
+    let frame = crate::frame::FrameWorld::from_world(world);
+    let (mins, maxs) = presence
+        .and_then(|id| {
+            let row = frame
+                .entity_collision_capabilities()
+                .iter()
+                .find(|row| row.owner.script_model() == Some(id))?;
+            let brush = row.linked_brushes.first()?;
+            let model = frame
+                .clip_cmodels()
+                .models
+                .get(brush.cmodel_handle as usize)?;
+            let reach = (0..2)
+                .map(|i| model.mins[i].abs().max(model.maxs[i].abs()))
+                .fold(0.0f32, f32::max);
+            let offset: [f32; 3] = std::array::from_fn(|i| brush.origin[i] - origin[i]);
+            Some((
+                [
+                    offset[0] - reach,
+                    offset[1] - reach,
+                    offset[2] + model.mins[2],
+                ],
+                [
+                    offset[0] + reach,
+                    offset[1] + reach,
+                    offset[2] + model.maxs[2],
+                ],
+            ))
+        })
+        .unwrap_or((body.mins, body.maxs));
+    let lo: [f32; 3] = std::array::from_fn(|i| origin[i].min(at[i]) + mins[i]);
+    let hi: [f32; 3] = std::array::from_fn(|i| origin[i].max(at[i]) + maxs[i]);
+    let (pmins, pmaxs) = (
+        crate::bullet_collision::PLAYER_MINS,
+        crate::bullet_collision::PLAYER_MAXS,
+    );
+    let mut victims = Vec::new();
+    frame.visit_players(|id, ps| {
+        if ps.pm_type >= playerstate_iw4::PM_TYPE_DEAD {
+            return;
+        }
+        let inside =
+            (0..3).all(|i| ps.origin[i] + pmins[i] < hi[i] && ps.origin[i] + pmaxs[i] > lo[i]);
+        if inside {
+            victims.push((id, ps.origin));
+        }
+    });
+    victims
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]

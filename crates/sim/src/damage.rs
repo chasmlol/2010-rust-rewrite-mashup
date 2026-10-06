@@ -798,6 +798,71 @@ pub(crate) fn play_death(
     true
 }
 
+pub(crate) fn force_death_anim(
+    world: &mut FrameWorld,
+    victim: ClientId,
+    weapon: Option<u32>,
+    explosive_mod: bool,
+    inflictor_origin: Option<[f32; 3]>,
+    hitloc: u8,
+    v_dir: [f32; 3],
+) {
+    let Some(self_ps) = world.player(victim).copied() else {
+        return;
+    };
+    let mt =
+        crate::player_anim_script::event_anim_movetype(&self_ps, world.last_anim_movetype(victim));
+    let (view, primary) = crate::pmove_anim_weapon_ids(&self_ps);
+    let mut conds = crate::anim_conditions_from_pmove(
+        &self_ps,
+        world.combat_facts_for(view),
+        world.combat_facts_for(primary),
+        Some(mt),
+        world.last_anim_strafing(victim),
+        world.anim_command_buttons(victim),
+    );
+    let weap_class = weapon.and_then(|w| world.combat_facts_for(w).map(|f| f.weap_class));
+    let offhand_class = weapon.and_then(|w| world.equipment_facts_for(w).map(|f| f.offhand_class));
+    let damagetype = if offhand_class == Some(1) {
+        let near = inflictor_origin.is_some_and(|o| {
+            let d = [
+                o[0] - self_ps.origin[0],
+                o[1] - self_ps.origin[1],
+                o[2] - self_ps.origin[2],
+            ];
+            d[0] * d[0] + d[1] * d[1] + d[2] * d[2] < anim_iw4::ANIM_DAMAGE_EXPLOSION_NEAR_DIST_SQ
+        });
+        if near { 2 } else { 1 }
+    } else if explosive_mod {
+        2
+    } else if weap_class == Some(4) {
+        1
+    } else {
+        0
+    };
+    conds.set_value(anim_iw4::ANIM_COND_DAMAGETYPE, damagetype);
+    conds.set_value(
+        anim_iw4::ANIM_COND_HITLOCATION,
+        u32::from(anim_iw4::anim_script_hit_location(hitloc)),
+    );
+    let (forward, _, _) = math_iw4::angle_vectors(self_ps.viewangles);
+    conds.set_value(
+        anim_iw4::ANIM_COND_HITDIRECTION,
+        u32::from(anim_iw4::anim_script_hit_direction(
+            [forward[0], forward[1]],
+            [v_dir[0], v_dir[1]],
+        )),
+    );
+    let script = world.player_anim_script();
+    let mut seed = world.anim_event_seed();
+    if let Some(script) = script.as_ref()
+        && let Some(ps) = world.player_mut(victim)
+    {
+        let _ = script.apply_event(ps, anim_iw4::ANIM_ET_DEATH, &conds, &mut seed, true);
+    }
+    world.set_anim_event_seed(seed);
+}
+
 fn anim_script_damagetype(
     source: crate::DamageSource,
     weap_class: Option<i32>,

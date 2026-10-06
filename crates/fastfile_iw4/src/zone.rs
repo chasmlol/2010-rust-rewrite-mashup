@@ -922,6 +922,7 @@ pub struct WeaponGeometry {
     pub alternate_weapon_name: Option<Ptr>,
     pub alternate_raise_time_ms: i32,
     pub alternate_drop_time_ms: i32,
+    pub first_raise_time_ms: i32,
 
     pub weap_def: Option<Ptr>,
 
@@ -929,9 +930,13 @@ pub struct WeaponGeometry {
 
     pub gun_xmodel_name: Option<Ptr>,
 
+    pub gun_xmodel_names: [Option<Ptr>; 16],
+
     pub hand_xmodel_name: Option<Ptr>,
 
     pub world_model_name: Option<Ptr>,
+
+    pub world_model_names: [Option<Ptr>; 16],
 
     pub projectile_model_name: Option<Ptr>,
 
@@ -1130,6 +1135,8 @@ pub struct WeaponGeometry {
     pub ads_spread: f32,
 
     pub aim_down_sight: bool,
+
+    pub thermal_scope: bool,
 
     pub no_ads_when_mag_empty: bool,
 
@@ -1415,6 +1422,7 @@ pub struct ZoneStream<'a> {
     weapon: Option<WeaponGeometry>,
     vehicle: Option<(Option<Ptr>, Option<Ptr>)>,
     vehicle_compass: ([[u8; 128]; 2], [i32; 2]),
+    vehicle_accel: f32,
     latest_material: Option<MaterialGeometry>,
     latest_image: Option<GfxImageGeometry>,
     latest_technique_set: Option<TechniqueSetGeometry>,
@@ -1422,6 +1430,7 @@ pub struct ZoneStream<'a> {
     technique_graph: TechniqueGraphGeometry,
     technique_graph_seen: bool,
     latest_shader: Option<ShaderGeometry>,
+    structured_data_def_set: Option<Ptr>,
     latest_vertex_decl: Option<VertexDeclGeometry>,
     latest_sound_name: Option<Ptr>,
     image_serial: u64,
@@ -1519,12 +1528,14 @@ impl<'a> ZoneStream<'a> {
             weapon: None,
             vehicle: None,
             vehicle_compass: ([[0; 128]; 2], [0; 2]),
+            vehicle_accel: 0.0,
             latest_material: None,
             latest_image: None,
             latest_technique_set: None,
             technique_graph: TechniqueGraphGeometry::default(),
             technique_graph_seen: false,
             latest_shader: None,
+            structured_data_def_set: None,
             latest_vertex_decl: None,
             latest_sound_name: None,
             image_serial: 0,
@@ -2113,6 +2124,14 @@ impl<'a> ZoneStream<'a> {
         self.vehicle_compass = (icons, size);
     }
 
+    pub(crate) fn record_vehicle_accel(&mut self, accel: f32) {
+        self.vehicle_accel = accel;
+    }
+
+    pub fn vehicle_accel(&self) -> f32 {
+        self.vehicle_accel
+    }
+
     pub fn vehicle_compass(&self) -> ([&str; 2], [i32; 2]) {
         let icons = [&self.vehicle_compass.0[0], &self.vehicle_compass.0[1]].map(|bytes| {
             let len = bytes.iter().position(|b| *b == 0).unwrap_or(bytes.len());
@@ -2186,6 +2205,14 @@ impl<'a> ZoneStream<'a> {
 
     pub fn latest_technique_graph(&self) -> Option<&TechniqueGraphGeometry> {
         self.technique_graph_seen.then_some(&self.technique_graph)
+    }
+
+    pub(crate) fn record_structured_data_def_set(&mut self, header: Ptr) {
+        self.structured_data_def_set = Some(header);
+    }
+
+    pub fn structured_data_def_set(&self) -> Option<Ptr> {
+        self.structured_data_def_set
     }
 
     pub(crate) fn record_shader(&mut self, shader: ShaderGeometry) {

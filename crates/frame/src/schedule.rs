@@ -124,6 +124,9 @@ pub struct LifeFrontPublished;
 pub struct FxSoundPublished;
 
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub struct OwnerEventsPublished;
+
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub struct SessionSwapApplied;
 
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
@@ -311,6 +314,7 @@ pub fn configure_client_sets(app: &mut App) {
         );
     }
     app.configure_sets(Update, FxSoundPublished.in_set(ClientSet::Effects));
+    app.configure_sets(Update, OwnerEventsPublished.in_set(ClientSet::Predict));
     configure_worker_cmd_sets(app);
 }
 

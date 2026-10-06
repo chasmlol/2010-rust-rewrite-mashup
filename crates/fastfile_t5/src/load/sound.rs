@@ -34,10 +34,10 @@ pub(super) fn load_snd_driver_globals(
     for (count_offset, pointer_offset, stride) in sz::SND_DRIVER_GLOBAL_ARRAYS {
         let count = s.u32_at(p, count_offset)? as usize;
         let rows = always_array(s, p.at(pointer_offset), 4, stride * count)?;
-        if pointer_offset == 16
-            && let Some(rows) = rows
-        {
-            links.capture_snd_curves(s, rows, count)?;
+        match (pointer_offset, rows) {
+            (8, Some(rows)) => links.capture_snd_groups(s, rows, count)?,
+            (16, Some(rows)) => links.capture_snd_curves(s, rows, count)?,
+            _ => {}
         }
     }
     s.pop()

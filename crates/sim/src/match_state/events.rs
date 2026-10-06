@@ -2,8 +2,8 @@ use crate::identities::{DamageSource, EventSequence, LifeSequence};
 use crate::input::{ActionRequestId, ClassId};
 use crate::world::{ClientId, Tick};
 
-use super::loadout::{ClassRejectReason, ConfigurationChangeRejectReason, GiveRejectReason};
 use super::MatchEndReason;
+use super::loadout::{ClassRejectReason, ConfigurationChangeRejectReason, GiveRejectReason};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum EventAudience {
@@ -50,6 +50,7 @@ pub struct EntityEventPayload {
     pub weapon: u32,
 
     pub correlation: u32,
+    pub fire_cause: Option<crate::FireCause>,
 
     pub pellet: u16,
     pub hand: u8,

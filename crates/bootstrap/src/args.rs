@@ -19,13 +19,17 @@ pub enum LaunchMode {
     },
 }
 
+const NO_CHEATS_FLAG: &str = "--no-cheats";
+
 pub fn parse_cli(
     args: impl Iterator<Item = String>,
-) -> Result<(LaunchMode, Option<AcceptanceLaunch>), String> {
+) -> Result<(LaunchMode, Option<AcceptanceLaunch>, sim::HostCheats), String> {
     let (args, acceptance) = parse_acceptance_flag(args)?;
     let args = console::strip_cmds_flag(args.into_iter());
+    let (args, no_cheats): (Vec<String>, Vec<String>) =
+        args.into_iter().partition(|arg| arg != NO_CHEATS_FLAG);
     let mode = parse_launch_args(args.into_iter())?;
-    Ok((mode, acceptance))
+    Ok((mode, acceptance, sim::HostCheats(no_cheats.is_empty())))
 }
 
 fn parse_acceptance_flag(
@@ -73,7 +77,7 @@ fn parse_acceptance_flag(
     Ok((out, acceptance))
 }
 
-const USAGE: &str = "usage: iw4l [--cmds '<script>'] map <zone> | serve <zone> | menu | play <demo>\n       iw4l export-gltf <zone>\n       iw4l --help";
+const USAGE: &str = "usage: iw4l [--no-cheats] [--cmds '<script>'] map <zone> | serve <zone> | menu | play <demo>\n       iw4l export-gltf <zone>\n       iw4l --help";
 
 pub fn parse_launch_args(mut args: impl Iterator<Item = String>) -> Result<LaunchMode, String> {
     match args.next().as_deref() {

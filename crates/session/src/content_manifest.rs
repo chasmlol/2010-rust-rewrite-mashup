@@ -109,8 +109,10 @@ impl SessionContentManifest {
                 .ok_or(SessionManifestError::MissingWeaponKey(id))?;
             let attachments = registry.prepared_attachments_of(raw_id).to_vec();
             let alternate = registry
-                .facts_of(raw_id)
-                .is_some_and(|facts| facts.inventory_type == 3);
+                .bind_published_row(raw_id)
+                .ok()
+                .and_then(|weapon| weapon.hud_facts())
+                .is_some_and(|facts| facts.is_alternate());
             if !keys.insert((key.clone(), attachments.clone(), alternate)) {
                 return Err(SessionManifestError::DuplicateWeaponKey(
                     key,
@@ -283,6 +285,7 @@ fn namespace_tag(namespace: asset_core::AssetNamespace) -> u8 {
         asset_core::AssetNamespace::Iw4 => 1,
         asset_core::AssetNamespace::Iw5 => 2,
         asset_core::AssetNamespace::T5 => 3,
+        asset_core::AssetNamespace::T6 => 4,
     }
 }
 

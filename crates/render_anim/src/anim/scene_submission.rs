@@ -78,7 +78,12 @@ impl AnimDObjSceneSkels {
         }
     }
 
-    pub fn model(&mut self, name: &str, skel: &asset_model::ModelSkel, lod: i8) -> AnimDObjSceneModel {
+    pub fn model(
+        &mut self,
+        name: &str,
+        skel: &asset_model::ModelSkel,
+        lod: i8,
+    ) -> AnimDObjSceneModel {
         let skel = match self.by_name.get(name) {
             Some(skel) => Arc::clone(skel),
             None => {

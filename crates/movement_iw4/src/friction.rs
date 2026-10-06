@@ -19,7 +19,7 @@ pub fn friction(ps: &mut PlayerState, pml: &Pml) {
             }
 
             if (flags & pm_flags::TIME_HARDLANDING) != 0 {
-                control *= 2.0;
+                control *= 0.3;
             } else if (flags & pm_flags::JUMPING) != 0 {
                 control *= walking_scale(ps);
             }

@@ -6,7 +6,9 @@ use crate::PROTOCOL_VERSION;
 use crate::authority::inbox::AUTHORITY_HZ;
 use crate::client::predict::CmdSeq;
 use crate::transport::delta::{decode_usercmd, encode_usercmd};
+use crate::transport::frame::FrameSegments;
 use crate::transport::meta_wire::{decode_action, encode_action};
+use crate::transport::segment_delta;
 use crate::transport::wire::{WireError, WireReader, WireWriter};
 
 pub const UDP_IMPLEMENTED: bool = true;
@@ -266,8 +268,61 @@ pub enum ServerPacket {
         baseline_seq: u32,
         snapshot_seq: u32,
 
-        payload: Vec<u8>,
+        payload: SnapshotPayload,
     },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SnapshotPayload {
+    Plain(Vec<u8>),
+    AgainstBaseline {
+        decoded_len: u32,
+        compressed: Vec<u8>,
+    },
+}
+
+impl SnapshotPayload {
+    pub fn against_baseline(delta: &[u8], raw: impl FnOnce() -> Vec<u8>) -> Self {
+        match segment_delta::compress(delta) {
+            Ok(compressed) if compressed.len() <= MAX_PACKET_BYTES as usize => {
+                Self::AgainstBaseline {
+                    decoded_len: delta.len() as u32,
+                    compressed,
+                }
+            }
+            Ok(_) => Self::Plain(raw()),
+            Err(error) => {
+                diag::warn!(Net, "snapshot baseline compression failed: {error}");
+                Self::Plain(raw())
+            }
+        }
+    }
+
+    pub fn decode(self, baseline: Option<(&[u8], &FrameSegments)>) -> Option<Vec<u8>> {
+        match self {
+            Self::Plain(payload) => {
+                (payload.len() <= segment_delta::MAX_RECONSTRUCTED_FRAME_BYTES).then_some(payload)
+            }
+            Self::AgainstBaseline {
+                decoded_len,
+                compressed,
+            } => {
+                let (baseline, segments) = baseline?;
+                let delta = segment_delta::decompress(&compressed, decoded_len as usize).ok()?;
+                if delta.len() != decoded_len as usize {
+                    return None;
+                }
+                segment_delta::decode(&delta, baseline, segments)
+            }
+        }
+    }
+
+    pub fn wire_len(&self) -> usize {
+        match self {
+            Self::Plain(payload) => payload.len(),
+            Self::AgainstBaseline { compressed, .. } => compressed.len(),
+        }
+    }
 }
 
 const TAG_CLIENT_CONNECT: u8 = 1;
@@ -277,6 +332,7 @@ const TAG_SERVER_ACCEPT: u8 = 10;
 const TAG_SERVER_REJECT: u8 = 11;
 const TAG_SERVER_SNAPSHOT: u8 = 12;
 const TAG_SERVER_COMPRESSED_SNAPSHOT: u8 = 14;
+const TAG_SERVER_BASELINE_SNAPSHOT: u8 = 15;
 
 fn encode_shot_sample(out: &mut WireWriter, sample: &sim::ShotSampleProvenance) {
     out.put_u32(sample.left.0);
@@ -572,6 +628,22 @@ impl ServerPacket {
                 snapshot_seq,
                 payload,
             } => {
+                let payload = match payload {
+                    SnapshotPayload::Plain(payload) => payload,
+                    SnapshotPayload::AgainstBaseline {
+                        decoded_len,
+                        compressed,
+                    } => {
+                        out.put_u8(TAG_SERVER_BASELINE_SNAPSHOT);
+                        put_header(out, header);
+                        out.put_u32(*baseline_seq);
+                        out.put_u32(*snapshot_seq);
+                        out.put_u32(*decoded_len);
+                        out.put_u32(compressed.len() as u32);
+                        out.put_bytes(compressed);
+                        return;
+                    }
+                };
                 let compressed = match zstd::bulk::compress(payload, 1) {
                     Ok(bytes) if bytes.len() + 4 < payload.len() => Some(bytes),
                     Ok(_) => None,
@@ -616,6 +688,30 @@ impl ServerPacket {
                 })
             }
             TAG_SERVER_REJECT => Ok(Self::Reject(get_reject(input)?)),
+            TAG_SERVER_BASELINE_SNAPSHOT => {
+                let header = get_header(input)?;
+                let baseline_seq = input.get_u32()?;
+                let snapshot_seq = input.get_u32()?;
+                let decoded_len = input.get_u32()?;
+                if decoded_len > MAX_PACKET_BYTES {
+                    return Err(WireError::Malformed("snapshot exceeds decoded size limit"));
+                }
+                let len = input.get_u32()? as usize;
+                if len > MAX_PACKET_BYTES as usize || len > input.remaining() {
+                    return Err(WireError::Malformed("invalid snapshot payload length"));
+                }
+                let mut compressed = vec![0u8; len];
+                input.get_bytes(&mut compressed)?;
+                Ok(Self::Snapshot {
+                    header,
+                    baseline_seq,
+                    snapshot_seq,
+                    payload: SnapshotPayload::AgainstBaseline {
+                        decoded_len,
+                        compressed,
+                    },
+                })
+            }
             tag @ (TAG_SERVER_SNAPSHOT | TAG_SERVER_COMPRESSED_SNAPSHOT) => {
                 let header = get_header(input)?;
                 let baseline_seq = input.get_u32()?;
@@ -636,7 +732,7 @@ impl ServerPacket {
                 let mut payload = vec![0u8; payload_len];
                 input.get_bytes(&mut payload)?;
                 if let Some(decoded_len) = decoded_len {
-                    payload = zstd::bulk::decompress(&payload, decoded_len)
+                    payload = segment_delta::decompress(&payload, decoded_len)
                         .map_err(|_| WireError::Malformed("invalid compressed snapshot"))?;
                     if payload.len() != decoded_len {
                         return Err(WireError::Malformed("snapshot decoded length mismatch"));
@@ -646,7 +742,7 @@ impl ServerPacket {
                     header,
                     baseline_seq,
                     snapshot_seq,
-                    payload,
+                    payload: SnapshotPayload::Plain(payload),
                 })
             }
             _ => Err(WireError::Malformed("unknown ServerPacket tag")),
@@ -715,7 +811,10 @@ impl ConnectionTable {
         }
     }
 
-    pub fn accept_new(&mut self) -> (ConnectionId, u32) {
+    pub fn accept_new(&mut self, occupied: &[u32]) -> (ConnectionId, u32) {
+        while occupied.contains(&self.next_client) {
+            self.next_client = self.next_client.wrapping_add(1);
+        }
         self.next_conn = self.next_conn.wrapping_add(1);
         let conn = ConnectionId(self.next_conn);
         let client = self.next_client;
@@ -741,6 +840,10 @@ impl ConnectionTable {
 
     pub fn client_of(&self, connection: ConnectionId) -> Option<u32> {
         self.assigned.get(&connection).copied()
+    }
+
+    pub fn clients(&self) -> impl Iterator<Item = u32> + '_ {
+        self.assigned.values().copied()
     }
 }
 

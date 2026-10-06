@@ -89,6 +89,7 @@ impl Plugin for RenderAssemblePlugin {
         .add_systems(
             Update,
             rebuild_draw_lanes
+                .after(frame::ScreenEffectsPublished)
                 .after(crate::adapters::anim::fpv_present::FpvPlacementSet)
                 .after(crate::adapters::anim::fpv_present::FpvGeometrySet)
                 .after(frame::WorkerCmdSet::AddSceneEnt)

@@ -1,9 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt;
-use std::fs::File;
-use std::io::BufReader;
 use std::net::ToSocketAddrs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
@@ -19,8 +17,6 @@ use master_protocol::{
     stream_frame_len,
 };
 use quinn::crypto::rustls::QuicClientConfig;
-use rustls::pki_types::CertificateDer;
-use rustls_platform_verifier::ConfigVerifierExt;
 use tokio_util::sync::CancellationToken;
 
 use crate::authority::runtime::AuthorityWorld;
@@ -41,12 +37,14 @@ type Result<T> = std::result::Result<T, Error>;
 pub const CONTENT_IW4: u8 = 1 << 0;
 pub const CONTENT_IW5: u8 = 1 << 1;
 pub const CONTENT_T5: u8 = 1 << 2;
+pub const CONTENT_T6: u8 = 1 << 3;
 
-pub const fn content_inventory(iw4: bool, iw5: bool, t5: bool) -> ContentFlags {
+pub const fn content_inventory(iw4: bool, iw5: bool, t5: bool, t6: bool) -> ContentFlags {
     ContentFlags(
         (if iw4 { CONTENT_IW4 } else { 0 })
             | (if iw5 { CONTENT_IW5 } else { 0 })
-            | (if t5 { CONTENT_T5 } else { 0 }),
+            | (if t5 { CONTENT_T5 } else { 0 })
+            | (if t6 { CONTENT_T6 } else { 0 }),
     )
 }
 
@@ -59,6 +57,7 @@ pub fn content_required_by_map(map: &str) -> Result<ContentFlags> {
         "iw4" | "minecraft" => CONTENT_IW4,
         "iw5" => CONTENT_IW5,
         "t5" => CONTENT_T5,
+        "t6" => CONTENT_T6,
         other => return Err(format!("unknown content namespace `{other}` in map `{map}`").into()),
     }))
 }
@@ -74,7 +73,10 @@ pub fn content_names(flags: ContentFlags) -> String {
     if flags.0 & CONTENT_T5 != 0 {
         names.push("t5");
     }
-    if flags.0 & !(CONTENT_IW4 | CONTENT_IW5 | CONTENT_T5) != 0 {
+    if flags.0 & CONTENT_T6 != 0 {
+        names.push("t6");
+    }
+    if flags.0 & !(CONTENT_IW4 | CONTENT_IW5 | CONTENT_T5 | CONTENT_T6) != 0 {
         names.push("unknown");
     }
     names.join(",")
@@ -87,6 +89,7 @@ const HOST_CONTROL_CAP: usize = 32;
 const BOOTSTRAP_PRIORITY: i32 = -32;
 const IO_DEADLINE: Duration = Duration::from_secs(8);
 const LEAVE_DRAIN: Duration = Duration::from_millis(500);
+const DATAGRAM_SEND_BUFFER: usize = 1024 * 1024;
 const QUEUE_POLL: Duration = Duration::from_millis(5);
 const WATCHDOG_INTERVAL: Duration = Duration::from_secs(1);
 
@@ -269,7 +272,18 @@ fn forget_relay_member(
 struct MasterTarget {
     address: String,
     server_name: String,
-    ca_cert: Option<PathBuf>,
+    ca_pem: String,
+}
+
+fn master_target() -> Result<Option<MasterTarget>> {
+    if let Some(community) = updater::selected() {
+        return Ok(Some(MasterTarget {
+            address: community.master.address.clone(),
+            server_name: community.master.server_name.clone(),
+            ca_pem: community.updates.ca_pem.clone(),
+        }));
+    }
+    Ok(None)
 }
 
 #[derive(Clone, Debug)]
@@ -314,31 +328,18 @@ pub struct MasterLaunchIntent(MasterLaunchMode);
 
 impl MasterLaunchIntent {
     pub fn browser_from_env(have: ContentFlags) -> Result<Self> {
-        let Ok(address) = std::env::var("IW4L_MASTER_ADDR") else {
+        let Some(target) = master_target()? else {
             return Ok(Self::disabled());
         };
-        let server_name = std::env::var("IW4L_MASTER_SERVER_NAME")
-            .map_err(|_| "IW4L_MASTER_ADDR requires IW4L_MASTER_SERVER_NAME")?;
         Ok(Self(MasterLaunchMode::Browser(BrowserConfig {
-            target: MasterTarget {
-                address,
-                server_name,
-                ca_cert: std::env::var_os("IW4L_MASTER_CA_CERT").map(PathBuf::from),
-            },
+            target,
             have,
         })))
     }
 
     pub fn from_env_for_map(map: &str, have: ContentFlags, requires: ContentFlags) -> Result<Self> {
-        let Ok(address) = std::env::var("IW4L_MASTER_ADDR") else {
-            return Ok(Self(MasterLaunchMode::Disabled));
-        };
-        let server_name = std::env::var("IW4L_MASTER_SERVER_NAME")
-            .map_err(|_| "IW4L_MASTER_ADDR requires IW4L_MASTER_SERVER_NAME")?;
-        let target = MasterTarget {
-            address,
-            server_name,
-            ca_cert: std::env::var_os("IW4L_MASTER_CA_CERT").map(PathBuf::from),
+        let Some(target) = master_target()? else {
+            return Ok(Self::disabled());
         };
         let host = std::env::var("IW4L_MASTER_HOST_NAME").ok();
         let join = std::env::var("IW4L_MASTER_JOIN").ok();
@@ -367,7 +368,7 @@ impl MasterLaunchIntent {
             (Some(_), Some(_)) => {
                 Err("set only one of IW4L_MASTER_HOST_NAME or IW4L_MASTER_JOIN".into())
             }
-            _ => Err("IW4L_MASTER_ADDR requires IW4L_MASTER_HOST_NAME or IW4L_MASTER_JOIN".into()),
+            _ => Err("community master requires IW4L_MASTER_HOST_NAME or IW4L_MASTER_JOIN".into()),
         }
     }
 
@@ -406,6 +407,8 @@ pub struct MasterAdvert {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct MasterBrowserSnapshot {
+    pub community_name: String,
+    pub ping_ms: Option<u64>,
     pub generation: u64,
     pub loading: bool,
     pub adverts: Vec<MasterAdvert>,
@@ -865,6 +868,9 @@ fn arm_master_browser(
         return;
     }
     let state = Arc::new(Mutex::new(MasterBrowserSnapshot {
+        community_name: updater::selected()
+            .map(|community| community.name.clone())
+            .unwrap_or_default(),
         loading: true,
         have: browser_config.have,
         ..default()
@@ -1044,59 +1050,67 @@ fn browser_worker(
                 return;
             }
             state.lock().expect("master browser state poisoned").loading = true;
-            let result: Result<(u64, Vec<master_protocol::Advert>)> = io_timeout(&cancel, async {
-                let (_endpoint, connection) = connect(&target, &cancel).await?;
-                let (mut send, mut recv) = io_timeout(&cancel, connection.open_bi()).await?;
-                send.set_priority(0)?;
-                write_frame(
-                    &mut send,
-                    &ControlFrame::Hello(ControlHello {
-                        protocol_version: master_protocol::PROTOCOL_VERSION,
-                        game_protocol: crate::PROTOCOL_VERSION,
-                        role: EndpointRole::Cli,
-                        build: endpoint_build(),
-                        player_name: String::new(),
-                    }),
-                )
-                .await?;
-                write_frame(
-                    &mut send,
-                    &ControlFrame::Request(ControlRequest {
-                        request_id: 1,
-                        body: RequestBody::ListRooms,
-                    }),
-                )
-                .await?;
-                loop {
-                    match read_frame(&mut recv).await? {
-                        ControlFrame::Response(ControlResponse {
+            let result: Result<(u64, Vec<master_protocol::Advert>, u64)> =
+                io_timeout(&cancel, async {
+                    let (_endpoint, connection) = connect(&target, &cancel).await?;
+                    let (mut send, mut recv) = io_timeout(&cancel, connection.open_bi()).await?;
+                    send.set_priority(0)?;
+                    write_frame(
+                        &mut send,
+                        &ControlFrame::Hello(ControlHello {
+                            protocol_version: master_protocol::PROTOCOL_VERSION,
+                            game_protocol: crate::PROTOCOL_VERSION,
+                            role: EndpointRole::Cli,
+                            build: endpoint_build(),
+                            player_name: String::new(),
+                        }),
+                    )
+                    .await?;
+                    write_frame(
+                        &mut send,
+                        &ControlFrame::Request(ControlRequest {
                             request_id: 1,
-                            body:
-                                ResponseBody::RoomList {
+                            body: RequestBody::ListRooms,
+                        }),
+                    )
+                    .await?;
+                    loop {
+                        match read_frame(&mut recv).await? {
+                            ControlFrame::Response(ControlResponse {
+                                request_id: 1,
+                                body:
+                                    ResponseBody::RoomList {
+                                        generation,
+                                        adverts,
+                                    },
+                            }) => {
+                                return Result::Ok((
                                     generation,
                                     adverts,
-                                },
-                        }) => return Result::Ok((generation, adverts)),
-                        ControlFrame::Response(ControlResponse {
-                            body: ResponseBody::Error(error),
-                            ..
-                        }) => return Err(error.into()),
-                        ControlFrame::RoomView(_)
-                        | ControlFrame::Closed { .. }
-                        | ControlFrame::PeerEvent(_)
-                        | ControlFrame::Hello(_)
-                        | ControlFrame::Relay(_) => {}
-                        other => {
-                            return Err(format!("unexpected browser frame {other:?}").into());
+                                    connection.rtt().as_millis().max(1) as u64,
+                                ));
+                            }
+                            ControlFrame::Response(ControlResponse {
+                                body: ResponseBody::Error(error),
+                                ..
+                            }) => return Err(error.into()),
+                            ControlFrame::RoomView(_)
+                            | ControlFrame::Closed { .. }
+                            | ControlFrame::PeerEvent(_)
+                            | ControlFrame::Hello(_)
+                            | ControlFrame::Relay(_) => {}
+                            other => {
+                                return Err(format!("unexpected browser frame {other:?}").into());
+                            }
                         }
                     }
-                }
-            })
-            .await;
+                })
+                .await;
             let mut current = state.lock().expect("master browser state poisoned");
             current.loading = false;
             match result {
-                Ok((generation, adverts)) => {
+                Ok((generation, adverts, ping_ms)) => {
+                    current.ping_ms = Some(ping_ms);
                     current.generation = generation;
                     let have = current.have;
                     current.adverts = adverts
@@ -1119,6 +1133,7 @@ fn browser_worker(
                     current.error = None;
                 }
                 Err(error) => {
+                    current.ping_ms = None;
                     let message = error.to_string();
                     if !cancel.is_cancelled() && current.error.as_deref() != Some(message.as_str())
                     {
@@ -1244,19 +1259,18 @@ fn apply_master_lifecycle(
     if let Some(hub) = hub.as_mut()
         && matches!(state, MasterBridgeState::Hosting { .. })
     {
-        hub.reconcile_relay_membership(state.members(), state.identity().member_id);
-    }
-    if let Some(hub) = hub.as_mut() {
-        for admission in hub.take_committed_admissions() {
-            let client = hub.client_of_member(admission.member_id);
-            bridge.admit_enter(
-                admission.member_id,
-                admission.epoch,
-                admission.bootstrap_id,
-                Some(admission.connection_id),
-                client.map(|client| client.0).unwrap_or(0),
-            );
-        }
+        let occupied: Vec<_> = authority
+            .as_ref()
+            .map(|authority| {
+                authority
+                    .0
+                    .clients_scoreboard()
+                    .into_iter()
+                    .map(|(client, _)| client.0)
+                    .collect()
+            })
+            .unwrap_or_else(Vec::new);
+        hub.reconcile_relay_membership(state.members(), state.identity().member_id, &occupied);
     }
     for fact in bridge.drain_facts() {
         match fact {
@@ -1286,6 +1300,18 @@ fn apply_master_lifecycle(
                 }
             }
             MasterLifecycleFact::SessionClosed { .. } => {}
+        }
+    }
+    if let Some(hub) = hub.as_mut() {
+        for admission in hub.take_committed_admissions() {
+            let client = hub.client_of_member(admission.member_id);
+            bridge.admit_enter(
+                admission.member_id,
+                admission.epoch,
+                admission.bootstrap_id,
+                Some(admission.connection_id),
+                client.map(|client| client.0).unwrap_or(0),
+            );
         }
     }
 }
@@ -2352,6 +2378,9 @@ fn handle_command(
                     connection_id,
                 },
             );
+            if !applied.accepted {
+                return Ok(CommandEffect::Continue);
+            }
             execute_host_match_effects(
                 applied.effects,
                 map_ready,
@@ -2796,11 +2825,11 @@ fn pump_local_queues(
                 // not reported its map, so reaching here means the readiness
                 // was dropped between the two — the peer would otherwise wait
                 // out the whole match with nothing said.
-                diag::warn!(
-                    Net,
-                    "bootstrap offer dropped for a peer that is not map-ready ({} bytes)",
-                    bytes.len()
-                );
+                return Err(TransportFault::new(
+                    "bootstrap_readiness",
+                    role,
+                    "queued bootstrap lost map readiness",
+                ));
             }
             continue;
         }
@@ -2927,8 +2956,8 @@ async fn datagram_ingress(
                 let reassembler = reassemblers.entry(member).or_insert_with(relay_reassembler);
                 match reassembler.push(payload) {
                     Ok(Some(packet)) => {
-                        if let Err(error) = mailbox.push_inbound(member, packet) {
-                            diag::warn!(Net, "master {role} inbound mailbox: {error}");
+                        if mailbox.push_inbound(member, packet) {
+                            perf::net_leg("mail_drop_in", 0, 1);
                         }
                     }
                     Ok(None) => {}
@@ -3023,10 +3052,23 @@ async fn gameplay_egress(
 ) -> std::result::Result<(), TransportFault> {
     let mut fragmenter = relay_fragmenter();
     let mut tick = tokio::time::interval(QUEUE_POLL);
+    let mut sampled = tokio::time::Instant::now();
     loop {
         tokio::select! {
             _ = cancel.cancelled() => return Ok(()),
             _ = tick.tick() => {
+                if sampled.elapsed() >= Duration::from_millis(100) {
+                    sampled = tokio::time::Instant::now();
+                    let stats = connection.stats();
+                    perf::net_path(
+                        role,
+                        stats.path.rtt.as_micros() as u64,
+                        stats.path.cwnd,
+                        stats.path.lost_packets,
+                        stats.path.congestion_events,
+                        (DATAGRAM_SEND_BUFFER - connection.datagram_send_buffer_space()) as u64,
+                    );
+                }
                 for (member, packet) in mailbox.take_outbound() {
                     let fragments = match fragmenter.split(&packet) {
                         Ok(fragments) => fragments,
@@ -3148,17 +3190,9 @@ async fn connect(
         .to_socket_addrs()?
         .next()
         .ok_or_else(|| format!("{} resolved no addresses", target.address))?;
-    let mut crypto = if let Some(path) = target.ca_cert.as_deref() {
-        let mut roots = rustls::RootCertStore::empty();
-        for cert in load_certificates(path)? {
-            roots.add(cert)?;
-        }
-        rustls::ClientConfig::builder()
-            .with_root_certificates(roots)
-            .with_no_client_auth()
-    } else {
-        rustls::ClientConfig::with_platform_verifier()?
-    };
+    let mut crypto = rustls::ClientConfig::builder()
+        .with_root_certificates(updater::trust_roots(&target.ca_pem)?)
+        .with_no_client_auth();
     crypto.alpn_protocols = vec![ALPN.to_vec()];
     let mut client_config = quinn::ClientConfig::new(Arc::new(QuicClientConfig::try_from(crypto)?));
     let mut transport = quinn::TransportConfig::default();
@@ -3177,11 +3211,7 @@ async fn connect(
     let mut endpoint = quinn::Endpoint::client(bind.parse()?)?;
     endpoint.set_default_client_config(client_config);
     let local = endpoint.local_addr()?;
-    let trust = if target.ca_cert.is_some() {
-        "custom-ca"
-    } else {
-        "platform"
-    };
+    let trust = "community-ca";
     diag::info!(
         Net,
         "master quic handshake begin local={} remote={} server_name={} trust={} alpn={:?}",
@@ -3213,14 +3243,6 @@ async fn connect(
     Ok((endpoint, connection))
 }
 
-fn load_certificates(path: &Path) -> Result<Vec<CertificateDer<'static>>> {
-    let mut reader = BufReader::new(File::open(path)?);
-    let certs: Vec<_> = rustls_pemfile::certs(&mut reader).collect::<std::io::Result<_>>()?;
-    if certs.is_empty() {
-        return Err(format!("{} contains no certificates", path.display()).into());
-    }
-    Ok(certs)
-}
 fn handshake_for_match(
     world: Option<&sim::SimWorld>,
     descriptor: Option<&MatchDescriptor>,

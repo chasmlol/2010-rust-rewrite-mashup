@@ -96,6 +96,16 @@ pub struct WeaponFamily {
     pub attachments: Vec<AttachmentChoice>,
 }
 
+impl WeaponFamily {
+    pub fn name_key(&self) -> String {
+        let key = self.display_key.trim_start_matches('@');
+        match self.key.namespace {
+            AssetNamespace::Iw4 => key.to_owned(),
+            namespace => format!("{}:localize/{key}", namespace.as_str()),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct WeaponSelection {
     pub family: Option<FamilyKey>,
@@ -173,15 +183,29 @@ impl std::error::Error for ConfigurationRefusal {}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ResolvedConfiguration {
-    pub id: u32,
-    pub selection: WeaponSelection,
+    handle: crate::WeaponHandle,
+    selection: WeaponSelection,
+}
+
+impl ResolvedConfiguration {
+    pub(crate) fn new(handle: crate::WeaponHandle, selection: WeaponSelection) -> Self {
+        Self { handle, selection }
+    }
+
+    pub fn handle(&self) -> crate::WeaponHandle {
+        self.handle
+    }
+
+    pub fn selection(&self) -> &WeaponSelection {
+        &self.selection
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AttachmentOption {
     pub choice: AttachmentChoice,
     pub selected: bool,
-    pub toggle: Result<u32, ConfigurationRefusal>,
+    pub toggle: Result<ResolvedConfiguration, ConfigurationRefusal>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -211,7 +235,7 @@ const IW_OFFERED_COLS: std::ops::RangeInclusive<i32> = 11..=21;
 
 fn schema(namespace: AssetNamespace) -> Schema {
     match namespace {
-        AssetNamespace::T5 => Schema::Treyarch,
+        AssetNamespace::T5 | AssetNamespace::T6 => Schema::Treyarch,
         _ => Schema::Infinity,
     }
 }
@@ -335,15 +359,14 @@ fn offhand_slot(offhand: Option<crate::CacOffhandBucket>) -> FamilySlot {
     }
 }
 
-pub(crate) trait FamilyContent {
+pub(crate) trait FamilyContent:
+    crate::weapon_catalog::configuration::WeaponConfigurationCompiler
+{
+    fn published_handle(&self, id: u32) -> Option<crate::WeaponHandle>;
     fn lookup(&self, namespace: AssetNamespace, name: &str) -> Option<u32>;
     fn offhand_class(&self, id: u32) -> i32;
     fn admission(&self, id: u32) -> Result<(), ConfigurationRefusal>;
     fn names_in(&self, namespace: AssetNamespace) -> Vec<(u32, String)>;
-    fn iw5_bind(&self, base_id: u32, attachments: &[String]) -> Result<(), ConfigurationRefusal>;
-    fn prepared(&self, _selection: &WeaponSelection) -> Option<u32> {
-        None
-    }
     fn prepared_all(&self) -> Vec<(u32, WeaponSelection)> {
         Vec::new()
     }
@@ -391,6 +414,9 @@ impl WeaponFamilies {
             if !group.starts_with("weapon_") || base.is_empty() || base == "weapon_null" {
                 continue;
             }
+            if namespace == AssetNamespace::T6 && table.cell(row, 12) == "-1" {
+                continue;
+            }
             let key = FamilyKey::new(namespace, base);
             if known.attachments.contains_key(&key.base) || self.by_key.contains_key(&key) {
                 continue;
@@ -418,6 +444,15 @@ impl WeaponFamilies {
                         .cell(row, 8)
                         .split_ascii_whitespace()
                         .map(str::to_ascii_lowercase)
+                        .map(|name| match name.rsplit_once('_') {
+                            Some((attachment, _))
+                                if namespace == AssetNamespace::T6
+                                    && !known.attachments.contains_key(&name) =>
+                            {
+                                attachment.to_owned()
+                            }
+                            _ => name,
+                        })
                         .collect(),
                 ),
             };
@@ -479,13 +514,16 @@ impl WeaponFamilies {
                     }
                 }
             }
-            if namespace == AssetNamespace::Iw5 {
-                described.extend(content.prepared_all());
-            }
+            described.extend(content.prepared_all().into_iter().filter(|(_, selection)| {
+                selection
+                    .family
+                    .as_ref()
+                    .is_some_and(|key| key.namespace == namespace)
+            }));
             for (id, selection) in described {
                 if self
                     .resolve(&selection, LoadoutRules::default(), content)
-                    .is_ok_and(|resolved| resolved.id == id)
+                    .is_ok_and(|resolved| Some(resolved.handle()) == content.published_handle(id))
                 {
                     self.described.insert(id, selection);
                 }
@@ -494,18 +532,11 @@ impl WeaponFamilies {
     }
 
     fn parse_configuration(&self, family: &WeaponFamily, name: &str) -> Option<Vec<String>> {
-        let name = name.strip_suffix("_mp").unwrap_or(name);
-        if name == family.key.base {
-            return Some(Vec::new());
+        let parts = crate::weapon_catalog::configuration::authored_attachments(&family.key, name)?;
+        if parts.is_empty() {
+            return Some(parts);
         }
         let tables = self.tables.get(&family.key.namespace)?;
-        if schema(family.key.namespace) == Schema::Treyarch
-            && name == format!("{}dw", family.key.base)
-        {
-            return Some(vec!["dw".to_owned()]);
-        }
-        let rest = name.strip_prefix(&family.key.base)?.strip_prefix('_')?;
-        let parts: Vec<String> = rest.split('_').map(str::to_owned).collect();
         if parts.is_empty()
             || !parts
                 .iter()
@@ -539,16 +570,6 @@ impl WeaponFamilies {
             });
         }
         out
-    }
-
-    fn configuration_name(&self, family: &WeaponFamily, attachments: &[String]) -> String {
-        if attachments.is_empty() {
-            return family.key.base.clone();
-        }
-        if schema(family.key.namespace) == Schema::Treyarch && attachments == ["dw"] {
-            return format!("{}dw", family.key.base);
-        }
-        format!("{}_{}", family.key.base, attachments.join("_"))
     }
 
     fn compatible(&self, namespace: AssetNamespace, a: &str, b: &str) -> bool {
@@ -588,10 +609,17 @@ impl WeaponFamilies {
     }
 
     pub(crate) fn iw5_candidate_selections(&self) -> Vec<(u32, WeaponSelection)> {
+        self.candidate_selections(AssetNamespace::Iw5)
+    }
+
+    pub(crate) fn candidate_selections(
+        &self,
+        namespace: AssetNamespace,
+    ) -> Vec<(u32, WeaponSelection)> {
         let mut families: Vec<&WeaponFamily> = self
             .families
             .iter()
-            .filter(|family| family.key.namespace == AssetNamespace::Iw5 && family.base.is_some())
+            .filter(|family| family.key.namespace == namespace && family.base.is_some())
             .collect();
         families.sort_by_key(|family| family.key.asset_key());
         let mut out = Vec::new();
@@ -611,7 +639,7 @@ impl WeaponFamilies {
                     WeaponSelection::with(family.key.clone(), std::slice::from_ref(name)),
                 ));
                 for other in &names[i + 1..] {
-                    if self.compatible(AssetNamespace::Iw5, name, other) {
+                    if self.compatible(namespace, name, other) {
                         out.push((
                             base,
                             WeaponSelection::with(
@@ -690,27 +718,14 @@ impl WeaponFamilies {
                 }
             }
         }
-        if namespace == AssetNamespace::Iw5 && !attachments.is_empty() {
-            let base = family.base.ok_or_else(|| {
-                ConfigurationRefusal::MissingContent(format!("{}_mp", family.key.base))
-            })?;
-            content.iw5_bind(base, &attachments)?;
-            let selection = WeaponSelection::with(key.clone(), &attachments);
-            let id = content.prepared(&selection).ok_or_else(|| {
-                ConfigurationRefusal::MissingContent(format!("{key} {}", attachments.join(" ")))
-            })?;
-            content.admission(id)?;
-            return Ok(ResolvedConfiguration { id, selection });
-        }
-        let name = self.configuration_name(family, &attachments);
-        let id = content
-            .lookup(namespace, &name)
-            .ok_or_else(|| ConfigurationRefusal::MissingContent(format!("{name}_mp")))?;
-        content.admission(id)?;
-        Ok(ResolvedConfiguration {
-            id,
-            selection: WeaponSelection::with(key.clone(), &attachments),
-        })
+        let selection = WeaponSelection::with(key.clone(), &attachments);
+        let id = content.compile(family, &selection)?;
+        Ok(ResolvedConfiguration::new(
+            content
+                .published_handle(id)
+                .ok_or_else(|| ConfigurationRefusal::MissingContent(id.to_string()))?,
+            selection,
+        ))
     }
 
     pub(crate) fn attachment_options(
@@ -738,9 +753,8 @@ impl WeaponFamilies {
                 } else {
                     next.push(choice.name.clone());
                 }
-                let toggle = self
-                    .resolve(&WeaponSelection::with(key.clone(), &next), rules, content)
-                    .map(|resolved| resolved.id);
+                let toggle =
+                    self.resolve(&WeaponSelection::with(key.clone(), &next), rules, content);
                 AttachmentOption {
                     choice: choice.clone(),
                     selected,

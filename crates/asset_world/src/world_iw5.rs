@@ -296,8 +296,9 @@ pub fn build_iw5_world_draw(
             outdoor_image: None,
             outdoor_lookup: geometry.outdoor_lookup,
             sun_effects: None,
+            t6_exposure: None,
             t5_sun_parse_exposure: None,
-            t5_sky_dynamic_intensity: None,
+            sky_dynamic_intensity: None,
             t5_sun_light: None,
             t5_tree_scatter_intensity: None,
             t5_tree_scatter_amount: None,
@@ -534,12 +535,19 @@ fn extract_iw5_dpvs(
                             ]);
                         }
                     }
+                    let axis_off = s.layout(sz::GFX_PORTAL_HULL_AXIS, 52);
+                    let mut hull_axis = [[0.0f32; 3]; 2];
+                    for (i, value) in hull_axis.as_flattened_mut().iter_mut().enumerate() {
+                        *value = s
+                            .f32_at(portal, axis_off + i * 4)
+                            .map_err(WorldMeshError::from)?;
+                    }
                     cell_portals.push(OwnedPortal {
                         plane,
                         neighbor,
                         vert_start,
                         vert_count: out.portal_verts.len() - vert_start,
-                        hull_axis: None,
+                        hull_axis: Some(hull_axis),
                     });
                 }
             }
@@ -594,6 +602,7 @@ fn extract_iw5_reflection_probes(
         let origin = origins.at(i * 12);
         probes.push(WorldReflectionProbe {
             image: materials.image_index(iw4_ptr(images.at(i * s.pointer_bytes()))),
+            lighting_sh: None,
             origin: [
                 s.f32_at(origin, 0).map_err(WorldMeshError::from)?,
                 s.f32_at(origin, 4).map_err(WorldMeshError::from)?,
@@ -915,7 +924,8 @@ pub fn capture_iw5_light_defs(
                 .or_else(|| {
                     def.attenuation_image_name
                         .and_then(|p| s.cstr(p).ok().map(str::to_owned))
-                });
+                })
+                .filter(|image| !image.is_empty());
             Some(CapturedLightDef {
                 namespace: crate::AssetNamespace::Iw5,
                 name,

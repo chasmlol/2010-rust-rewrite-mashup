@@ -535,6 +535,7 @@ pub fn merge_xmodel_draw_plan(
                     packed_lighting: None,
                     is_scope: false,
                     scene_entnum: d.scene_entnum,
+                    body_client: d.scene_entnum,
                     // Remote bodies carry no radius here; unbounded keeps
                     // every player caster in both partitions.
                     caster_bound: None,
@@ -566,6 +567,7 @@ pub fn merge_xmodel_draw_plan(
                 packed_lighting: None,
                 is_scope: d.is_scope,
                 scene_entnum: Some(crate::SCENE_VIEWMODEL_ENTNUM),
+                body_client: None,
                 caster_bound: None,
             }),
         );
@@ -964,6 +966,7 @@ fn refresh_concat_draws(
                     packed_lighting: None,
                     is_scope: false,
                     scene_entnum: d.scene_entnum,
+                    body_client: d.scene_entnum,
                     // Remote bodies carry no radius here; unbounded keeps
                     // every player caster in both partitions.
                     caster_bound: None,
@@ -990,6 +993,7 @@ fn refresh_concat_draws(
                 packed_lighting: None,
                 is_scope: d.is_scope,
                 scene_entnum: Some(crate::SCENE_VIEWMODEL_ENTNUM),
+                body_client: None,
                 caster_bound: None,
             }),
         );

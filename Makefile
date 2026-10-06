@@ -12,7 +12,7 @@ ARGS := $(wordlist 2,$(words $(MAKECMDGOALS)),$(MAKECMDGOALS))
 
 .PHONY: map export-gltf play bench bench-load-session bench-live bench-overhead bench-perf menu menu-shots scenario chaos lifecycle-all lifecycle-swap lifecycle-replace lifecycle-play-in lifecycle-demo-out lifecycle-demo-map launcher deploy logs loc clean help
 .PHONY: build-windows setup-windows release publish provision
-.PHONY: mr publish-check approved duo
+.PHONY: mr publish-check approved
 .PHONY: $(ARGS)
 
 $(ARGS):
@@ -42,10 +42,11 @@ SCENARIO_ZONE ?= mp_boneyard
 SCENARIO_CMDS ?= wait world; spawn 0; force_match_start; hold +attack; bot add 3; wait 3s; press +gostand; hold +forward; wait 5s; wait 4s; quit
 # Truck 234 roof looking down + 7 bots RPG into the floor. Local does not fire:
 # `hold +attack` made the truck splash a suicide, which has no killcam.
-# Bots fire twice so the dump ring contains missiles. It does not replace
-# SCENARIO_CMDS. Five-number move/tp only — pitch 85 is the test.
 # Gate: T1/R1/R2/T6/K0/K1/K2/K3/K4/K6/K7/L1/F1/C1/P1/P2.
-CHAOS_CMDS ?= wait world; spawn 0; wait 2s; move -1066 1391 7 174 85; wait 1s; bot add 7; bot hold on; wait 3s; bot tp 1 -1066 1391 127 174 85; bot tp 2 -1073 1362 80 174 85; bot tp 3 519 -44 16 61 85; bot tp 4 528 -14 16 61 85; bot tp 5 62 915 80 180 85; bot tp 6 62 900 80 180 85; bot tp 7 80 915 80 180 85; bot give 1 rpg; bot give 2 rpg; bot give 3 rpg; bot give 4 rpg; bot give 5 rpg; bot give 6 rpg; bot give 7 rpg; wait 1s; bot fire all; wait 3s; bot fire all; wait 12s; quit
+CHAOS_BOT_SETUP ?= bot tp 1 -1066 1391 127 174 85; bot tp 2 -1073 1362 80 174 85; bot tp 3 519 -44 16 61 85; bot tp 4 528 -14 16 61 85; bot tp 5 62 915 80 180 85; bot tp 6 62 900 80 180 85; bot tp 7 80 915 80 180 85; bot give 1 rpg; bot give 2 rpg; bot give 3 rpg; bot give 4 rpg; bot give 5 rpg; bot give 6 rpg; bot give 7 rpg; wait 1s
+CHAOS_BOT_SALVO ?= $(CHAOS_BOT_SETUP); bot fire all
+CHAOS_OBSERVER_SALVO ?= $(CHAOS_BOT_SETUP); spawn 0; move -1066 1391 500 174 85; bot fire all
+CHAOS_CMDS ?= wait world; spawn 0; force_match_start; wait 16s; wait 2s; move -1066 1391 7 174 85; wait 1s; bot add 7; bot hold on; wait 3s; $(CHAOS_BOT_SALVO); wait 12s; $(CHAOS_OBSERVER_SALVO); wait 4s; $(CHAOS_OBSERVER_SALVO); wait 4s; $(CHAOS_OBSERVER_SALVO); wait 4s; $(CHAOS_OBSERVER_SALVO); wait 12s; quit
 # Live trace run (not a demo). `force_match_start` so holds are not frozen in
 # warmup. Local `+attack`/`+forward` plus `mouserate` (hold-yaw; not one-shot
 # `mousemove`). `bot add 16` is the console clamp. Wait 10s, then quit so the
@@ -218,15 +219,6 @@ lifecycle-demo-map: require-games
 	cd $(ROOT) && IW4L_PERF=1 $(CARGO) run $(PROFILE_ARG) -p launcher -- map mp_boneyard --cmds '$(LIFECYCLE_DEMO_MAP_CMDS)'
 	cd $(ROOT) && $(CARGO) run -p xtask -- live demo-map
 
-HOST_CMDS ?= spawn 0
-CLIENT_CMDS ?= spawn 0
-MODE ?= dm
-export HOST_CMDS CLIENT_CMDS MODE ZONE PROFILE
-
-duo: require-games
-	cd $(ROOT) && $(CARGO) build $(PROFILE_ARG) -p launcher
-	cd $(ROOT) && $(CARGO) run --quiet -p xtask -- duo
-
 menu: require-games
 	cd $(ROOT) && $(CARGO) run $(PROFILE_ARG) -p launcher -- menu $(CMDS_ARG)
 
@@ -290,11 +282,12 @@ logs:
 #                         Empty / dir / non-rs refuse: `cargo fmt --all`
 #                         rewrites files this branch does not own.
 FILES ?=
-# The one owner-approved end-to-end scenario (crates/approved_tests/README.md).
+# Owner-approved end-to-end scenarios (crates/approved_tests/README.md).
+SCENARIO ?= heavy_gameplay_lifecycle
 # Cold cache by default; ARGS='--seed N' | '--replay <run.json>' | '--cache shared'.
 approved: require-games
 	cd $(ROOT) && $(CARGO) build --profile play -p launcher
-	cd $(ROOT) && $(CARGO) run --quiet -p approved_tests -- heavy_gameplay_lifecycle $(ARGS)
+	cd $(ROOT) && $(CARGO) run --quiet -p approved_tests -- $(SCENARIO) $(ARGS)
 
 # What a push would publish: nothing under `context/`, no `.env`, no key, no
 # piece of a game install, and no retail offsets left over in the code. It is a
@@ -354,7 +347,6 @@ help:
 	@echo "make lifecycle-demo-out  demo → disconnect → menu"
 	@echo "make lifecycle-demo-map  demo → map mp_rust"
 	@echo "make menu         run the main-menu shell (Maps / Settings / Quit)"
-	@echo "make duo          two windows through the master; HOST_CMDS / CLIENT_CMDS, ZONE / MODE"
 	@echo "                  add CMDS='wait 2s; quit' to script it"
 	@echo "make menu-shots   2D UI pack under iw4l-artifacts/menu-shots (no map)"
 	@echo "make launcher windows  build password-protected dev + prod portable ZIPs"

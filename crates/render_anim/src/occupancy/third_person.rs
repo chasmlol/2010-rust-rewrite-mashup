@@ -15,6 +15,7 @@ pub fn presented_is_third_person(
     presented: &PresentedSnapshot,
     local: ClientId,
     in_killcam: bool,
+    third_person: bool,
 ) -> bool {
     let Some(ps) = presented.player(local) else {
         return false;
@@ -29,7 +30,7 @@ pub fn presented_is_third_person(
         pm_type: ps.pm_type,
         other_flags: ps.other_flags,
         link_flags: ps.link_flags,
-        cg_third_person: false,
+        cg_third_person: third_person && !in_killcam,
         in_killcam,
         killcam_mode: KillCamMode::Mode0,
     })
@@ -56,13 +57,42 @@ pub fn remote_missile_camera(
     })
 }
 
-pub fn death_watch_camera(
+pub fn linked_weapon_camera(
+    presented: &PresentedSnapshot,
+    local: ClientId,
+) -> Option<WorldCameraPose> {
+    let current = presented.snapshot()?.meta.for_client(local)?;
+    let view = current.linked_weapon_view?;
+    let previous = presented
+        .interpolation_pair()
+        .and_then(|(before, _, fraction)| {
+            let meta = before.meta.for_client(local)?;
+            (meta.life_sequence == current.life_sequence)
+                .then_some((meta.linked_weapon_view?, fraction.clamp(0.0, 1.0)))
+        });
+    Some(match previous {
+        Some((previous, fraction)) => WorldCameraPose {
+            origin: std::array::from_fn(|i| {
+                previous.origin[i] + (view.origin[i] - previous.origin[i]) * fraction
+            }),
+            angles: std::array::from_fn(|i| {
+                previous.angles[i]
+                    + math_iw4::angle_subtract(view.angles[i], previous.angles[i]) * fraction
+            }),
+        },
+        None => WorldCameraPose {
+            origin: view.origin,
+            angles: view.angles,
+        },
+    })
+}
+
+pub fn third_person_camera(
     presented: &PresentedSnapshot,
     local: ClientId,
     clip: Option<&ClipCollision>,
 ) -> Option<WorldCameraPose> {
     let ps = presented.player(local)?;
-    let clip = clip?;
     let offset = presented.view_offset();
     let yaw = presented
         .snapshot()?
@@ -73,6 +103,7 @@ pub fn death_watch_camera(
 
     let half = CG_CAMERA_PULLBACK_BOX_HALF;
     let trace = |start: [f32; 3], end: [f32; 3]| {
+        let Some(clip) = clip else { return 1.0 };
         clip.sweep_box(
             start,
             end,
@@ -97,7 +128,11 @@ pub fn death_watch_camera(
             corpse_j_mainroot: None,
             other_flags: ps.other_flags,
             delta_time: ps.delta_time,
-            cg_third_person_angle: CG_THIRD_PERSON_ANGLE_MP,
+            cg_third_person_angle: if ps.pm_type > 7 {
+                CG_THIRD_PERSON_ANGLE_MP
+            } else {
+                0.0
+            },
             cg_third_person_range: CG_THIRD_PERSON_RANGE_DEFAULT,
         },
         trace,

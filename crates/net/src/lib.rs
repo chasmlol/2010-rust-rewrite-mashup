@@ -1,3 +1,7 @@
+mod local_account;
+pub use local_account::{AccountSaveReceipt, LocalAccount};
+mod account_identity;
+pub use account_identity::{AccountChallenge, AccountIdentityError, AccountKey, AccountProof};
 pub mod authority;
 pub mod client;
 pub mod gaps;
@@ -54,10 +58,10 @@ pub use client::presentation::entities::{
 };
 pub use client::presentation::entity_event_dispatch::{
     AppliedEntityEventWalk, DispatchedEntityEvent, EntityBulletHit, EntityEjectBrass,
-    EntityEventCursor, EntityEventSound, EntityExplosion, EntityGrenadeContact, EntityMeleeBlood,
-    EntityMovementSound, EntityObituary, EntityPhysicsSphere, EntityPlayFx, EntityResetAds,
-    EntityRumble, EntityWeaponFire, KillcamFxTransition, UnsupportedEntityEvents, WeaponFirePing,
-    WeaponFirePingBus, register_entity_event_dispatch,
+    EntityEventCursor, EntityEventDomain, EntityEventSound, EntityExplosion, EntityGrenadeContact,
+    EntityMeleeBlood, EntityMovementSound, EntityObituary, EntityPhysicsSphere, EntityPlayFx,
+    EntityResetAds, EntityRumble, EntityWeaponFire, KillcamFxTransition, UnsupportedEntityEvents,
+    WeaponFirePing, WeaponFirePingBus, register_entity_event_dispatch,
 };
 pub use client::presentation::entity_event_registry::{
     EV_DISPATCH_REGISTRY, EntityEventDispatch, EntityEventRow, ev_dispatch_row,
@@ -70,20 +74,20 @@ pub use client::presentation::projectiles::{
     PresentedProjectile, count_throw_rows, merge_presented_projectiles,
 };
 pub use client::proxy::{
-    AnimGap, FIXED_DELAY_POLICY_REVISION, PROXY_BUFFER_TICKS, PROXY_DELAY_MS,
-    PresentationSampleOutcome, PresentationSampleProvenance, PresentationSampleTime, ProxyMode,
+    ADAPTIVE_DELAY_POLICY_REVISION, AnimGap, PROXY_BUFFER_TICKS, PROXY_DELAY_MS,
+    PresentationSampleOutcome, PresentationSampleProvenance, PresentationSampleTime,
     ProxyPolicyRevision, ProxySample, ProxyStarvationReason, RemoteProxy,
 };
 pub use client::realtime::ClientRealtime;
 pub use client::runtime::{
     ClientClock, ClientCmdTemplate, ClientPhaseTrace, ClientPredictionState, ClientReliableAck,
-    ClockTick, LastAdoptedSnapshot, LocationCursor, PendingClientSends, PendingPelletFx,
-    PendingPresentedEntityEvents, ReceivedTicks, ReliableControlEvent, RemoteProxyState,
-    WeaponSelect, advance_cg_frame_clock, advance_cls_realtime, arm_listen_prediction,
-    cycle_weapon_select, follow_held_weapon_select, listen_prediction_needs_content,
-    predict_local_move, publish_presented, receive_ticks, reconcile_prediction,
-    register_client_runtime, register_listen_prediction_arm, sample_client_input,
-    send_pending_commands,
+    ClockTick, FireCommandVerdicts, LastAdoptedSnapshot, LocationCursor, PendingClientSends,
+    PendingPelletFx, PendingPresentedEntityEvents, ReceivedTicks, ReliableControlEvent,
+    RemoteProxyState, WeaponSelect, advance_cg_frame_clock, advance_cls_realtime,
+    arm_listen_prediction, cycle_weapon_select, follow_held_weapon_select,
+    listen_prediction_needs_content, predict_local_move, publish_presented, receive_ticks,
+    reconcile_prediction, register_client_runtime, register_listen_prediction_arm,
+    sample_client_input, send_pending_commands,
 };
 pub use gaps::{NetGap, NetGapCause, NetIdentityGaps, ScriptNotify};
 pub use plugin::NetPlugin;
@@ -157,7 +161,8 @@ pub use transport::netfields::{
 pub use transport::protocol::{
     ClientPacket, ConnectionId, ConnectionTable, ContentFingerprint, HandshakeHello,
     HandshakeReject, IdentityError, MatchDescriptor, PacketHeader, ProtocolLimits, ServerPacket,
-    UDP_IMPLEMENTED, decode_client_packet, decode_server_packet, evaluate_handshake,
+    SnapshotPayload, UDP_IMPLEMENTED, decode_client_packet, decode_server_packet,
+    evaluate_handshake,
 };
 pub use transport::reliable::{
     ActionVerdict, MAX_PENDING_RELIABLE, ReliableEventHub, ReliableEventQueue, ReliablePayload,
@@ -169,4 +174,6 @@ pub use transport::wire::{WireError, WireReader, WireWriter};
 
 pub use svc_script_audio::SvcScriptAudio;
 
-pub const PROTOCOL_VERSION: u32 = 94;
+pub const PROTOCOL_VERSION: u32 = 110;
+
+pub use client::fire_verdict::{FireVerdictState, PredictedFireStatus};

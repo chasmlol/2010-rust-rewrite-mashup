@@ -6,6 +6,7 @@ license.workspace = true
 description = "Retail IW4 FX layouts and pure sim formulas: FxEffectDef/FxElemDef, lifeMs, gravity*800, velocity integrate."
 
 [dependencies]
+blake3 = { version = "1.8", default-features = false }
 libm = { version = "0.2.16", default-features = false }
 
 [lints]

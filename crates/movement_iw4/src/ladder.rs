@@ -185,6 +185,8 @@ const LADDER_ACCEL: f32 = 9.0;
 
 const LADDER_RIGHT_SCALE: f32 = 0.2;
 
+const LADDER_SIDE_FRICTION: f32 = 16.0;
+
 #[derive(Clone, Copy, Debug)]
 pub struct LadderMoveContext {
     pub jump: crate::JumpLaunchContext,
@@ -244,7 +246,6 @@ pub fn ladder_move<C: crate::CollisionBackend>(
     right[0] -= dot * n[0];
     right[1] -= dot * n[1];
     right[2] -= dot * n[2];
-    let _ = normalize3(&mut right);
     pml.right = right;
 
     let scale = ladder_cmd_scale(ps, cmd, context.player_spectate_speed_scale);
@@ -272,6 +273,10 @@ pub fn ladder_move<C: crate::CollisionBackend>(
         }
     }
 
+    if cmd.rightmove == 0 {
+        ladder_side_friction(ps, pml);
+    }
+
     if pml.walking == 0 {
         ladder_attract_velocity(ps);
     }
@@ -285,6 +290,30 @@ pub fn ladder_move<C: crate::CollisionBackend>(
         bounds.tracemask,
         None,
     );
+}
+
+fn ladder_side_friction(ps: &mut PlayerState, pml: &crate::Pml) {
+    let mut side_dir = [pml.right[0], pml.right[1]];
+    let len = libm::sqrtf(side_dir[0] * side_dir[0] + side_dir[1] * side_dir[1]);
+    if len > 0.0 {
+        side_dir[0] /= len;
+        side_dir[1] /= len;
+    }
+    let side = ps.velocity[0] * side_dir[0] + ps.velocity[1] * side_dir[1];
+    if side == 0.0 {
+        return;
+    }
+    ps.velocity[0] -= side * side_dir[0];
+    ps.velocity[1] -= side * side_dir[1];
+    let mut drop = side * pml.frametime * LADDER_SIDE_FRICTION;
+    if side.abs() <= drop.abs() {
+        return;
+    }
+    if drop.abs() < 1.0 {
+        drop = if drop >= 0.0 { 1.0 } else { -1.0 };
+    }
+    ps.velocity[0] += (side - drop) * side_dir[0];
+    ps.velocity[1] += (side - drop) * side_dir[1];
 }
 
 fn normalize3(v: &mut [f32; 3]) -> f32 {

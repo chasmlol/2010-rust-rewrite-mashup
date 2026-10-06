@@ -55,6 +55,10 @@ impl Hud2dSurface {
         self.place.scale_virtual_to_real
     }
 
+    pub fn display_pixel_aspect(&self) -> f32 {
+        SQUARE_PIXELS
+    }
+
     pub fn placement(&self) -> &ScreenPlacement {
         &self.place
     }

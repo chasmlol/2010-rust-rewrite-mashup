@@ -95,6 +95,8 @@ pub struct ModelSkel {
 
     pub movement_brushes: Vec<xmodel_runtime::ModelMovementBrush>,
 
+    pub mount_tag: Option<String>,
+
     pub lod: Option<crate::ModelLodSelector>,
 
     pub lod_smc: Option<[[u8; 4]; 4]>,
@@ -542,6 +544,8 @@ fn capture_model_skel_iw4(
         coll_lod: geometry.coll_lod,
         coll_surfs: capture_coll_surfs(stream, geometry),
         movement_brushes: Vec::new(),
+
+        mount_tag: None,
         lod: Some(crate::ModelLodSelector::Iw4 {
             lod_start: geometry.lod_start,
             num_lods: geometry.num_lods,
@@ -756,6 +760,7 @@ fn capture_pose_src(
         quats,
         trans,
         base_mat,
+        root_rest: None,
     })
 }
 
@@ -1091,6 +1096,8 @@ fn capture_model_skel_t5(
         coll_lod: geometry.coll_lod,
         coll_surfs,
         movement_brushes: capture_movement_brushes_t5(stream, geometry)?,
+
+        mount_tag: None,
         lod: Some(crate::ModelLodSelector::T5 {
             num_lods: geometry.num_lods,
             lod_dist: geometry.lod_dist,
@@ -1335,6 +1342,7 @@ fn capture_pose_src_t5(
         quats,
         trans,
         base_mat,
+        root_rest: None,
     })
 }
 
@@ -1720,6 +1728,8 @@ fn capture_model_skel_iw5(
         coll_surfs: Vec::new(),
         movement_brushes: Vec::new(),
 
+        mount_tag: None,
+
         lod: None,
         lod_smc: None,
         lod_part_bits: None,
@@ -1837,6 +1847,7 @@ fn capture_pose_src_iw5(
         quats,
         trans,
         base_mat,
+        root_rest: None,
     })
 }
 

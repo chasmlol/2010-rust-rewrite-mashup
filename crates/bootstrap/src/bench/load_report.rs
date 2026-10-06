@@ -352,45 +352,25 @@ fn audio(out: &mut Vec<String>) {
     xwma(out);
 }
 
-/// The one decoder that leaves the process. Everything else on the table above
-/// is a loop over bytes; this one is `ffmpeg`, and both numbers it is judged by
-/// are here: how many clips it was asked about, and how many processes that
-/// took. The artifact cache answers the second run of a zone; the batching is
-/// what the first run gets.
 fn xwma(out: &mut Vec<String>) {
     let cost = asset_audio::xwma_decode_cost();
     if cost.hit + cost.miss + cost.failed == 0 {
         out.push(
-            "  t5 xwma: MISS — no clip reached the external decoder, so the cache answered nothing and nothing was stored."
+            "  t5 xwma: MISS — no T5 XWMA clip was requested, so the cache answered nothing and nothing was stored."
                 .to_owned(),
         );
         return;
     }
     out.push(format!(
-        "  t5 xwma: {} cached, {} decoded, {} failed; {} external ffmpeg processes for {} of samples",
+        "  t5 xwma: {} cached, {} decoded, {} failed; {} native WMA2 decodes for {} of samples",
         cost.hit,
         cost.miss,
         cost.failed,
-        cost.spawned,
+        cost.native,
         mib(cost.pcm_bytes),
     ));
-    if cost.spawned > 0 {
-        out.push(format!(
-            "  {:.1} clips per process — starting ffmpeg costs more than decoding one of these clips, so the match's clips are decoded in batches of up to {}.{}",
-            (cost.miss + cost.failed) as f64 / cost.spawned as f64,
-            audio::PREP_BATCH,
-            if cost.retried == 0 {
-                String::new()
-            } else {
-                format!(
-                    " {} clips were asked again one at a time after the batch holding them was refused.",
-                    cost.retried
-                )
-            },
-        ));
-    }
     out.push(format!(
-        "  t5 xwma worker time: {} in ffmpeg, {} hashing payloads into keys, {} reading and writing the cache",
+        "  t5 xwma worker time: {} in native WMA2, {} hashing payloads into keys, {} reading and writing the cache",
         ms_secs(cost.decode_ms),
         ms_secs(cost.key_ms),
         ms_secs(cost.io_ms),

@@ -47,8 +47,8 @@ impl PendingGameNotify {
         );
     }
 
-    pub fn adopt_from_world(&mut self, world: &mut sim::SimWorld) {
-        for print in world.take_pending_prints() {
+    pub fn adopt_prints(&mut self, effects: &[sim::PendingPrint]) {
+        for print in effects.iter().cloned() {
             let tag = if print.bold {
                 SVC_PRINT_BOLD
             } else {

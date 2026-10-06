@@ -1,127 +1,94 @@
 # IW4L
 
-<p align="center">
-  <img src="docs/screenshots/bomb-plant.jpg" width="49%">
-  <img src="docs/screenshots/tanker-explosion.jpg" width="49%">
-</p>
-
-IW4L is a Call of Duty runtime written from scratch in Rust, on
-[bevy](https://bevyengine.org/) and [wgpu](https://wgpu.rs/). Point it at a copy
-of MW2 you already own and it loads that install's data into its own engine.
-
-The on-disk layouts came out of reverse engineering the original binaries and
-reading public technical references.
-
-This whole project is written by an LLM.
-
-## Status
-
-No releases yet: you build it from this tree. Nothing here is stable either —
-the API, the config format, caches and the wire protocol all change between
-commits, so everyone in a session needs to be on the same one. Expect bugs and
-desyncs.
-
-The network side is for arranged playtests among people who already agreed to
-play; it has never been vetted for lobbies full of strangers. IW4L sends nothing
-home, and diagnostic files sit on your disk until you attach them to a report.
-
-## Architecture
-
-| | |
-|---|---|
-| assets | MW2 zones read natively; MW3 and Black Ops land in the same `asset_iw4` IR. |
-| shaders | Retail D3D9 SM3 tokens translated to WGSL, so no DirectX at runtime. |
-| rendering | One sorted drawsurf list; only the tess emitters fork per surface type. |
-| physics | Fixed 17 ms step on its own accumulator. Framerate changes nothing about how a body falls. |
-| simulation | One `TickInput → sim::step → Snapshot` funnel for server, prediction and replay. |
-| network | Custom p2p wire over UDP: deltas, reliability, reconciliation. A QUIC master only introduces peers. |
-| platforms | Linux, macOS (Metal) and a portable Windows build. |
-
-Retail protocols, the original ABI and patched executables are out of scope.
-IW4L clients talk to IW4L clients.
+IW4L is an open-source runtime for Call of Duty: Modern Warfare 2 (2009), written in
+Rust with [Bevy](https://bevy.org/). Point it at a copy of MW2 you already own and it
+loads that installation's maps, models, textures and weapons into its own engine. You
+can try implemented movement and combat on multiplayer maps, then inspect or change how
+those systems work.
 
 <p align="center">
-  <img src="docs/screenshots/terminal-sniper.jpg" width="49%">
-  <img src="docs/screenshots/jungle-crossbow.jpg" width="49%">
+  <img src="docs/screenshots/bomb-plant.jpg" width="49%" alt="Bomb planting in IW4L">
+  <img src="docs/screenshots/tanker-explosion.jpg" width="49%" alt="Tanker explosion in IW4L">
 </p>
 
-## Game data
+## What you can try
 
-`IW4L_GAMES` points at the folder holding your game trees. No assets ship in
-this repository or in any release, and IW4L is unaffiliated with the rights
-holders of the original games.
+Explore maps, fight bots, and record and replay demos. Gameplay remains incomplete;
+expect missing behavior, bugs and desyncs. The asset readers also cover MW3 and Black
+Ops.
 
-Those trees are read only. IW4L never patches them, swaps files in them or
-writes anything back; caches, settings, demos and logs land in
-`iw4l-artifacts/` next to the IW4L binary.
+APIs, configuration, caches and the wire protocol change between commits;
+multiplayer peers must run the same build.
+
+## Windows: prebuilt release
+
+1. Download `iw4l-windows.zip` from [Releases](../../releases) and extract it into an
+   empty writable folder. The archive password is `t.me/contextrot`.
+2. Launch `iw4l.exe`. It finds MW2 in your Steam libraries and creates a
+   `Modern Warfare 2.lnk` shortcut next to itself. For an install outside Steam, create
+   that shortcut to your MW2 folder yourself.
+
+For online play, put the `.iw4l-server` file you received from a server operator next
+to `iw4l.exe`. With it the game finds that master and updates itself on launch. Details:
+[Windows guide](docs/WINDOWS.md).
 
 ## Build and run
 
-System packages first: [`docs/BUILD.md`](BUILD.md) (Fedora / Debian /
-Arch — compiler, ALSA, udev, X11/Wayland headers; macOS — Xcode command line
-tools).
+Install Rust through rustup and GNU Make. [Build dependencies](docs/BUILD.md) cover
+Linux's C/C++ toolchain and system libraries, and macOS's Xcode command line tools.
+[Windows instructions](docs/WINDOWS.md) cover building and arranging a portable folder.
+
+You need your own installed MW2 Multiplayer data. IW4L
+distributes no game assets and reads installations without patching or replacing their
+files. Caches, demos and logs go under `iw4l-artifacts/`; Linux settings use a separate
+configuration directory described in the [run guide](docs/RUN.md).
+
+From the repository root:
 
 ```bash
-cp .env.example .env          # IW4L_GAMES — folder containing the game trees
-make map mp_boneyard          # run a map
-make map mp_boneyard CMDS='spawn assault; wait 2s; quit'
-make help                     # every recipe
+cp .env.example .env
+# Edit .env: set IW4L_GAMES to the folder containing your game installations.
+make map mp_boneyard CMDS='wait world; spawn 0; force_match_start; bot add 3'
 ```
 
-Live runs use `[profile.play]`, a development build with optimizations turned
-on. `PROFILE=release` builds the real release binary.
-[`docs/WINDOWS.md`](WINDOWS.md) covers Windows.
+This builds the optimized `play` profile and starts a local match with three bots.
+`force_match_start` skips the warmup that otherwise freezes movement.
 
-## Documentation
+## Inside the engine
 
-Implementation notes live under `docs/`, one short file per area. Start at
-[`docs/INDEX.md`](INDEX.md).
+| Area | Implementation |
+|---|---|
+| Assets | Native FastFile readers convert game data into a shared intermediate representation. |
+| Shaders | Retail Direct3D 9 Shader Model 3 bytecode is translated to WGSL. |
+| Rendering | World geometry, models and effects feed one sorted draw-surface list. |
+| Simulation | Server authority, client prediction and replay share one simulation step over explicit Bevy ECS state. |
+| Networking | Custom UDP traffic; a QUIC master provides browsing and relaying. The host simulates the match. |
 
-| file | about |
-| ---- | ----- |
-| [`docs/BUILD.md`](BUILD.md)         | system packages per distro, macOS, Windows cross prerequisites |
-| [`docs/RUN.md`](RUN.md)           | running the game, console scripts, commands and traps |
-| [`docs/PERF.md`](PERF.md)         | Perfetto tracing and performance analysis             |
-| [`docs/RENDER.md`](RENDER.md)     | rendering pipeline                                    |
-| [`docs/MAP-LOAD.md`](MAP-LOAD.md) | map loading and asset installation                    |
-| [`docs/ENTITIES.md`](ENTITIES.md) | simulation data flow and entity taxonomy              |
-| [`docs/SIM-STEP.md`](SIM-STEP.md) | simulation step architecture                          |
-| [`docs/ANIM.md`](ANIM.md)         | animation system                                      |
-| [`docs/WINDOWS.md`](WINDOWS.md)   | portable Windows build                                |
-| [`docs/DEPLOY.md`](DEPLOY.md)     | release, publishing and deployment                    |
-| [`docs/MASTER.md`](MASTER.md)     | running your own master server                        |
+## Where to go next
 
-## Contributing and support
+- [Run guide](docs/RUN.md): console commands, classes and demo playback; [master setup](docs/MASTER.md) for playtests.
+- [Rendering](docs/RENDER.md) and [simulation](docs/SIM-STEP.md): inspect the engine's implementation.
+- [Map loading](docs/MAP-LOAD.md), [GSC runtime](docs/GSC-RUNTIME.md) and [bot AI](docs/BOTS.md): starting points for experiments and modifications.
+- [Documentation index](docs/INDEX.md), [contributing](CONTRIBUTING.md) and [security reports](SECURITY.md).
 
-A personal, experimental project. Bug reports are welcome and get no promised
-fix date. [`CONTRIBUTING.md`](CONTRIBUTING.md) says what a useful report
-contains and how changes get reviewed; security reports go to
-[`SECURITY.md`](SECURITY.md).
+This whole project is written by an LLM.
 
-## Acknowledgements
+## Acknowledgements and license
 
-IW4L ships none of the code below. It was read against all of it.
+Thank you to all contributors for code, bug reports, testing and feedback.
+Special thanks to **ju1cedr1nker** and **silvernote03** for QA testing weapons,
+maps, attachments and other gameplay features.
 
-* [OpenAssetTools](https://github.com/Laupetin/OpenAssetTools) and its
-  [iw4x-x64 fork](https://github.com/iw4x-x64/oat) — modding tools whose
-  asset-structure headers document the on-disk layouts IW4L reads.
-* [IW4x](https://github.com/iw4x/iw4x-client) — a custom client for MW2 (2009),
-  a cross-reference for asset and protocol behaviour.
-* [KisakCOD](https://github.com/SwagSoftware/KisakCOD) — an open-source CoD4
-  reimplementation, a cross-reference for engine structure one generation over
-  in the same family.
-* [Ghidra](https://github.com/NationalSecurityAgency/ghidra) — the framework the
-  original binaries were read with.
+[OpenAssetTools](https://github.com/Laupetin/OpenAssetTools) and its [iw4x-x64
+fork](https://github.com/iw4x-x64/oat) informed asset layouts;
+[IW4x](https://github.com/iw4x/iw4x-client) informed asset and protocol behavior;
+[KisakCOD](https://github.com/SwagSoftware/KisakCOD) informed engine structure.
+[Ghidra](https://github.com/NationalSecurityAgency/ghidra) was used to inspect the
+original binaries.
 
-<p align="center">
-  <img src="docs/screenshots/industrial-daylight.jpg" width="49%">
-  <img src="docs/screenshots/domination-capture.jpg" width="49%">
-</p>
+Movement implementation history and source boundaries are recorded in
+[its provenance note](docs/provenance/movement-iw4.md).
 
-## License
-
-IW4L is licensed under the [Apache License 2.0](LICENSE), and
-[`NOTICE`](NOTICE) holds the copyright notices, the licences of the projects
-above and the bundled fonts. That licence covers IW4L's own source code. Call
-of Duty, Modern Warfare, Black Ops and the related assets, trademarks and
-intellectual property belong to their respective owners.
+IW4L's source is licensed under [Apache 2.0](LICENSE). Preserve required attribution and
+bundled font license texts when redistributing; see [NOTICE](NOTICE). Original game
+assets and trademarks belong to their owners. IW4L is unaffiliated with them.

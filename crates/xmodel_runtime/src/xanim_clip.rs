@@ -345,38 +345,6 @@ impl AnimClip {
     pub fn has_delta(&self) -> bool {
         !matches!(self.delta_translation, Translation::Default)
     }
-
-    pub fn crossed_notifies(&self, old_time: f32, new_time: f32) -> Vec<String> {
-        self.crossed_notify_records(old_time, new_time)
-            .into_iter()
-            .map(|notify| notify.name)
-            .collect()
-    }
-
-    pub fn crossed_notify_records(&self, old_time: f32, new_time: f32) -> Vec<ClipNotify> {
-        let duration = self.duration();
-        if duration <= f32::EPSILON || self.notifies.is_empty() {
-            return Vec::new();
-        }
-        let old_n = (old_time / duration).clamp(0.0, 1.0);
-        let new_n = (new_time / duration).clamp(0.0, 1.0);
-        let mut fired = Vec::new();
-        for notify in &self.notifies {
-            if notify.name.is_empty() || notify.name.eq_ignore_ascii_case("end") {
-                continue;
-            }
-            let t = notify.time.clamp(0.0, 1.0);
-            let crossed = if self.looping && new_n < old_n {
-                t > old_n || t <= new_n
-            } else {
-                (t > old_n && t <= new_n) || (old_n == 0.0 && t == 0.0 && new_n > 0.0)
-            };
-            if crossed {
-                fired.push(notify.clone());
-            }
-        }
-        fired
-    }
 }
 
 fn decode_delta_trans(parts: &RawXAnimParts) -> Result<Translation> {

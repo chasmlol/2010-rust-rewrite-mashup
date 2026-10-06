@@ -26,6 +26,8 @@ impl Default for SimWorld {
         let state_entity = ecs.spawn(SimState::default()).id();
         ecs.entity_mut(state_entity).insert(PayloadIndex::default());
         install_state_entity(&mut ecs, state_entity);
+        ecs.insert_resource(crate::LocalPlayerProfile::default());
+        ecs.insert_resource(crate::PersistentDataStore::default());
         ecs.insert_resource(crate::script::Runtime::default());
         ecs.insert_resource(crate::script::Mechanics::default());
         ecs.insert_resource(crate::script::NativeRegistry::default());
@@ -50,6 +52,8 @@ impl Clone for SimWorld {
             collect_script_movers(&self.ecs),
             collect_dropped_items(&self.ecs),
         );
+        ecs.insert_resource(*self.ecs.resource::<crate::LocalPlayerProfile>());
+        ecs.insert_resource(self.ecs.resource::<crate::PersistentDataStore>().clone());
         crate::script::copy_state(&self.ecs, &mut ecs);
         Self {
             ecs,
@@ -89,6 +93,28 @@ impl SimWorld {
         Self::default()
     }
 
+    pub fn persistent_data(&self) -> &crate::PersistentDataStore {
+        self.ecs.resource::<crate::PersistentDataStore>()
+    }
+
+    pub fn persistent_data_mut(&mut self) -> &mut crate::PersistentDataStore {
+        self.ecs
+            .resource_mut::<crate::PersistentDataStore>()
+            .into_inner()
+    }
+
+    pub fn set_persistent_data(&mut self, store: crate::PersistentDataStore) {
+        self.ecs.insert_resource(store);
+    }
+
+    pub fn local_player_profile(&self) -> crate::LocalPlayerProfile {
+        *self.ecs.resource::<crate::LocalPlayerProfile>()
+    }
+
+    pub fn set_local_player_profile(&mut self, profile: crate::LocalPlayerProfile) {
+        self.ecs.insert_resource(profile);
+    }
+
     pub(crate) fn frame(&mut self) -> FrameWorld<'_> {
         FrameWorld::new(&mut self.ecs, self.state_entity)
     }
@@ -99,7 +125,7 @@ impl SimWorld {
         input: &TickInput,
         msec: i32,
         reason: StepReason,
-    ) -> Result<Snapshot, crate::script::Fault> {
+    ) -> Result<crate::TickResult, crate::script::Fault> {
         crate::step::run_schedule(&mut self.ecs, &mut self.schedule, tick, input, msec, reason)
     }
 
@@ -141,8 +167,21 @@ impl SimWorld {
         crate::script::start(&mut self.ecs, name, receiver, arguments)
     }
 
+    /// Registers the local FoF floats before installing scripts on listen authority.
+    pub fn register_local_presentation_dvars(&mut self, local: Option<ClientId>) {
+        crate::script::host::natives::iw4::register_local_presentation_dvars(&mut self.ecs, local);
+    }
+
     pub fn set_gsc_dvar(&mut self, name: &str, value: &str) {
         crate::script::set_dvar(&mut self.ecs, name, value);
+    }
+
+    pub fn gsc_realm(&self) -> Option<crate::script::Realm> {
+        self.ecs
+            .resource::<crate::script::Runtime>()
+            .program
+            .as_ref()
+            .map(|program| program.rules())
     }
 
     pub fn gsc_program_fingerprint(&self) -> Option<[u8; 32]> {
@@ -162,10 +201,6 @@ impl SimWorld {
         }
         runtime.fault_reported = runtime.fault.is_some();
         runtime.fault.clone()
-    }
-
-    pub fn take_script_exit_level(&mut self) -> bool {
-        std::mem::take(&mut self.ecs.resource_mut::<crate::script::Runtime>().exit_level)
     }
 
     pub fn spawn_script_mover(
@@ -247,19 +282,15 @@ impl SimWorld {
         crate::frame::player_row_count(&self.ecs)
     }
 
-    pub fn take_script_kicks(&mut self) -> Vec<(ClientId, String)> {
-        std::mem::take(&mut self.ecs.resource_mut::<crate::script::Runtime>().kicks)
-            .into_iter()
-            .map(|(client, reason)| (ClientId(client), reason))
-            .collect()
-    }
-
     pub fn retire_client(&mut self, id: ClientId) {
         let mut runtime = self.ecs.resource_mut::<crate::script::Runtime>();
         if runtime.players.contains_key(&id.0) {
             runtime.disconnects.insert(id.0);
         } else {
             self.frame().retire_client(id);
+            self.ecs
+                .resource_mut::<crate::PersistentDataStore>()
+                .unbind(id);
         }
     }
 
@@ -343,6 +374,9 @@ impl SimWorld {
     pub fn shutdown_game(&mut self) {
         self.frame().shutdown_game();
         crate::script::reset(&mut self.ecs);
+        self.ecs
+            .resource_mut::<crate::PersistentDataStore>()
+            .clear_bindings();
     }
 
     pub fn hitvol_dump(&self) -> Vec<crate::world::HitvolDumpRow> {
@@ -386,7 +420,7 @@ pub fn step(
     input: &TickInput,
     msec: i32,
     reason: StepReason,
-) -> Snapshot {
+) -> crate::TickResult {
     try_step(world, tick, input, msec, reason)
         .unwrap_or_else(|fault| panic!("GSC execution failed: {fault}"))
 }
@@ -397,6 +431,6 @@ pub fn try_step(
     input: &TickInput,
     msec: i32,
     reason: StepReason,
-) -> Result<Snapshot, crate::script::Fault> {
+) -> Result<crate::TickResult, crate::script::Fault> {
     world.run(tick, input, msec, reason)
 }

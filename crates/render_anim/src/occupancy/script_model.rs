@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
@@ -139,13 +139,19 @@ impl ScriptModelPoseProduct {
 }
 
 struct ScriptSceneSlot<'a> {
-    hidden: bool,
+    skip: Option<&'static str>,
     skin_entries: &'a [dpvs_iw4::SceneEntSkinEntry],
 }
 
 fn script_scene_slot(scene: &render_scene::GfxScene, entnum: u32) -> ScriptSceneSlot<'_> {
     ScriptSceneSlot {
-        hidden: scene.scene_ent_skips_draw(entnum),
+        skip: if scene.scene_ent_hidden(entnum) {
+            Some("scene_ent_hidden")
+        } else if scene.scene_ent_surface_count(entnum) == Some(0) {
+            Some("scene_ent_empty")
+        } else {
+            None
+        },
         skin_entries: scene
             .scene_ent_skinned_surfs(entnum)
             .map(|surfs| surfs.entries.as_slice())
@@ -237,6 +243,8 @@ pub fn register_script_model_systems(app: &mut App) {
         .init_resource::<RenderFocus>()
         .init_resource::<ScriptModelDrawPlan>()
         .init_resource::<ScriptModelDobjs>()
+        .init_resource::<crate::anim::dobj_pose::ScriptModelDObjFrame>()
+        .init_resource::<crate::anim::dobj_pose::ScriptModelBoltDemand>()
         .init_resource::<ScriptModelPoseProduct>()
         .add_systems(
             Update,
@@ -255,7 +263,13 @@ pub fn register_script_model_systems(app: &mut App) {
         )
         .add_systems(
             Update,
-            (pose_script_models, commit_script_model_draw_plan)
+            (
+                publish_script_model_dobjs,
+                publish_script_model_bolt_poses
+                    .after(crate::anim::dobj_pose::begin_dobj_pose_frame),
+                pose_script_models,
+                commit_script_model_draw_plan,
+            )
                 .chain()
                 .after(occupy_script_model_scene_ents)
                 .after(frame::WorkerCmdSet::CellSceneEnt)
@@ -431,6 +445,22 @@ fn apply_script_mover_centity_pose(
     }
 }
 
+fn is_weapon_camera_vehicle(
+    owner: &WorldScriptModelInstance,
+    presented: &net::PresentedSnapshot,
+    local: sim::ClientId,
+) -> bool {
+    presented
+        .snapshot()
+        .and_then(|snapshot| snapshot.meta.for_client(local))
+        .and_then(|meta| meta.linked_weapon_view)
+        .is_some_and(|view| {
+            owner
+                .gentity_number
+                .is_some_and(|number| i32::from(number) == view.entity_num)
+        })
+}
+
 fn occupy_script_model_scene_ents(
     assets: Option<Res<asset_world::MapXModelSceneCatalog>>,
     cameras: Query<(&GlobalTransform, &Projection, &Camera), With<FpvLens>>,
@@ -438,6 +468,8 @@ fn occupy_script_model_scene_ents(
     persist: Res<ScriptModelDobjs>,
     mut scene_submissions: MessageWriter<AnimDObjSceneSubmission>,
     lod_skinned: Res<render_scene::LodRampSkinnedDvar>,
+    presented: Res<net::PresentedSnapshot>,
+    local: Res<net::LocalPresentClient>,
 ) {
     let Some(assets) = assets else {
         return;
@@ -448,13 +480,17 @@ fn occupy_script_model_scene_ents(
         .map(|(xf, _, _)| xf.translation().to_array());
     let skinned_ramp = lod_skinned.args();
     for (owner, transform, visibility) in &owners {
+        if is_weapon_camera_vehicle(owner, &presented, local.0) {
+            continue;
+        }
         if *visibility == Visibility::Hidden {
             continue;
         }
         let Some(skels) = presented_skel_arcs(&assets, &owner.dobj_state) else {
             continue;
         };
-        let skel_refs: Vec<&asset_model::ModelSkel> = skels.iter().map(|skel| skel.as_ref()).collect();
+        let skel_refs: Vec<&asset_model::ModelSkel> =
+            skels.iter().map(|skel| skel.as_ref()).collect();
         if lod_culled(
             &skel_refs,
             transform.translation.to_array(),
@@ -517,6 +553,8 @@ fn pose_script_models(
     select: Res<RenderFocusSelect>,
     mut focus: ResMut<RenderFocus>,
     locals: ScriptModelPoseLocals,
+    presented: Res<net::PresentedSnapshot>,
+    local: Res<net::LocalPresentClient>,
 ) {
     let focus_id = select.script_model_id();
     if let Some(id) = focus_id {
@@ -556,6 +594,9 @@ fn pose_script_models(
         .map(|(xf, _, _)| xf.translation().to_array());
     let skinned_ramp = lod_skinned.args();
     for (entity, owner, transform, visibility) in &owners {
+        if is_weapon_camera_vehicle(owner, &presented, local.0) {
+            continue;
+        }
         let owner_id = owner
             .authority_owner
             .and_then(|owner| owner.script_model())
@@ -573,9 +614,9 @@ fn pose_script_models(
         let entnum = owner.gentity_number.map(u32::from);
 
         let slot = entnum.map(|entnum| script_scene_slot(&gfx_scene.scene, entnum));
-        if slot.as_ref().is_some_and(|slot| slot.hidden) {
+        if let Some(why) = slot.as_ref().and_then(|slot| slot.skip) {
             if let Some(id) = focused_owner_id {
-                focus.refuse(id, &owner.current_model.0, "scene_ent_skip");
+                focus.refuse(id, &owner.current_model.0, why);
             }
             continue;
         }
@@ -611,9 +652,12 @@ fn pose_script_models(
                 continue;
             }
             live_ids.insert(id);
-            let request = owner
-                .dobj_state
-                .resolve_request(|name| xanims.as_ref()?.0.clip(asset_core::AssetNamespace::Iw4, name));
+            let request = owner.dobj_state.resolve_request(|name| {
+                xanims
+                    .as_ref()?
+                    .0
+                    .clip(asset_core::AssetNamespace::Iw4, name)
+            });
             let index = if let Some(index) =
                 product.asset_index(&owner.current_model, &owner.dobj_state, &camera_lods)
             {
@@ -658,6 +702,13 @@ fn pose_script_models(
                 )
             };
             live_assets.push(index);
+            let clip = owner.dobj_state.tree.as_ref().and_then(|tree| {
+                tree.nodes
+                    .iter()
+                    .filter(|node| node.state.weight > 0.0)
+                    .find_map(|node| node.clip.as_deref())
+            });
+            perf::truck(id, None, None, clip, Some("posed"));
             index
         } else {
             let Some(index) =
@@ -757,7 +808,7 @@ fn commit_script_model_draw_plan(
         return;
     };
 
-    let material_generation = tess.catalog.generation_id;
+    let material_generation = tess.catalog().generation_id();
 
     let catalog_reset = assets.is_changed()
         || atlas.is_changed()
@@ -787,7 +838,9 @@ fn commit_script_model_draw_plan(
                 .iter()
                 .zip(posed.authored.iter().copied())
                 .map(|(_surface, authored)| {
-                    model_materials.authored(&tess.catalog, authored?).cloned()
+                    model_materials
+                        .authored(&tess.catalog(), authored?)
+                        .cloned()
                 })
                 .collect::<Vec<_>>();
             append_or_overwrite_script_model(
@@ -889,6 +942,7 @@ fn commit_script_model_draw_plan(
                 packed_lighting: None,
                 is_scope: false,
                 scene_entnum: row.entnum,
+                body_client: None,
                 caster_bound: Some(row.caster_bound),
             });
         }
@@ -937,7 +991,9 @@ fn append_or_overwrite_script_pose(
     index
 }
 
-fn script_dobj_reuse_key(state: &xmodel_runtime::DObjSemanticState) -> xmodel_runtime::DObjReuseKey {
+fn script_dobj_reuse_key(
+    state: &xmodel_runtime::DObjSemanticState,
+) -> xmodel_runtime::DObjReuseKey {
     let mut parts = Vec::with_capacity(state.composition.models.len() * 2);
     for model in &state.composition.models {
         parts.push(model.model.as_str());
@@ -1003,6 +1059,7 @@ pub(crate) fn presented_skel_arcs(
         let skel = match catalog.get_name(&descriptor.model)? {
             asset_world::MapXModelSceneAsset::Iw4(skel)
             | asset_world::MapXModelSceneAsset::Iw5(skel)
+            | asset_world::MapXModelSceneAsset::T6(skel)
             | asset_world::MapXModelSceneAsset::T5(skel) => std::sync::Arc::clone(skel),
             asset_world::MapXModelSceneAsset::Unavailable { .. } => return None,
         };
@@ -1023,6 +1080,7 @@ pub(crate) fn presented_skels<'a>(
         let skel = match catalog.get_name(&descriptor.model)? {
             asset_world::MapXModelSceneAsset::Iw4(skel)
             | asset_world::MapXModelSceneAsset::Iw5(skel)
+            | asset_world::MapXModelSceneAsset::T6(skel)
             | asset_world::MapXModelSceneAsset::T5(skel) => skel.as_ref(),
             asset_world::MapXModelSceneAsset::Unavailable { .. } => return None,
         };
@@ -1038,7 +1096,10 @@ pub fn collect_presented_models<'a>(
     catalog: &'a asset_world::MapXModelSceneCatalog,
     state: &xmodel_runtime::DObjSemanticState,
 ) -> Option<(
-    Vec<(&'a xmodel_runtime::ModelPoseSrc, Option<xmodel_runtime::Attach>)>,
+    Vec<(
+        &'a xmodel_runtime::ModelPoseSrc,
+        Option<xmodel_runtime::Attach>,
+    )>,
     Vec<&'a asset_model::ModelSkel>,
 )> {
     let mut skels = Vec::with_capacity(state.composition.models.len());
@@ -1047,15 +1108,18 @@ pub fn collect_presented_models<'a>(
         let skel = match catalog.get_name(&descriptor.model)? {
             asset_world::MapXModelSceneAsset::Iw4(skel)
             | asset_world::MapXModelSceneAsset::Iw5(skel)
+            | asset_world::MapXModelSceneAsset::T6(skel)
             | asset_world::MapXModelSceneAsset::T5(skel) => skel,
             asset_world::MapXModelSceneAsset::Unavailable { .. } => return None,
         };
         let attach = match (descriptor.parent_model, descriptor.attach_tag.as_ref()) {
             (None, None) if index == 0 => None,
-            (Some(parent), Some(tag)) if usize::from(parent) < index => Some(xmodel_runtime::Attach {
-                parent_model: usize::from(parent),
-                tag: tag.clone(),
-            }),
+            (Some(parent), Some(tag)) if usize::from(parent) < index => {
+                Some(xmodel_runtime::Attach {
+                    parent_model: usize::from(parent),
+                    tag: tag.clone(),
+                })
+            }
             _ => return None,
         };
         skels.push(skel.as_ref());
@@ -1190,4 +1254,76 @@ fn lod_culled(
     skels.iter().all(|skel| {
         smodel_camera_lod(skel.lod, origin, 1.0, Some(Vec3::from_array(eye)), ramp).is_none()
     })
+}
+
+fn publish_script_model_bolt_poses(
+    owners: Query<(&WorldScriptModelInstance, &Transform)>,
+    persist: Res<ScriptModelDobjs>,
+    mut demand: ResMut<crate::anim::dobj_pose::ScriptModelBoltDemand>,
+    mut dobj_poses: ResMut<crate::anim::dobj_pose::HostDObjPoseFrame>,
+) {
+    if demand.is_empty() {
+        return;
+    }
+    let mut live = HashSet::new();
+    for (owner, transform) in &owners {
+        let Some(entnum) = owner.gentity_number.filter(|n| demand.contains(*n)) else {
+            continue;
+        };
+        live.insert(entnum);
+        let Some(slot) = owner
+            .authority_owner
+            .and_then(|owner| owner.script_model())
+            .and_then(|id| persist.by_id.get(&id.to_wire()))
+        else {
+            continue;
+        };
+        let Ok(local) = xmodel_runtime::pose_dobj_with_controller(
+            &slot.dobj,
+            &xmodel_runtime::DObjPoseRequest::bind_pose(),
+            Mat4::IDENTITY,
+            |_, _, _| {},
+        ) else {
+            continue;
+        };
+        let _ = dobj_poses.publish(u32::from(entnum), true, 0, transform.to_matrix(), &local);
+    }
+    demand.retain(|entnum| live.contains(&entnum));
+}
+
+fn publish_script_model_dobjs(
+    assets: Option<Res<asset_world::MapXModelSceneCatalog>>,
+    facts: Res<WorldPresentFacts>,
+    owners: Query<(&WorldScriptModelInstance, &Visibility)>,
+    mut persist: ResMut<ScriptModelDobjs>,
+    prepared: Res<crate::anim::model_materials::PreparedModelMaterials>,
+    mut frame: ResMut<crate::anim::dobj_pose::ScriptModelDObjFrame>,
+) {
+    frame.clear();
+    let Some(assets) = assets.filter(|_| facts.spawned) else {
+        return;
+    };
+    for (owner, visibility) in &owners {
+        if *visibility == Visibility::Hidden {
+            continue;
+        }
+        let (Some(id), Some(entity)) = (
+            owner.authority_owner.and_then(|owner| owner.script_model()),
+            owner.gentity_number,
+        ) else {
+            continue;
+        };
+        if collect_presented_models(&assets, &owner.dobj_state).is_some()
+            && compose_or_reuse_script_dobj(
+                &mut persist,
+                id.to_wire(),
+                &assets,
+                &owner.dobj_state,
+                &prepared,
+            )
+            .is_some()
+        {
+            frame.publish(id, entity, persist.by_id[&id.to_wire()].dobj.clone());
+        }
+    }
 }

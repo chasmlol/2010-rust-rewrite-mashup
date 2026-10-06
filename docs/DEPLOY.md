@@ -1,50 +1,50 @@
 # Shipping a release
 
-What `make deploy` does, what reaches the Windows folder with no human involved,
-and what does not. That folder is [`WINDOWS.md`](WINDOWS.md); your own master
-rather than ours is [`MASTER.md`](MASTER.md).
-
 ```bash
-make setup-windows              # rustup target + cargo-xwin, once
-make release prod|dev           # local directory, VPS untouched
-make publish prod|dev           # upload a finished RELEASE=
+make setup-windows
+make release prod|dev           # local build and packaging
+make publish prod|dev           # upload an existing RELEASE=
 make deploy prod|dev            # release + publish; PROFILE=play
-make deploy prod PROFILE=release
-make provision                  # users, Caddy, systemd, certificates
+make provision                  # users, systemd, certificates, firewall
 make logs prod|dev SINCE=2h
 ```
 
-Each recipe is one `cargo xtask` command — `windows`, `release`, `publish`,
-`provision`, `logs`, `certs` — and `make` forwards only `PROFILE` and `RELEASE`;
-`cargo xtask` alone lists them. `prod`/`dev` is the publication channel, not the
-compilation profile; address and root are `IW4L_DEPLOY_HOST` /
-`IW4L_DEPLOY_ROOT` in `.env`. prod: udp/4433 and `https://<host>:8443/prod/`;
-dev: 4434 and `/dev/`. Git, protocol and SHA freeze into `deployment.json` at
-`release`, not at `publish`.
+Set `IW4L_DEPLOY_HOST`, `IW4L_DEPLOY_ROOT` and `IW4L_RELEASE_KEY` in `.env`.
+The public CA must already exist; release preparation never replaces it.
+The master listens on UDP and TCP 4433 for prod, 4434 for dev. HTTPS uses
+`/updates/manifest.toml`, independently of the QUIC protocol and ALPN.
+Hosting panels must expose both transports on the selected allocation.
 
-An ordinary publish compiles nothing, calls no zstd, rewrites nothing under
-`/etc` and leaves the master running if its SHA matched. The uncompressed
-`iw4l.exe` stays local, the archive is `iw4l-<sha>.exe.zst`, the old one on the
-VPS survives, and the manifest is swapped in by rename.
+`cargo xtask release prod` creates `dist/releases/prod/<id>/` containing
+`deployment.json`, `client/`, and `server/`. It also creates a player ZIP and an
+unencrypted `iw4l-server-release-<id>.zip`, ready to upload through a panel:
 
-Changing `master_protocol::PROTOCOL_VERSION` also changes `ALPN`: an old client
-is refused at the handshake instead of silently decoding a drifted format. The
-master and the clients of such a release ship together, and `publish` restarts
-the master because its SHA changed.
+```text
+server/
+├── iw4l-master
+└── updates/
+    ├── manifest.toml
+    └── iw4l-<executable-sha256>.exe.zst
+```
 
-`make launcher windows` builds the portable ZIP in `dist/windows/`; it is not a
-deploy, and a fix to the updater arrives only by copying `iw4launcher.exe` by
-hand. What the player's launcher does with `IW4L_UPDATE_URL`: [`WINDOWS.md`](WINDOWS.md).
+Keep your server certificate/key beside the binary; they are operator-managed.
+Start it with `./iw4l-master serve --bind 0.0.0.0:4433 --cert server-cert.pem
+--key server-key.pem --updates updates` (one command). `/health` answers over
+HTTPS. The process serves static update files with the same certificate as QUIC.
 
-**Cutting a public release.** Tag `v0.1.0-demo.N`, titled `IW4L Technical
-Demo N`, and mark it a **pre-release**. The notes carry four things and are not worth writing without
-them: the commit it was built from; the platforms the archive was actually
-**run** on; the demo scenario (which game, version and map, and what to do); the
-known limitations. A target that merely compiled is not a verified platform, and
-a Linux release waits for no unstarted Windows archive, nor the reverse.
+Upload the complete immutable blob first, then replace the manifest last.
+Old blobs may remain. Files are read per request: a client-only update needs no
+master restart. Master and client identities are independent; changing only the
+master can retain the same client manifest; use `cargo xtask master update`
+for an independent relay update. `publish` verifies staged hashes,
+switches the master only when its hash changed, and atomically renames the
+manifest after master health succeeds. It does not rewrite systemd units;
+existing installations need the new units from `provision` before publishing.
 
-Every archive carries `LICENSE`, `NOTICE` and the two font licences
-(`release.rs::LEGAL_FILES`) and no game data. Check the archive, not just
-`git ls-files`: `make publish-check` reads the tracked tree and cannot see what
-was staged into a ZIP. Published tags are never moved, and history is never
-recreated once anything has been pushed.
+The player starts the single `iw4l.exe`; its HTTPS check precedes QUIC, so a
+breaking protocol update remains downloadable. See [`WINDOWS.md`](WINDOWS.md).
+A first adoption requires distributing this executable and its descriptor.
+
+Public releases are pre-releases tagged `v0.1.0-demo.N`. Notes identify the
+commit, actually exercised platforms, scenario and limitations. Player archives
+carry LICENSE, NOTICE and both font licences, never game data or private keys.

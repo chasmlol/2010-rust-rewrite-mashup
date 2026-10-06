@@ -22,9 +22,9 @@ mod loadout;
 mod snapshot_meta;
 
 pub use client_view::{
-    KillcamHud, LocationSelection, MENU_COMMAND_TAIL, MenuCommand, MenuCommandKind, RadarMode,
-    RemoteMissile, ScriptBlur, ScriptDepthOfField, ScriptSeat, ViewEffects, VisionChange,
-    is_postfx_dvar,
+    KillcamHud, LinkedWeaponView, LocationSelection, MENU_COMMAND_TAIL, MenuCommand,
+    MenuCommandKind, RadarMode, RemoteMissile, ScriptBlur, ScriptDepthOfField, ScriptSeat,
+    ViewEffects, VisionChange, is_postfx_dvar,
 };
 pub use events::{
     EntityEventPayload, EntityEventRecord, EventAudience, EventRecord, PelletFxRecord,
@@ -32,8 +32,8 @@ pub use events::{
 };
 pub use loadout::{
     CLASS_CATALOG_DEATHSTREAKS, CLASS_CATALOG_PERKS, ClassDef, ClassRejectReason,
-    ConfigurationChangeRejectReason, GiveRejectReason, LoadoutSpec, PERSONAL_CLASS_SLOTS,
-    PersonalClass,
+    ConfigurationChangeRejectReason, GiveRejectReason, IW4_CAMOS, LoadoutSpec,
+    PERSONAL_CLASS_SLOTS, PersonalClass, iw4_camo_index,
 };
 pub fn class_catalog_perk_name(id: u32) -> Option<&'static str> {
     CLASS_CATALOG_PERKS
@@ -43,6 +43,7 @@ pub fn class_catalog_perk_name(id: u32) -> Option<&'static str> {
 
 pub use snapshot_meta::{
     ClientSnapshotMeta, DroppedItemAmmo, ItemPickupRecord, RngDebugMeta, ScriptDvars, SnapshotMeta,
+    TargetBoxDvar,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -86,12 +87,14 @@ pub struct ClientMatchState {
     pub shield: Option<crate::ShieldAttachment>,
     pub weapon_lock: crate::WeaponLock,
     pub lifecycle: ClientLifecycle,
+    pub god_mode: bool,
     pub input_receipt: InputReceipt,
     pub loadout: Option<LoadoutSpec>,
     pub life_sequence: LifeSequence,
 
     pub item_use_spawn_ms: i32,
     pub item_use_entity: Option<crate::EntityRef>,
+    pub item_use_press_ms: i32,
 
     pub(crate) ammo_clip: i32,
 
@@ -107,6 +110,7 @@ pub struct ClientMatchState {
 
     pub(crate) rechamber_pending: bool,
     pub(crate) rechamber_pending_secondary: bool,
+    pub(crate) pending_brass: [Option<crate::PendingBrass>; 2],
 
     pub(crate) dead_since_tick: Option<u32>,
 
@@ -121,7 +125,9 @@ pub struct ClientMatchState {
     pub score: i32,
     pub kill_streak: i32,
     pub radar: RadarMode,
+    pub radar_blocked: bool,
     pub remote_missile: Option<RemoteMissile>,
+    pub linked_weapon_view: Option<LinkedWeaponView>,
 
     pub(crate) ffa_team: Option<u8>,
 
@@ -212,10 +218,12 @@ impl ClientMatchState {
             weapon_lock: self.weapon_lock,
             killcam_hud: None,
             lifecycle: self.lifecycle,
+            god_mode: self.god_mode,
             loadout: self.loadout.clone(),
             life_sequence: self.life_sequence,
             item_use_spawn_ms: self.item_use_spawn_ms,
             item_use_entity: self.item_use_entity,
+            item_use_press_ms: self.item_use_press_ms,
             ammo_clip: self.ammo_clip,
             ammo_stock: self.ammo_stock,
             score: self.score,
@@ -223,7 +231,9 @@ impl ClientMatchState {
             deaths: self.deaths,
             kill_streak: self.kill_streak,
             radar: self.radar,
+            radar_blocked: self.radar_blocked,
             remote_missile: self.remote_missile,
+            linked_weapon_view: self.linked_weapon_view,
             ammo_by_weapon: self.ammo_by_weapon.clone(),
             taped_mag_spent: self.taped_mag_spent.clone(),
             weapon_shot_count: self.weapon_shot_count,
@@ -231,6 +241,7 @@ impl ClientMatchState {
             burst_latch_secondary: self.burst_latch_secondary,
             rechamber_pending: self.rechamber_pending,
             rechamber_pending_secondary: self.rechamber_pending_secondary,
+            pending_brass: self.pending_brass,
             dead_since_tick: self.dead_since_tick,
             look_at_killer_yaw: self.look_at_killer_yaw,
             name: self.name,
@@ -266,10 +277,12 @@ impl ClientMatchState {
         self.shield = meta.shield;
         self.weapon_lock = meta.weapon_lock;
         self.lifecycle = meta.lifecycle;
+        self.god_mode = meta.god_mode;
         self.loadout = meta.loadout.clone();
         self.life_sequence = meta.life_sequence;
         self.item_use_spawn_ms = meta.item_use_spawn_ms;
         self.item_use_entity = meta.item_use_entity;
+        self.item_use_press_ms = meta.item_use_press_ms;
         self.ammo_clip = meta.ammo_clip;
         self.ammo_stock = meta.ammo_stock;
         self.score = meta.score;
@@ -277,7 +290,9 @@ impl ClientMatchState {
         self.deaths = meta.deaths;
         self.kill_streak = meta.kill_streak;
         self.radar = meta.radar;
+        self.radar_blocked = meta.radar_blocked;
         self.remote_missile = meta.remote_missile;
+        self.linked_weapon_view = meta.linked_weapon_view;
         self.ammo_by_weapon = meta.ammo_by_weapon.clone();
         self.taped_mag_spent = meta.taped_mag_spent.clone();
         self.weapon_shot_count = meta.weapon_shot_count;
@@ -285,6 +300,7 @@ impl ClientMatchState {
         self.burst_latch_secondary = meta.burst_latch_secondary;
         self.rechamber_pending = meta.rechamber_pending;
         self.rechamber_pending_secondary = meta.rechamber_pending_secondary;
+        self.pending_brass = meta.pending_brass;
         self.dead_since_tick = meta.dead_since_tick;
         self.look_at_killer_yaw = meta.look_at_killer_yaw;
         self.name = meta.name;

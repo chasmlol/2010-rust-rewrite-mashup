@@ -384,6 +384,10 @@ pub struct FxEffectDefGeometry {
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct WeaponGeometry {
+    pub overlay_material_name: Option<Ptr>,
+    pub overlay_material_lowres_name: Option<Ptr>,
+    pub reticle_center_name: Option<Ptr>,
+    pub reticle_side_name: Option<Ptr>,
     pub name: Option<Ptr>,
     pub alternate_weapon_name: Option<Ptr>,
     pub alternate_raise_time_ms: i32,

@@ -5,7 +5,7 @@ pub use render_frame::code_math::{
     float4_bits,
 };
 
-use super::frame_products::MaterialFrameInputs;
+use super::frame_products::{MaterialFrameInputs, MaterialGeneration};
 use super::material_runtime::{RuntimeCodeSources, RuntimeImageId};
 use crate::prepare::scene::camera::FpvLens;
 use crate::prepare::scene::model_lighting_atlas::WorldModelLightingAtlas;
@@ -69,159 +69,6 @@ pub const CODE_MESH_ARG_0: u16 = 0x4a;
 
 pub const CODE_MESH_ARG_1: u16 = 0x4b;
 
-pub const CODE_LEFTOVER_IW5_EYEOFFSET: u16 = asset_material::iw5_tech_map::LEFTOVER_IW5_CODE_BASE
-    + asset_material::iw5_tech_map::IW5_CODE_EYEOFFSET;
-
-pub const CODE_LEFTOVER_IW5_SAT_R: u16 = asset_material::iw5_tech_map::LEFTOVER_IW5_CODE_BASE
-    + asset_material::iw5_tech_map::IW5_CODE_COLOR_SATURATION_R;
-
-pub const CODE_LEFTOVER_IW5_SAT_G: u16 = asset_material::iw5_tech_map::LEFTOVER_IW5_CODE_BASE
-    + asset_material::iw5_tech_map::IW5_CODE_COLOR_SATURATION_G;
-
-pub const CODE_LEFTOVER_IW5_SAT_B: u16 = asset_material::iw5_tech_map::LEFTOVER_IW5_CODE_BASE
-    + asset_material::iw5_tech_map::IW5_CODE_COLOR_SATURATION_B;
-
-pub const CODE_LEFTOVER_T5_VPOSX: u16 = asset_material::t5_code_remap::LEFTOVER_T5_CODE_BASE
-    + asset_material::t5_code_remap::T5_CODE_VPOSX_TO_WORLD;
-
-pub const CODE_LEFTOVER_T5_VPOSY: u16 = asset_material::t5_code_remap::LEFTOVER_T5_CODE_BASE
-    + asset_material::t5_code_remap::T5_CODE_VPOSY_TO_WORLD;
-
-pub const CODE_LEFTOVER_T5_VPOS1: u16 = asset_material::t5_code_remap::LEFTOVER_T5_CODE_BASE
-    + asset_material::t5_code_remap::T5_CODE_VPOS1_TO_WORLD;
-
-pub const CODE_LEFTOVER_T5_EYEOFFSET: u16 = asset_material::t5_code_remap::LEFTOVER_T5_CODE_BASE
-    + asset_material::t5_code_remap::T5_CODE_EYEOFFSET;
-
-pub const CODE_LEFTOVER_T5_LIGHT_ATTENUATION: u16 =
-    asset_material::t5_code_remap::LEFTOVER_T5_CODE_BASE
-        + asset_material::t5_code_remap::T5_CODE_LIGHT_ATTENUATION;
-
-pub const CODE_LEFTOVER_T5_LIGHT_FALLOFF_A: u16 =
-    asset_material::t5_code_remap::LEFTOVER_T5_CODE_BASE
-        + asset_material::t5_code_remap::T5_CODE_LIGHT_FALLOFF_A;
-
-pub const CODE_LEFTOVER_T5_LIGHT_FALLOFF_B: u16 =
-    asset_material::t5_code_remap::LEFTOVER_T5_CODE_BASE
-        + asset_material::t5_code_remap::T5_CODE_LIGHT_FALLOFF_B;
-
-pub const CODE_LEFTOVER_T5_LIGHT_SPOT_MATRIX0: u16 =
-    asset_material::t5_code_remap::LEFTOVER_T5_CODE_BASE
-        + asset_material::t5_code_remap::T5_CODE_LIGHT_SPOT_MATRIX0;
-
-pub const CODE_LEFTOVER_T5_LIGHT_SPOT_MATRIX1: u16 =
-    asset_material::t5_code_remap::LEFTOVER_T5_CODE_BASE
-        + asset_material::t5_code_remap::T5_CODE_LIGHT_SPOT_MATRIX1;
-
-pub const CODE_LEFTOVER_T5_LIGHT_SPOT_MATRIX2: u16 =
-    asset_material::t5_code_remap::LEFTOVER_T5_CODE_BASE
-        + asset_material::t5_code_remap::T5_CODE_LIGHT_SPOT_MATRIX2;
-
-pub const CODE_LEFTOVER_T5_LIGHT_SPOT_MATRIX3: u16 =
-    asset_material::t5_code_remap::LEFTOVER_T5_CODE_BASE
-        + asset_material::t5_code_remap::T5_CODE_LIGHT_SPOT_MATRIX3;
-
-pub const CODE_LEFTOVER_T5_LIGHT_SPOT_AABB: u16 =
-    asset_material::t5_code_remap::LEFTOVER_T5_CODE_BASE
-        + asset_material::t5_code_remap::T5_CODE_LIGHT_SPOT_AABB;
-
-pub const CODE_LEFTOVER_T5_LIGHT_CONE_CONTROL1: u16 =
-    asset_material::t5_code_remap::LEFTOVER_T5_CODE_BASE
-        + asset_material::t5_code_remap::T5_CODE_LIGHT_CONE_CONTROL1;
-
-pub const CODE_LEFTOVER_T5_LIGHT_CONE_CONTROL2: u16 =
-    asset_material::t5_code_remap::LEFTOVER_T5_CODE_BASE
-        + asset_material::t5_code_remap::T5_CODE_LIGHT_CONE_CONTROL2;
-
-pub const CODE_LEFTOVER_T5_LIGHT_SPOT_COOKIE_SLIDE: u16 =
-    asset_material::t5_code_remap::LEFTOVER_T5_CODE_BASE
-        + asset_material::t5_code_remap::T5_CODE_LIGHT_SPOT_COOKIE_SLIDE;
-
-pub const CODE_LEFTOVER_T5_SUN_POSITION: u16 = asset_material::t5_code_remap::LEFTOVER_T5_CODE_BASE
-    + asset_material::t5_code_remap::T5_CODE_SUN_POSITION;
-
-pub const CODE_LEFTOVER_T5_SUN_DIFFUSE: u16 = asset_material::t5_code_remap::LEFTOVER_T5_CODE_BASE
-    + asset_material::t5_code_remap::T5_CODE_SUN_DIFFUSE;
-
-pub const CODE_LEFTOVER_T5_SUN_SPECULAR: u16 = asset_material::t5_code_remap::LEFTOVER_T5_CODE_BASE
-    + asset_material::t5_code_remap::T5_CODE_SUN_SPECULAR;
-
-pub const CODE_LEFTOVER_T5_HDRCONTROL_0: u16 = asset_material::t5_code_remap::LEFTOVER_T5_CODE_BASE
-    + asset_material::t5_code_remap::T5_CODE_HDRCONTROL_0;
-
-pub const CODE_LEFTOVER_T5_HDRCONTROL_1: u16 = asset_material::t5_code_remap::LEFTOVER_T5_CODE_BASE
-    + asset_material::t5_code_remap::T5_CODE_HDRCONTROL_1;
-
-pub const CODE_LEFTOVER_T5_LIGHT_HERO_SCALE: u16 =
-    asset_material::t5_code_remap::LEFTOVER_T5_CODE_BASE
-        + asset_material::t5_code_remap::T5_CODE_LIGHT_HERO_SCALE;
-
-pub const CODE_LEFTOVER_T5_HERO_LIGHTING_R: u16 =
-    asset_material::t5_code_remap::LEFTOVER_T5_CODE_BASE
-        + asset_material::t5_code_remap::T5_CODE_HERO_LIGHTING_R;
-
-pub const CODE_LEFTOVER_T5_HERO_LIGHTING_G: u16 =
-    asset_material::t5_code_remap::LEFTOVER_T5_CODE_BASE
-        + asset_material::t5_code_remap::T5_CODE_HERO_LIGHTING_G;
-
-pub const CODE_LEFTOVER_T5_HERO_LIGHTING_B: u16 =
-    asset_material::t5_code_remap::LEFTOVER_T5_CODE_BASE
-        + asset_material::t5_code_remap::T5_CODE_HERO_LIGHTING_B;
-
-pub const CODE_LEFTOVER_T5_GENERIC_PARAM4: u16 =
-    asset_material::t5_code_remap::LEFTOVER_T5_CODE_BASE
-        + asset_material::t5_code_remap::T5_CODE_GENERIC_PARAM4;
-
-pub const CODE_LEFTOVER_T5_GENERIC_PARAM5: u16 =
-    asset_material::t5_code_remap::LEFTOVER_T5_CODE_BASE
-        + asset_material::t5_code_remap::T5_CODE_GENERIC_PARAM5;
-
-pub const CODE_LEFTOVER_T5_GENERIC_PARAM6: u16 =
-    asset_material::t5_code_remap::LEFTOVER_T5_CODE_BASE
-        + asset_material::t5_code_remap::T5_CODE_GENERIC_PARAM6;
-
-pub const CODE_LEFTOVER_T5_WIND_DIRECTION: u16 =
-    asset_material::t5_code_remap::LEFTOVER_T5_CODE_BASE
-        + asset_material::t5_code_remap::T5_CODE_WIND_DIRECTION;
-
-pub const CODE_LEFTOVER_T5_GRASS_WIND_FORCE0: u16 =
-    asset_material::t5_code_remap::LEFTOVER_T5_CODE_BASE
-        + asset_material::t5_code_remap::T5_CODE_GRASS_WIND_FORCE0;
-
-pub const CODE_LEFTOVER_T5_VARIANT_WIND_SPRING_0: u16 =
-    asset_material::t5_code_remap::LEFTOVER_T5_CODE_BASE
-        + asset_material::t5_code_remap::T5_CODE_VARIANT_WIND_SPRING_0;
-
-pub const CODE_LEFTOVER_T5_TREECANOPY_PARMS: u16 =
-    asset_material::t5_code_remap::LEFTOVER_T5_CODE_BASE
-        + asset_material::t5_code_remap::T5_CODE_TREECANOPY_PARMS;
-
-pub const CODE_LEFTOVER_T5_CUSTOMWIND_CENTER: u16 =
-    asset_material::t5_code_remap::LEFTOVER_T5_CODE_BASE
-        + asset_material::t5_code_remap::T5_CODE_CUSTOMWIND_CENTER;
-
-pub const CODE_LEFTOVER_T5_CUSTOMWIND_SPRING: u16 =
-    asset_material::t5_code_remap::LEFTOVER_T5_CODE_BASE
-        + asset_material::t5_code_remap::T5_CODE_CUSTOMWIND_SPRING;
-
-pub const T5_HDRCONTROL_EXPOSURE_DIVISOR: f32 = 8.0;
-
-pub const T5_HDRCONTROL_HOST_EXPOSURE: f32 = 1.0;
-
-pub const T5_LIGHT_ATTENUATION_EPSILON: f32 = 0.000015287891;
-
-pub const T5_LIGHT_ATTENUATION_DEFAULT: [f32; 4] = [1.0, 0.0, 0.0, 1.0];
-
-pub const T5_LIGHT_FALLOFF_NEAR: f32 = 0.0;
-
-pub const T5_LIGHT_AABB_DEFAULT: [f32; 4] = [0.75, 1.0, 0.75, 1.0];
-
-pub const T5_LIGHT_SPOT_ROLL_DEFAULT: f32 = 0.0;
-
-pub const T5_LIGHT_COOKIE_DEFAULT: [f32; 4] = [0.0, 0.0, 0.0, 0.0];
-
-pub const R_FILM_TWEAK_SATURATION_DEFAULT: f32 = 1.0;
-
 pub const CODE_TRANSPOSE_VIEW_PROJECTION: u16 = 0x56;
 
 pub const CODE_TRANSPOSE_WORLD0: u16 = 0x62;
@@ -273,7 +120,7 @@ pub const CODE_TEXTURE_FLOATZ_SAMPLER: u8 = 0x61;
 pub use super::fog::MapFrameFog;
 
 pub use crate::prepare::scene::world::{
-    LightAttenuationBind, MapDirPrimaryLight, T5LightFalloffPack,
+    LightAttenuationBind, MapDirPrimaryLight, MaterialLightOverrides,
 };
 
 #[derive(Clone, Copy, Debug, Resource)]
@@ -304,7 +151,9 @@ pub struct MapPrimaryLights {
 
     pub attenuation: Vec<LightAttenuationBind>,
 
-    pub t5_falloff: Vec<T5LightFalloffPack>,
+    pub overrides: Vec<MaterialLightOverrides>,
+
+    pub reflection_probe_sh: Vec<Option<[[f32; 4]; 3]>>,
 
     pub dynamic: Option<DynamicLightBind>,
 }
@@ -327,7 +176,6 @@ pub struct GfxViewport {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CommandContextRefusal {
     MissingViewProjection,
-    MissingFrameFog,
     PrimaryLightNotDir,
     ViewportHasZeroRenderTarget,
 }
@@ -341,25 +189,7 @@ pub fn world_transpose_rows_from_set3d(world: [f32; 16]) -> Vec<[u32; 4]> {
     code_transpose_matrix_rows(Mat4::from_cols_array(&world))
 }
 
-pub fn fog_color_linear_and_gamma(rgb: [f32; 3], alpha: f32) -> ([f32; 4], [f32; 4]) {
-    let pack = |c: f32| -> u8 { (c.clamp(0.0, 1.0) * 255.0 + 0.5) as u8 };
-
-    let bytes = [pack(rgb[2]), pack(rgb[1]), pack(rgb[0]), pack(alpha)];
-    const INV_255: f32 = 0.003_921_568_9;
-    let gamma = [
-        f32::from(bytes[2]) * INV_255,
-        f32::from(bytes[1]) * INV_255,
-        f32::from(bytes[0]) * INV_255,
-        f32::from(bytes[3]) * INV_255,
-    ];
-    let linear = [
-        lighting_iw4::color_srgb_to_linear(gamma[0]),
-        lighting_iw4::color_srgb_to_linear(gamma[1]),
-        lighting_iw4::color_srgb_to_linear(gamma[2]),
-        gamma[3],
-    ];
-    (linear, gamma)
-}
+pub use asset_material::fog_color_linear_and_gamma;
 
 pub fn produce_frame_fog(
     sources: &mut RuntimeCodeSources,
@@ -540,6 +370,22 @@ pub fn produce_material_color_cmdbuf_init(sources: &mut RuntimeCodeSources) {
     );
 }
 
+const NO_FRAME_FOG: asset_world::ExpFog = asset_world::ExpFog {
+    start_dist: 0.0,
+    halfway_dist: 0.0,
+    color_rgb: [0.0; 3],
+    max_opacity: 0.0,
+    transition_time: 0.0,
+    sun: Some(asset_world::SunFog {
+        color_rgb: [0.0; 3],
+        sun_dir: [1.0, 0.0, 0.0],
+        begin_angle_deg: 0.0,
+        end_angle_deg: 0.0,
+        scale: 0.0,
+    }),
+    volumetric: None,
+};
+
 pub fn produce_top_pair_command_context(
     sources: &mut RuntimeCodeSources,
     clip_from_world: Mat4,
@@ -564,11 +410,10 @@ pub fn produce_top_pair_command_context(
     produce_world_view_family(sources, view_from_world);
     produce_material_color_cmdbuf_init(sources);
     produce_depth_from_clip(sources, false);
-    produce_leftover_iw5_code_consts(sources, view_origin);
-    let Some(frame_fog) = fog else {
-        return Err(CommandContextRefusal::MissingFrameFog);
+    let (frame_fog, fog_enabled) = match fog {
+        Some(fog) => (fog, fog_enabled),
+        None => (&NO_FRAME_FOG, false),
     };
-    super::t5_fog::produce(sources, frame_fog, view_origin.z, fog_enabled);
     produce_frame_fog(sources, frame_fog, fog_enabled)
 }
 
@@ -591,197 +436,7 @@ pub fn produce_dir_primary_light(
     sources.set_constant_rows(CODE_LIGHT_POSITION, &[float4_bits(position)]);
     sources.set_constant_rows(CODE_LIGHT_DIFFUSE, &[float4_bits(diffuse)]);
     sources.set_constant_rows(CODE_LIGHT_SPECULAR, &[float4_bits(specular)]);
-    produce_leftover_t5_sun_constants(sources, light);
     Ok(())
-}
-
-fn produce_leftover_t5_sun_constants(sources: &mut RuntimeCodeSources, light: &MapDirPrimaryLight) {
-    sources.set_constant_rows(
-        CODE_LEFTOVER_T5_SUN_POSITION,
-        &[float4_bits(lighting_iw4::dir_light_position(
-            light.direction,
-        ))],
-    );
-    sources.set_constant_rows(
-        CODE_LEFTOVER_T5_SUN_DIFFUSE,
-        &[float4_bits(leftover_t5_sun_color(
-            light.t5_diffuse_color,
-            light.color,
-        ))],
-    );
-    sources.set_constant_rows(
-        CODE_LEFTOVER_T5_SUN_SPECULAR,
-        &[float4_bits(leftover_t5_sun_color(
-            light.t5_specular_color,
-            light.color,
-        ))],
-    );
-}
-
-fn leftover_t5_sun_color(t5: Option<[f32; 4]>, color: [f32; 3]) -> [f32; 4] {
-    match t5 {
-        Some(v) => [v[0], v[1], v[2], 1.0],
-        None => [color[0], color[1], color[2], 1.0],
-    }
-}
-
-pub fn produce_leftover_t5_hdrcontrol(sources: &mut RuntimeCodeSources, exposure: f32) {
-    sources.set_constant_rows(
-        CODE_LEFTOVER_T5_HDRCONTROL_0,
-        &[float4_bits([
-            exposure / T5_HDRCONTROL_EXPOSURE_DIVISOR,
-            0.0,
-            0.0,
-            0.0,
-        ])],
-    );
-    sources.set_constant_rows(
-        CODE_LEFTOVER_T5_HDRCONTROL_1,
-        &[float4_bits([1.0, 0.0, 0.0, 0.0])],
-    );
-}
-
-fn produce_t5_sky_constants(sources: &mut RuntimeCodeSources, authored: [f32; 4], forward_z: f32) {
-    for (index, row) in [
-        (18, [1.0, 0.0, 0.0, 0.0]),
-        (19, [0.0, 1.0, 0.0, 0.0]),
-        (20, [0.0, 0.0, 1.0, 0.0]),
-    ] {
-        sources.set_constant_rows(index, &[float4_bits(row)]);
-    }
-    sources.set_constant_rows(
-        asset_material::t5_code_remap::LEFTOVER_T5_CODE_BASE
-            + asset_material::t5_code_remap::T5_CODE_SKY_TRANSITION,
-        &[float4_bits([0.0; 4])],
-    );
-    let intensity = t5_sky_intensity(authored, forward_z);
-    sources.set_constant_rows(
-        asset_material::t5_code_remap::LEFTOVER_T5_CODE_BASE
-            + asset_material::t5_code_remap::T5_CODE_SKY_COLOR_MULTIPLIER,
-        &[float4_bits([intensity; 4])],
-    );
-}
-
-fn t5_sky_intensity([angle0, angle1, factor0, factor1]: [f32; 4], forward_z: f32) -> f32 {
-    let radians = f32::from_bits(0x3c8efa35);
-    let cos0 = (((90.0 - angle0) * radians) as f64).cos() as f32;
-    let cos1 = (((90.0 - angle1) * radians) as f64).cos() as f32;
-    let delta = cos1 - cos0;
-    let blend = if delta.abs() <= f32::from_bits(0x38d1b717) {
-        0.0
-    } else {
-        let t = ((forward_z - cos0) / delta).clamp(0.0, 1.0);
-        t * t
-    };
-    (1.0 - blend) * factor0 + blend * factor1
-}
-
-fn produce_leftover_t5_initial_water_waves(sources: &mut RuntimeCodeSources, time: f32) {
-    let wave_number = f32::from_bits(0x40c9_0fdb);
-    let gravity = f32::from_bits(0x43c1_1c29);
-    let phase = ((wave_number * gravity) as f64).sqrt() * f64::from(time);
-    let rows = [
-        [wave_number, 0.0, 1.0, 0.0],
-        [wave_number, 0.0, 1.0, 0.0],
-        [wave_number, 0.0, 1.0, 0.0],
-        [wave_number, 0.0, 1.0, 0.0],
-        [phase as f32; 4],
-        [0.0; 4],
-        [0.0; 4],
-    ];
-    for (row, values) in rows.into_iter().enumerate() {
-        sources.set_constant_rows(
-            asset_material::t5_code_remap::LEFTOVER_T5_CODE_BASE
-                + asset_material::t5_code_remap::T5_CODE_POSTFX_CONTROL0
-                + row as u16,
-            &[float4_bits(values)],
-        );
-    }
-}
-
-pub fn produce_leftover_t5_light_hero_scale(sources: &mut RuntimeCodeSources) {
-    sources.set_constant_rows(
-        CODE_LEFTOVER_T5_LIGHT_HERO_SCALE,
-        &[float4_bits([1.0, 1.0, 1.0, 1.0])],
-    );
-}
-
-pub fn produce_leftover_t5_hero_lighting_matrix(sources: &mut RuntimeCodeSources) {
-    sources.set_constant_rows(
-        CODE_LEFTOVER_T5_HERO_LIGHTING_R,
-        &[float4_bits([1.0, 0.0, 0.0, 0.0])],
-    );
-    sources.set_constant_rows(
-        CODE_LEFTOVER_T5_HERO_LIGHTING_G,
-        &[float4_bits([0.0, 1.0, 0.0, 0.0])],
-    );
-    sources.set_constant_rows(
-        CODE_LEFTOVER_T5_HERO_LIGHTING_B,
-        &[float4_bits([0.0, 0.0, 1.0, 0.0])],
-    );
-}
-
-pub fn produce_leftover_t5_generic_param4(sources: &mut RuntimeCodeSources) {
-    sources.set_constant_rows(
-        CODE_LEFTOVER_T5_GENERIC_PARAM4,
-        &[float4_bits([1.0, 1.0, 1.0, 1.0])],
-    );
-}
-
-pub fn produce_leftover_t5_generic_param5(sources: &mut RuntimeCodeSources) {
-    sources.set_constant_rows(
-        CODE_LEFTOVER_T5_GENERIC_PARAM5,
-        &[float4_bits([1.0, 1.0, 1.0, 1.0])],
-    );
-}
-
-pub fn produce_leftover_t5_generic_param6(sources: &mut RuntimeCodeSources) {
-    sources.set_constant_rows(
-        CODE_LEFTOVER_T5_GENERIC_PARAM6,
-        &[float4_bits([1.0, 1.0, 1.0, 1.0])],
-    );
-}
-
-pub fn produce_leftover_t5_wind_shader_constants(sources: &mut RuntimeCodeSources) {
-    sources.set_constant_rows(
-        CODE_LEFTOVER_T5_WIND_DIRECTION,
-        &[float4_bits([1.0, 0.0, 0.0, 0.0])],
-    );
-    for index in 0u16..16 {
-        sources.set_constant_rows(
-            CODE_LEFTOVER_T5_VARIANT_WIND_SPRING_0 + index,
-            &[float4_bits([0.0, 0.0, 0.0, 0.0])],
-        );
-    }
-}
-
-pub fn produce_leftover_t5_custom_wind_constants(sources: &mut RuntimeCodeSources) {
-    sources.set_constant_rows(
-        CODE_LEFTOVER_T5_CUSTOMWIND_CENTER,
-        &[float4_bits([0.0, 0.0, 0.0, 0.0])],
-    );
-    sources.set_constant_rows(
-        CODE_LEFTOVER_T5_CUSTOMWIND_SPRING,
-        &[float4_bits([0.0, 0.0, 0.0, 0.0])],
-    );
-}
-
-pub fn produce_leftover_t5_grass_wind_force0(sources: &mut RuntimeCodeSources) {
-    sources.set_constant_rows(
-        CODE_LEFTOVER_T5_GRASS_WIND_FORCE0,
-        &[float4_bits([0.0, 0.0, 0.0, 0.0])],
-    );
-}
-
-pub fn produce_leftover_t5_treecanopy_parms(
-    sources: &mut RuntimeCodeSources,
-    intensity: f32,
-    amount: f32,
-) {
-    sources.set_constant_rows(
-        CODE_LEFTOVER_T5_TREECANOPY_PARMS,
-        &[float4_bits([intensity, amount, 0.0, 0.0])],
-    );
 }
 
 pub fn produce_depth_from_clip(sources: &mut RuntimeCodeSources, viewmodel: bool) {
@@ -797,72 +452,9 @@ pub fn produce_game_time(sources: &mut RuntimeCodeSources, game_time: f32) {
     sources.set_constant_rows(CODE_GAMETIME, &[float4_bits([sin, cos, frac, wrapped])]);
 }
 
-pub fn color_saturation_matrix(saturation: f32) -> [[f32; 4]; 3] {
-    let r = (1.0 - saturation) * 0.25;
-    let g = (1.0 - saturation) * 0.5;
-    [
-        [r + saturation, r, r, 0.0],
-        [g, g + saturation, g, 0.0],
-        [r, r, r + saturation, 0.0],
-    ]
-}
-
-pub fn produce_leftover_iw5_code_consts(sources: &mut RuntimeCodeSources, view_origin: Vec3) {
-    sources.set_constant_rows(
-        CODE_LEFTOVER_IW5_EYEOFFSET,
-        &[float4_bits([
-            view_origin.x,
-            view_origin.y,
-            view_origin.z,
-            1.0,
-        ])],
-    );
-    let rows = color_saturation_matrix(R_FILM_TWEAK_SATURATION_DEFAULT);
-    sources.set_constant_rows(CODE_LEFTOVER_IW5_SAT_R, &[float4_bits(rows[0])]);
-    sources.set_constant_rows(CODE_LEFTOVER_IW5_SAT_G, &[float4_bits(rows[1])]);
-    sources.set_constant_rows(CODE_LEFTOVER_IW5_SAT_B, &[float4_bits(rows[2])]);
-}
-
-pub fn produce_leftover_t5_code_consts(
-    sources: &mut RuntimeCodeSources,
-    view_origin: Vec3,
-    clip_from_view: Mat4,
-    world_from_view: Mat4,
-    rt_width: i32,
-    rt_height: i32,
-) {
-    sources.set_constant_rows(
-        CODE_LEFTOVER_T5_EYEOFFSET,
-        &[float4_bits([
-            view_origin.x,
-            view_origin.y,
-            view_origin.z,
-            1.0,
-        ])],
-    );
-    if rt_width <= 0 || rt_height <= 0 {
-        return;
-    }
-    let inv_w = VIEWPORT_ONE / rt_width as f32;
-    let inv_h = VIEWPORT_ONE / rt_height as f32;
-    let p00 = clip_from_view.x_axis.x;
-    let p11 = clip_from_view.y_axis.y;
-    if p00.abs() < 1e-12 || p11.abs() < 1e-12 {
-        return;
-    }
-    let scale_x = (-2.0 * inv_w) / p00;
-    let scale_y = (2.0 * inv_h) / p11;
-
-    let vposx = world_from_view.x_axis * scale_x;
-    let vposy = world_from_view.y_axis * scale_y;
-    let vpos1 = world_from_view * Vec4::new(1.0 / p00, -1.0 / p11, 1.0, 0.0);
-    sources.set_constant_rows(CODE_LEFTOVER_T5_VPOSX, &[float4_bits(vposx.to_array())]);
-    sources.set_constant_rows(CODE_LEFTOVER_T5_VPOSY, &[float4_bits(vposy.to_array())]);
-    sources.set_constant_rows(CODE_LEFTOVER_T5_VPOS1, &[float4_bits(vpos1.to_array())]);
-}
-
 pub(crate) fn update_command_context_code_sources(
     mut runtime: ResMut<MaterialFrameInputs>,
+    generation: Res<MaterialGeneration>,
     fog: Option<Res<MapFrameFog>>,
     fog_dvars: Res<super::fog::FogDvars>,
     mut dfog: ResMut<super::DrawMethodDfog>,
@@ -935,7 +527,6 @@ pub(crate) fn update_command_context_code_sources(
         fog_dvars.enabled,
     ) {
         Ok(()) => {}
-        Err(CommandContextRefusal::MissingFrameFog) => {}
         Err(CommandContextRefusal::MissingViewProjection) => {}
         Err(CommandContextRefusal::PrimaryLightNotDir) => {}
         Err(CommandContextRefusal::ViewportHasZeroRenderTarget) => {}
@@ -971,58 +562,44 @@ pub(crate) fn update_command_context_code_sources(
     if let Some(light) = dir_light.as_deref() {
         let _ = produce_dir_primary_light(&mut mat_frame.code_sources, light);
     }
-    let hdr_exposure = t5_exposure
-        .as_deref()
-        .map(|e| e.exposure)
-        .unwrap_or(T5_HDRCONTROL_HOST_EXPOSURE);
-    produce_leftover_t5_hdrcontrol(&mut mat_frame.code_sources, hdr_exposure);
-    if let Some(authored) = scene.as_ref().and_then(|s| s.t5_sky_dynamic_intensity) {
-        let forward_z = view.inverse().transform_vector3(Vec3::NEG_Z).z;
-        produce_t5_sky_constants(&mut mat_frame.code_sources, authored, forward_z);
-    }
-    produce_leftover_t5_light_hero_scale(&mut mat_frame.code_sources);
-    produce_leftover_t5_hero_lighting_matrix(&mut mat_frame.code_sources);
-
-    for index in [
-        asset_material::t5_code_remap::T5_CODE_GENERIC_PARAM0,
-        asset_material::t5_code_remap::T5_CODE_GENERIC_PARAM1,
-    ] {
-        mat_frame.code_sources.set_constant_rows(
-            asset_material::t5_code_remap::LEFTOVER_T5_CODE_BASE + index,
-            &[[0; 4]],
-        );
-    }
-
-    mat_frame.code_sources.set_constant_rows(
-        asset_material::t5_code_remap::LEFTOVER_T5_CODE_BASE
-            + asset_material::t5_code_remap::T5_CODE_EXTRA_CAM_PARAM,
-        &[[0; 4]],
-    );
-    produce_leftover_t5_initial_water_waves(&mut mat_frame.code_sources, float_time);
-    produce_leftover_t5_generic_param4(&mut mat_frame.code_sources);
-    produce_leftover_t5_generic_param5(&mut mat_frame.code_sources);
-    produce_leftover_t5_generic_param6(&mut mat_frame.code_sources);
-    produce_leftover_t5_wind_shader_constants(&mut mat_frame.code_sources);
-    produce_leftover_t5_custom_wind_constants(&mut mat_frame.code_sources);
-    produce_leftover_t5_grass_wind_force0(&mut mat_frame.code_sources);
-    if let Some(scatter) = t5_tree_scatter.as_deref() {
-        produce_leftover_t5_treecanopy_parms(
-            &mut mat_frame.code_sources,
-            scatter.intensity,
-            scatter.amount,
-        );
+    if let Some(scene) = scene.as_deref() {
+        let catalog = &generation.catalog;
+        let generation = catalog.generation_id();
+        if mat_frame
+            .material_bindings
+            .as_ref()
+            .is_none_or(|bindings| bindings.generation_id() != generation)
+        {
+            mat_frame.material_bindings = Some(asset_material::compile_material_bindings(catalog));
+        }
+        let fog = sampled_fog.as_ref().unwrap_or(&NO_FRAME_FOG);
+        let inputs = asset_material::MaterialFrameBindingInputs {
+            eye,
+            clip_from_view,
+            world_from_view: view.inverse(),
+            target_size: [prepared.rt_w, prepared.rt_h],
+            time: float_time,
+            exposure: t5_exposure.as_deref().map(|e| e.exposure),
+            world: scene.material_world,
+            tree_scatter: t5_tree_scatter.as_deref().map(|s| [s.intensity, s.amount]),
+            fog: crate::prepare::scene::world_bindings::fog(fog),
+            fog_enabled: sampled_fog.is_some() && fog_dvars.enabled,
+            sun: dir_light
+                .as_deref()
+                .filter(|l| l.light_type == lighting_iw4::GFX_LIGHT_TYPE_DIR)
+                .map(crate::prepare::scene::world_bindings::sun),
+        };
+        mat_frame
+            .material_bindings
+            .as_ref()
+            .expect("material bindings compiled")
+            .bind_frame(catalog, &mut mat_frame.code_sources, &inputs)
+            .expect("material binding generation correlated");
+    } else {
+        mat_frame.material_bindings = None;
     }
 
     produce_game_time(&mut mat_frame.code_sources, begun.float_time);
-    produce_leftover_iw5_code_consts(&mut mat_frame.code_sources, eye);
-    produce_leftover_t5_code_consts(
-        &mut mat_frame.code_sources,
-        eye,
-        clip_from_view,
-        prepared.view_from_world.inverse(),
-        prepared.rt_w,
-        prepared.rt_h,
-    );
     if let Some(lighting) = lighting.as_deref()
         && let Some(inv_h) =
             lighting_iw4::model_lighting_inv_image_height(lighting.dims.image_height)
@@ -1038,7 +615,9 @@ pub(crate) fn update_command_context_code_sources(
     if let Some(light) = dir_light.as_deref() {
         let _ = produce_sun_shadow_code_texture(&mut mat_frame.code_sources);
 
-        if let Some(bounds) = scene.as_deref().and_then(|scene| scene.world_bounds) {
+        if let Some(scene) = scene.as_deref()
+            && let Some(bounds) = scene.world_bounds
+        {
             let world_mid = [bounds[0], bounds[1], bounds[2]];
             let world_half = [bounds[3], bounds[4], bounds[5]];
             let shadow_forward = super::sun_shadow_forward_from_light_dir(light.direction);
@@ -1060,6 +639,7 @@ pub(crate) fn update_command_context_code_sources(
                 },
                 world_mid,
                 world_half,
+                scene.sun_sample_size_near,
             );
             produce_sun_shadow_receiver_constants(&mut mat_frame.code_sources, frame);
             mat_frame.sun_shadow = Some(frame);

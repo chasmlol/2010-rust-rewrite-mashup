@@ -1,11 +1,11 @@
 use fx_iw4::{
     FX_ELEM_AT_REST_NONE, FX_ELEM_RUN_RELATIVE_TO_EFFECT, FX_ELEM_RUN_RELATIVE_TO_OFFSET,
     FX_ELEM_RUN_RELATIVE_TO_SPAWN, FX_ELEM_RUNNER_USES_RAND_ROT, FX_ELEM_TYPE_SPARK_CLOUD,
-    FX_ELEM_TYPE_SPARK_FOUNTAIN, FX_ELEM_TYPE_TRAIL, FX_RAND_CH_DELAY, FX_RAND_CH_LIFE,
-    FX_RAND_CH_ONESHOT_COUNT, FX_SPARK_CLOUD_HANDLE_NONE, FX_WARN_ELEM_LIMIT, FxElemType,
-    elem_random_seed, elem_run_mode, looping_catchup_begin, looping_spawn_schedule,
-    random_table_u16, randomly_rotate_axis, runner_rand_rot_degrees, sample_life_span_msec,
-    sample_oneshot_spawn_count, spawn_effect_status, world_delta_to_local,
+    FX_ELEM_TYPE_SPARK_FOUNTAIN, FX_ELEM_TYPE_TRAIL, FX_SPARK_CLOUD_HANDLE_NONE,
+    FX_WARN_ELEM_LIMIT, FxElemType, FxRandomChannel, elem_random_seed, elem_run_mode,
+    looping_catchup_begin, looping_spawn_schedule, randomly_rotate_axis, runner_rand_rot_degrees,
+    sample_life_span_msec, sample_oneshot_spawn_count, sample_u16, spawn_effect_status,
+    world_delta_to_local,
 };
 
 use crate::def::{FxEffectDefInfo, FxElemDefInfo};
@@ -287,7 +287,7 @@ fn spawn_oneshot_elems(
         .map(|e| e.random_seed)
         .unwrap_or(0);
 
-    let rand16 = random_table_u16(u32::from(effect_seed), FX_RAND_CH_ONESHOT_COUNT);
+    let rand16 = sample_u16(effect_seed, FxRandomChannel::OneShotCount);
     let count = sample_oneshot_spawn_count(elem_def.spawn_a, elem_def.spawn_b, rand16);
     if count <= 0 {
         return;
@@ -308,7 +308,7 @@ fn spawn_origin_world(
     elem_def: FxElemDefInfo,
     effect_origin: [f32; 3],
     effect_axis: [[f32; 3]; 3],
-    life_idx: u32,
+    life_idx: u64,
 ) -> [f32; 3] {
     fx_iw4::spawn_origin_world(
         effect_origin,
@@ -327,7 +327,7 @@ fn elem_spawn_origin(
     elem_def: FxElemDefInfo,
     effect_origin: [f32; 3],
     effect_axis: [[f32; 3]; 3],
-    life_idx: u32,
+    life_idx: u64,
 ) -> [f32; 3] {
     match elem_run_mode(elem_def.flags) {
         FX_ELEM_RUN_RELATIVE_TO_OFFSET => [0.0; 3],
@@ -370,7 +370,7 @@ fn spawn_elem(
     let after_delay_base = spawn_msec.wrapping_add(elem_def.delay_base);
     let delay = if elem_def.delay_amp != 0 {
         let delay_idx = elem_random_seed(random_seed, sequence, after_delay_base);
-        let delay_rand = random_table_u16(delay_idx, FX_RAND_CH_DELAY);
+        let delay_rand = sample_u16(delay_idx, FxRandomChannel::Delay);
         sample_life_span_msec(elem_def.delay_base, elem_def.delay_amp, delay_rand)
     } else {
         elem_def.delay_base
@@ -438,7 +438,7 @@ fn spawn_elem(
         return;
     };
 
-    let life_rand = random_table_u16(life_idx, FX_RAND_CH_LIFE);
+    let life_rand = sample_u16(life_idx, FxRandomChannel::Life);
     let life = sample_life_span_msec(elem_def.life_base, elem_def.life_amp, life_rand);
 
     let life_end = msec_begin.wrapping_add(life);

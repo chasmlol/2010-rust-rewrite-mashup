@@ -1,0 +1,33 @@
+[
+  {
+    "name": "options_game_folders",
+    "base": "pc_options_video",
+    "fields": {"handlers": {"open": [{"Script": "focusFirst;"}], "close": [], "esc": [{"Script": "close self;"}]}},
+    "item_overrides": [
+      {"name": "video_resolution", "fields": {"vis_exp": "0"}},
+      {"name": "video_resolution_label", "fields": {"vis_exp": "0"}},
+      {"name": "video_brightness", "fields": {"vis_exp": "0"}},
+      {"name": "video_brightness_label", "fields": {"vis_exp": "0"}},
+      {"name": "video_display_mode", "fields": {"vis_exp": "0"}},
+      {"name": "video_display_mode_label", "fields": {"vis_exp": "0"}},
+      {"name": "video_advanced", "fields": {"vis_exp": "0"}},
+      {"name": "video_fov", "fields": {"vis_exp": "0"}},
+      {"name": "video_fov_label", "fields": {"vis_exp": "0"}},
+      {"name": "video_title", "fields": {"text_key": "Game Folders"}}
+    ],
+    "item_copies": [
+      {"name": "video_display_mode", "fields": {"item_type": 1, "static_flags": 0, "vis_exp": "1", "disabled_exp": "0", "dvar": "", "choices": [], "text_key": "Browse...", "text_exp": "", "text_align_mode": 10, "text_align_x": -8, "text_align_y": 0, "fore_color": [1, 1, 1, 1], "rect": {"x": 232, "y": 28, "w": 344, "h": 20}, "handlers": {"action": [{"Script": "play mouse_click; setdvar ui_pick_game_folder black_ops;"}], "focus": [{"Script": "play mouse_over; setItemColor self backcolor 0 0 0 1;"}], "leave_focus": [{"Script": "setItemColor self backcolor 0 0 0 0;"}]}, "text_scale": 0.375, "style": 1, "background": "menu_button_selection_bar", "back_color": [0, 0, 0, 0], "name": "game_folder_black_ops_browse"}},
+      {"name": "video_display_mode_label", "fields": {"vis_exp": "1", "text_key": "Black Ops", "rect": {"x": 232, "y": 28, "w": 344, "h": 20}, "text_scale": 0.32, "name": "game_folder_black_ops_label"}},
+      {"name": "video_display_mode_label", "fields": {"vis_exp": "1", "text_key": "", "rect": {"x": 232, "y": 46, "w": 344, "h": 20}, "text_scale": 0.25, "name": "game_folder_black_ops_path", "text_exp": "op 38 s:75695f67616d655f666f6c6465725f626c61636b5f6f7073 op 1", "fore_color": [0.75, 0.75, 0.75, 1]}},
+      {"name": "video_display_mode", "fields": {"item_type": 1, "static_flags": 0, "vis_exp": "1", "disabled_exp": "0", "dvar": "", "choices": [], "text_key": "Browse...", "text_exp": "", "text_align_mode": 10, "text_align_x": -8, "text_align_y": 0, "fore_color": [1, 1, 1, 1], "rect": {"x": 232, "y": 72, "w": 344, "h": 20}, "handlers": {"action": [{"Script": "play mouse_click; setdvar ui_pick_game_folder black_ops_2;"}], "focus": [{"Script": "play mouse_over; setItemColor self backcolor 0 0 0 1;"}], "leave_focus": [{"Script": "setItemColor self backcolor 0 0 0 0;"}]}, "text_scale": 0.375, "style": 1, "background": "menu_button_selection_bar", "back_color": [0, 0, 0, 0], "name": "game_folder_black_ops_2_browse"}},
+      {"name": "video_display_mode_label", "fields": {"vis_exp": "1", "text_key": "Black Ops II", "rect": {"x": 232, "y": 72, "w": 344, "h": 20}, "text_scale": 0.32, "name": "game_folder_black_ops_2_label"}},
+      {"name": "video_display_mode_label", "fields": {"vis_exp": "1", "text_key": "", "rect": {"x": 232, "y": 90, "w": 344, "h": 20}, "text_scale": 0.25, "name": "game_folder_black_ops_2_path", "text_exp": "op 38 s:75695f67616d655f666f6c6465725f626c61636b5f6f70735f32 op 1", "fore_color": [0.75, 0.75, 0.75, 1]}},
+      {"name": "video_display_mode", "fields": {"item_type": 1, "static_flags": 0, "vis_exp": "1", "disabled_exp": "0", "dvar": "", "choices": [], "text_key": "Browse...", "text_exp": "", "text_align_mode": 10, "text_align_x": -8, "text_align_y": 0, "fore_color": [1, 1, 1, 1], "rect": {"x": 232, "y": 116, "w": 344, "h": 20}, "handlers": {"action": [{"Script": "play mouse_click; setdvar ui_pick_game_folder modern_warfare_3;"}], "focus": [{"Script": "play mouse_over; setItemColor self backcolor 0 0 0 1;"}], "leave_focus": [{"Script": "setItemColor self backcolor 0 0 0 0;"}]}, "text_scale": 0.375, "style": 1, "background": "menu_button_selection_bar", "back_color": [0, 0, 0, 0], "name": "game_folder_modern_warfare_3_browse"}},
+      {"name": "video_display_mode_label", "fields": {"vis_exp": "1", "text_key": "Modern Warfare 3", "rect": {"x": 232, "y": 116, "w": 344, "h": 20}, "text_scale": 0.32, "name": "game_folder_modern_warfare_3_label"}},
+      {"name": "video_display_mode_label", "fields": {"vis_exp": "1", "text_key": "", "rect": {"x": 232, "y": 134, "w": 344, "h": 20}, "text_scale": 0.25, "name": "game_folder_modern_warfare_3_path", "text_exp": "op 38 s:75695f67616d655f666f6c6465725f6d6f6465726e5f776172666172655f33 op 1", "fore_color": [0.75, 0.75, 0.75, 1]}},
+      {"name": "video_display_mode", "fields": {"item_type": 1, "static_flags": 0, "vis_exp": "1", "disabled_exp": "0", "dvar": "", "choices": [], "text_key": "Reset", "text_exp": "", "text_align_mode": 10, "text_align_x": -8, "text_align_y": 0, "fore_color": [1, 1, 1, 1], "rect": {"x": 232, "y": 160, "w": 344, "h": 20}, "handlers": {"action": [{"Script": "play mouse_click; setdvar ui_reset_game_folders 1;"}], "focus": [{"Script": "play mouse_over; setItemColor self backcolor 0 0 0 1;"}], "leave_focus": [{"Script": "setItemColor self backcolor 0 0 0 0;"}]}, "text_scale": 0.375, "style": 1, "background": "menu_button_selection_bar", "back_color": [0, 0, 0, 0], "name": "game_folders_reset"}},
+      {"name": "video_display_mode_label", "fields": {"vis_exp": "1", "text_key": "Look Next to MW2", "rect": {"x": 232, "y": 160, "w": 344, "h": 20}, "text_scale": 0.32, "name": "game_folders_reset_label"}},
+      {"name": "video_display_mode_label", "fields": {"vis_exp": "1", "text_key": "", "rect": {"x": 232, "y": 188, "w": 344, "h": 20}, "text_scale": 0.25, "name": "game_folders_hint", "text_exp": "op 38 s:75695f67616d655f666f6c646572735f68696e74 op 1", "fore_color": [0.75, 0.75, 0.75, 1]}}
+    ]
+  }
+]

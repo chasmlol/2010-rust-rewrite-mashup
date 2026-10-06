@@ -15,6 +15,7 @@ pub mod players;
 pub mod presence;
 pub mod registry;
 pub mod restart;
+mod sentry_placement;
 pub mod spectators;
 pub mod tables;
 pub mod triggers;
@@ -25,3 +26,7 @@ pub mod weapons;
 pub mod audio;
 
 pub(crate) mod rumble;
+
+pub(crate) mod trace;
+
+pub(crate) mod match_data;

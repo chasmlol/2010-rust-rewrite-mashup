@@ -1,6 +1,6 @@
 use std::sync::{Arc, RwLock};
 
-use asset_game::{FamilySlot, LoadoutRules, WeaponSelection};
+use asset_game::{LoadoutRules, WeaponSelection};
 use assets::PreparedWeapons;
 use bevy::prelude::*;
 use frame::MatchTornDown;
@@ -152,6 +152,7 @@ pub(crate) fn route_weapon_commands(
     mut inbox: ResMut<ClientActionInbox>,
     mut seq: ResMut<net::ActionRequestIds>,
     completions: Res<WeaponArgCompletions>,
+    authority: Option<Res<net::AuthorityWorld>>,
 ) {
     let capacity = settings.log_capacity;
     let echo = |msg: String, console: &mut ConsoleState, line: &mut ConsoleLine| {
@@ -161,6 +162,16 @@ pub(crate) fn route_weapon_commands(
     };
 
     for cmd in events.read() {
+        if matches!(cmd.name.as_str(), "give" | "attach")
+            && authority.as_ref().is_some_and(|a| !a.0.cheats_enabled())
+        {
+            echo(
+                format!("{}: cheats are off", cmd.name),
+                &mut console,
+                &mut line,
+            );
+            continue;
+        }
         match cmd.name.as_str() {
             "give" => {
                 let target = match parse_give_target(&cmd.args) {
@@ -207,12 +218,22 @@ pub(crate) fn route_weapon_commands(
                     );
                     continue;
                 }
-                match resolve_give_id(&weapons.0, arg, &cmd.args[1..]) {
-                    Ok(weapon) => {
+                let (camo, attachments) = split_camo(&cmd.args[1..]);
+                match resolve_give_id(weapons.registry(), arg, &attachments).and_then(|weapon| {
+                    let model =
+                        camo.map_or(Ok(0), |camo| camo_slot(weapons.registry(), weapon, camo))?;
+                    Ok((weapon, model))
+                }) {
+                    Ok((weapon, model)) => {
                         let request_id = seq.allocate();
-                        if let Err(error) =
-                            inbox.push(local.0, ClientAction::GiveWeapon { request_id, weapon })
-                        {
+                        if let Err(error) = inbox.push(
+                            local.0,
+                            ClientAction::GiveWeapon {
+                                request_id,
+                                weapon,
+                                model,
+                            },
+                        ) {
                             echo(format!("give: {error}"), &mut console, &mut line);
                             continue;
                         }
@@ -220,7 +241,7 @@ pub(crate) fn route_weapon_commands(
                         echo(
                             format!(
                                 "give: queued {} id={weapon} request_id={request_id}",
-                                weapons.0.configuration_label(weapon)
+                                weapons.registry().configuration_label(weapon)
                             ),
                             &mut console,
                             &mut line,
@@ -252,13 +273,13 @@ pub(crate) fn route_weapon_commands(
                     continue;
                 }
                 let Some(name) = cmd.args.first() else {
-                    match attachment_hints(&weapons.0, current) {
+                    match attachment_hints(weapons.registry(), current) {
                         Ok(hints) => echo(format!("attach: {hints}"), &mut console, &mut line),
                         Err(reason) => echo(format!("attach: {reason}"), &mut console, &mut line),
                     }
                     continue;
                 };
-                let next = toggle_named_attachment(&weapons.0, current, name);
+                let next = toggle_named_attachment(weapons.registry(), current, name);
                 let next = match next {
                     Ok(id) => id,
                     Err(msg) => {
@@ -271,7 +292,7 @@ pub(crate) fn route_weapon_commands(
                         format!(
                             "attach: `{}` is already the selected configuration — refused \
                              (an unchanged id is not a successful attach)",
-                            weapons.0.configuration_label(current)
+                            weapons.registry().configuration_label(current)
                         ),
                         &mut console,
                         &mut line,
@@ -293,7 +314,7 @@ pub(crate) fn route_weapon_commands(
                 echo(
                     format!(
                         "attach: queued {} id={next} request_id={request_id}",
-                        weapons.0.configuration_label(next)
+                        weapons.registry().configuration_label(next)
                     ),
                     &mut console,
                     &mut line,
@@ -304,7 +325,45 @@ pub(crate) fn route_weapon_commands(
     }
 }
 
-const GIVE_USAGE: &str = "give ammo | give killstreak/<name> | give weapon/<game:weapon> [attachment...] — resupply ammo, acquire a reward, or equip a weapon";
+const GIVE_USAGE: &str = "give ammo | give killstreak/<name> | give weapon/<game:weapon> [attachment...] [camo=<name|slot>] — resupply ammo, acquire a reward, or equip a weapon";
+
+pub(crate) fn split_camo(args: &[String]) -> (Option<&str>, Vec<String>) {
+    let mut camo = None;
+    let mut attachments = Vec::new();
+    for arg in args {
+        match arg.strip_prefix("camo=") {
+            Some(value) => camo = Some(value),
+            None => attachments.push(arg.clone()),
+        }
+    }
+    (camo, attachments)
+}
+
+pub(crate) fn camo_slot(
+    registry: &asset_game::WeaponRegistry,
+    weapon: u32,
+    camo: &str,
+) -> Result<u8, String> {
+    if camo.eq_ignore_ascii_case("none") {
+        return Ok(0);
+    }
+    let slot = camo
+        .parse::<u8>()
+        .ok()
+        .or_else(|| registry.camouflage_slot(weapon, camo));
+    let choices = registry.camouflage_choices(weapon);
+    slot.filter(|slot| *slot == 0 || choices.iter().any(|(own, _)| own == slot))
+        .ok_or_else(|| {
+            format!(
+                "no camouflage `{camo}` (has {})",
+                choices
+                    .iter()
+                    .map(|(_, name)| *name)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        })
+}
 
 #[derive(Debug, PartialEq)]
 enum GiveTarget<'a> {
@@ -506,7 +565,7 @@ pub(crate) fn echo_give_results(
     *echoed = Some((request_id, accepted));
     let key = weapons
         .as_ref()
-        .map(|w| w.0.configuration_label(weapon))
+        .map(|w| w.registry().configuration_label(weapon))
         .filter(|label| !label.is_empty())
         .unwrap_or_else(|| format!("#{weapon}"));
     let capacity = settings.log_capacity;
@@ -545,7 +604,7 @@ pub(crate) fn echo_configuration_change_results(
     *echoed = Some(request_id);
     let key = weapons
         .as_ref()
-        .map(|w| w.0.configuration_label(to))
+        .map(|w| w.registry().configuration_label(to))
         .filter(|label| !label.is_empty())
         .unwrap_or_else(|| format!("#{to}"));
     let msg = if accepted {
@@ -576,7 +635,12 @@ pub(crate) fn resolve_give_id(
     let resolve = |selection: WeaponSelection| {
         registry
             .resolve_configuration(&selection, LoadoutRules::default())
-            .map(|resolved| resolved.id)
+            .map(|resolved| {
+                registry
+                    .bind(resolved.handle())
+                    .expect("resolved in this registry")
+                    .wire_id()
+            })
             .map_err(|refusal| format!("`{raw}`: {refusal} ({})", refusal.code()))
     };
     let families = registry.weapon_families();
@@ -590,20 +654,11 @@ pub(crate) fn resolve_give_id(
     if let Some(family) = family {
         return resolve(WeaponSelection::with(family.key.clone(), attachments));
     }
-    let id = match registry.resolve_index(raw) {
+    let canonical = asset_game::FamilyKey::parse(raw).map(|key| key.asset_key());
+    let id = match registry.resolve_index(canonical.as_deref().unwrap_or(raw)) {
         Ok(Some(id)) => id,
         Ok(None) => return Err("empty weapon name".into()),
-        Err(_) => {
-            let with_mp = if raw.ends_with("_mp") {
-                raw.to_owned()
-            } else {
-                format!("{raw}_mp")
-            };
-            match registry.resolve_index(&with_mp) {
-                Ok(Some(id)) => id,
-                Ok(None) | Err(_) => return Err(format!("unknown weapon `{raw}`")),
-            }
-        }
+        Err(_) => return Err(format!("unknown weapon `{raw}`")),
     };
     if attachments.is_empty() {
         return registry
@@ -681,33 +736,25 @@ fn toggle_named_attachment(
     option
         .toggle
         .clone()
+        .map(|resolved| {
+            registry
+                .bind(resolved.handle())
+                .expect("toggle in this registry")
+                .wire_id()
+        })
         .map_err(|refusal| format!("{refusal} ({})", refusal.code()))
 }
 
 pub fn weapon_completions(weapons: &PreparedWeapons) -> Vec<String> {
-    let mut names: Vec<String> = weapons
-        .0
-        .weapon_families()
-        .offered()
-        .filter(|family| matches!(family.slot, FamilySlot::Primary | FamilySlot::Secondary))
-        .filter(|family| {
-            family
-                .base
-                .is_some_and(|id| weapons.0.gun_xmodel_of(id).is_some())
-        })
-        .map(|family| family.key.short())
-        .collect();
-    names.sort();
-    names.dedup();
-    names
+    weapons.registry().weapon_completion_names().to_vec()
 }
 
 pub fn attach_completions(weapons: &PreparedWeapons, current_weapon: u32) -> Vec<String> {
-    let Ok(selection) = family_of(&weapons.0, current_weapon) else {
+    let Ok(selection) = family_of(weapons.registry(), current_weapon) else {
         return Vec::new();
     };
     weapons
-        .0
+        .registry()
         .list_attachment_choices(&selection, LoadoutRules::default())
         .map(|options| {
             options

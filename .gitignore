@@ -8,6 +8,8 @@
 
 # Runtime output next to the binary / cwd.
 iw4l-artifacts
+iw4l.community.json
+iw4l.community.*.tmp
 
 # Agent working memory. None of it is the product: the artifacts, the externals,
 # the agent clones and the RE tooling and its bases all stay on this machine.

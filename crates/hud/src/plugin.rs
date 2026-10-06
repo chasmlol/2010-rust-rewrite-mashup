@@ -38,7 +38,8 @@ impl Plugin for HudPlugin {
     fn build(&self, app: &mut App) {
         crate::gpu_list::register(app);
         let _ = crate::scorebar::milliseconds();
-        app.init_resource::<HudImages>()
+        app.init_resource::<frame::ScreenEffectsView>()
+            .init_resource::<HudImages>()
             .init_resource::<HudPresentationGaps>()
             .init_resource::<ReticleAdsLatch>()
             .init_resource::<IrisLetterboxFill>()
@@ -99,7 +100,7 @@ impl Plugin for HudPlugin {
                             hud_stage_close::<1>,
                             update_blood_overlay,
                             hud_stage_close::<2>,
-                            update_flash_whiteout,
+                            update_flash_whiteout.after(frame::ScreenEffectsPublished),
                             hud_stage_close::<3>,
                             update_compass,
                             hud_stage_close::<4>,
@@ -114,6 +115,7 @@ impl Plugin for HudPlugin {
                             update_killfeed,
                             update_scoreboard,
                             update_killcam_skip,
+                            crate::emp_static::update,
                             update_mantle_hint,
                             crate::breath_hint::update,
                             crate::use_hint::update,
@@ -141,6 +143,7 @@ impl Plugin for HudPlugin {
                     flush_killcam_skip_tess,
                     flush_playercard_tess,
                     flush_scoreboard_tess,
+                    flush_emp_static_tess,
                     flush_mantle_hint_tess,
                     flush_breath_hint_tess,
                     flush_use_hint_tess,
@@ -336,6 +339,7 @@ fn ensure_hud_root(mut commands: Commands, existing: Query<Entity, With<HudRoot>
             spawn_killcam_skip(root);
             spawn_playercard(root);
             spawn_scoreboard(root);
+            crate::font_overlay::spawn_overlay(root, crate::emp_static::EmpStaticRaster);
             spawn_mantle_hint(root);
             crate::font_overlay::spawn_overlay(root, crate::breath_hint::BreathHintRaster);
             crate::font_overlay::spawn_overlay(root, crate::use_hint::UseHintRaster);
@@ -858,6 +862,36 @@ pub(crate) fn flush_overhead_names_tess(
     }
     let job = std::mem::take(&mut pass.overhead_names);
     if let Ok((_, mut host, mut latch)) = hint.single_mut() {
+        gpu_list::apply_tess_job(
+            job,
+            &mut host,
+            &mut latch,
+            &mut hud_images,
+            &mut images,
+            &mut frame,
+            surface.width(),
+            surface.height(),
+        );
+    }
+}
+
+fn flush_emp_static_tess(
+    surface: Res<crate::surface::Hud2dSurface>,
+    mut pass: ResMut<HudTessPass>,
+    mut hud_images: ResMut<HudImages>,
+    mut images: ResMut<Assets<Image>>,
+    mut frame: ResMut<crate::gpu_list::HudTessGpuFrame>,
+    mut raster: Query<
+        (Entity, &mut Node, &mut crate::gpu_list::GpuListLatch),
+        With<crate::emp_static::EmpStaticRaster>,
+    >,
+) {
+    let _body = gpu_list::TessBody::open();
+    if !surface.is_ready() {
+        return;
+    }
+    let job = std::mem::take(&mut pass.emp_static);
+    if let Ok((_, mut host, mut latch)) = raster.single_mut() {
         gpu_list::apply_tess_job(
             job,
             &mut host,

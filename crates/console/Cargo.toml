@@ -6,6 +6,7 @@ license.workspace = true
 description = "Our console: input, parsing, execution, cvar storage, coverage report."
 
 [dependencies]
+getrandom = "0.3"
 master_protocol.workspace = true
 diag.workspace = true
 bevy.workspace = true
@@ -29,6 +30,7 @@ bots = { path = "../bots" }
 hud = { path = "../hud" }
 entity_iw4.workspace = true
 perf.workspace = true
+rfd = "0.17"
 
 [lints]
 workspace = true

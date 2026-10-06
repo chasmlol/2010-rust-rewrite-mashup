@@ -156,13 +156,13 @@ fn load_ads_overlay(
         body = Some(loaded);
         for (off, dest) in offs.into_iter().zip(&mut names) {
             asset_ptr_at(s, links, AssetType::Material, loaded.at(off))?;
-            *dest = overlay_shader_name_at(s, loaded, off);
+            *dest = super::material_name_at(s, links, loaded.at(off));
         }
     } else if let Ok(ZonePtr::Offset(q)) = s.ptr_at(slot, 0) {
         let loaded = s.resolve_alias(q);
         body = Some(loaded);
         for (off, dest) in offs.into_iter().zip(&mut names) {
-            *dest = overlay_shader_name_at(s, loaded, off);
+            *dest = super::material_name_at(s, links, loaded.at(off));
         }
     }
     let width = body
@@ -213,20 +213,6 @@ fn model_name_at(
             }
         }
         _ => links.xmodel_name_ptr(slot),
-    }
-}
-
-fn overlay_shader_name_at(s: &ZoneStream<'_>, overlay_body: Ptr, off: usize) -> Option<Ptr> {
-    match s.ptr_at(overlay_body, off) {
-        Ok(ZonePtr::Null) => None,
-        Ok(ZonePtr::Offset(q)) => {
-            let mat = s.resolve_alias(q);
-            match s.ptr_at(mat, 0) {
-                Ok(ZonePtr::Offset(n)) => Some(s.resolve_alias(n)),
-                _ => s.latest_material().and_then(|g| g.name),
-            }
-        }
-        _ => s.latest_material().and_then(|g| g.name),
     }
 }
 

@@ -5,9 +5,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use bevy::prelude::*;
 use frame::LaunchIdentity;
-use net::{
-    AuthorityClock, AuthorityWorld, PresentedSnapshot,
-};
+use net::{AuthorityClock, AuthorityWorld, PresentedSnapshot};
 
 use crate::ConsoleCommand;
 
@@ -23,11 +21,12 @@ pub(crate) fn route_state_dump_commands(
         Option<Res<AuthorityClock>>,
         Option<Res<PresentedSnapshot>>,
     ),
-    (audio_ready, decisions, gaps, clips): (
+    (audio_ready, decisions, gaps, clips, runtime): (
         Option<Res<audio::AudioReady>>,
         Option<Res<audio::StartDecisions>>,
         Option<Res<audio::MissingAliasGaps>>,
         Option<Res<audio::ClipStore>>,
+        Option<Res<audio::AudioRuntime>>,
     ),
 ) {
     for cmd in events.read() {
@@ -46,6 +45,7 @@ pub(crate) fn route_state_dump_commands(
             decisions.as_deref(),
             gaps.as_deref(),
             clips.as_deref(),
+            runtime.as_deref(),
         );
         match write_current_state_dump(
             identity.as_deref(),
@@ -60,7 +60,6 @@ pub(crate) fn route_state_dump_commands(
         }
     }
 }
-
 
 fn parse_state_dump_name(args: &[String]) -> Result<String, String> {
     let raw = match args {
@@ -104,15 +103,29 @@ pub(super) fn write_current_state_dump(
     persist_state_dump(&identity.artifacts, name, captured_unix_ns, &body)
 }
 
-fn audio_dump_section(
+pub(super) fn audio_dump_section(
     ready: Option<&audio::AudioReady>,
     decisions: Option<&audio::StartDecisions>,
     gaps: Option<&audio::MissingAliasGaps>,
     clips: Option<&audio::ClipStore>,
+    runtime: Option<&audio::AudioRuntime>,
 ) -> String {
-    let ready = ready.is_some_and(|r| r.0);
+    let report = ready.map(|ready| ready.0);
+    let ready = report.is_some_and(|report| report.ready_for(report.generation));
+    let generation = report.and_then(|report| report.generation.0);
+    let state = report.map_or("Missing", |report| match report.state {
+        frame::ReadinessState::Pending => "Pending",
+        frame::ReadinessState::Ready => "Ready",
+        frame::ReadinessState::Silent => "Silent",
+        frame::ReadinessState::Failed => "Failed",
+    });
     let late = clips.map(audio::ClipStore::late_prepares).unwrap_or(0);
-    let mut out = format!("[audio]\nAudioReady = {ready}\nlate_prepares = {late}\n");
+    let mut out = format!(
+        "[audio]\nAudioReady = {ready}\naudio_generation = {generation:?}\naudio_state = {state}\nlate_prepares = {late}\n"
+    );
+    if let Some(runtime) = runtime {
+        out.push_str(&format!("transport = {:?}\n", runtime.diagnostics()));
+    }
     match gaps {
         Some(gaps) if !gaps.is_empty() => {
             out.push_str("missing_aliases =\n");
@@ -248,4 +261,3 @@ pub(super) fn persist_bytes_atomic(path: &Path, body: &str) -> Result<(), String
     }
     result
 }
-

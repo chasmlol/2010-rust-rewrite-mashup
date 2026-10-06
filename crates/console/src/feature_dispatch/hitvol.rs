@@ -24,7 +24,6 @@ pub(crate) fn route_hitvol_commands(
     }
 }
 
-
 pub(super) fn hitvol_report(world: &sim::SimWorld) -> Vec<String> {
     let census = world.collision_census();
     let w = &census.world;
@@ -95,4 +94,3 @@ pub(super) fn hitvol_report(world: &sim::SimWorld) -> Vec<String> {
     }
     out
 }
-

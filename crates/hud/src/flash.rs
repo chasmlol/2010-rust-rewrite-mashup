@@ -19,6 +19,7 @@ pub(crate) struct FlashWhiteoutLatch {
     last_h: Option<f32>,
     last_start: Option<i32>,
     pub(crate) save_sequence: u64,
+    life_sequence: u64,
 }
 
 #[derive(Resource, Default, Clone, Copy, PartialEq, Eq)]
@@ -55,6 +56,9 @@ pub(crate) fn update_flash_whiteout(
     mut gaps: ResMut<HudPresentationGaps>,
     mut job: ResMut<FlashGpuJob>,
     mut started: MessageReader<LifeStarted>,
+    generation: Option<Res<frame::WorldGeneration>>,
+    effects: Res<frame::ScreenEffectsView>,
+    mut gpu_frame: ResMut<crate::gpu_list::HudTessGpuFrame>,
 ) {
     *job = FlashGpuJob::Idle;
     for ev in started.read() {
@@ -63,8 +67,10 @@ pub(crate) fn update_flash_whiteout(
             latch.saved = PackedList::default();
             latch.last_alpha = None;
             latch.last_start = None;
+            latch.life_sequence = latch.life_sequence.wrapping_add(1);
         }
     }
+    gpu_frame.shellshock_screen = None;
     gaps.clear(HudGap::FlashWhiteout);
     if !matches!(*screen, AppScreen::InGame) {
         request_hide(&mut job, latch.packed.is_empty());
@@ -74,7 +80,32 @@ pub(crate) fn update_flash_whiteout(
         request_hide(&mut job, latch.packed.is_empty());
         return;
     }
-    let (Some(ps), Some(shock)) = (presented.player(local.0), presented.shellshock(local.0)) else {
+    let Some(ps) = presented.player(local.0) else {
+        request_hide(&mut job, latch.packed.is_empty());
+        return;
+    };
+    let shock = presented.shellshock(local.0);
+    if !effects.ready || effects.suppressed {
+        request_hide(&mut job, latch.packed.is_empty());
+        return;
+    }
+    let blend_ms = effects.blend_ms;
+    if blend_ms > 0 {
+        gpu_frame.shellshock_screen = Some(crate::gpu_list::ShellshockScreen {
+            world_generation: generation.as_ref().and_then(|generation| generation.0),
+            client: local.0.0,
+            view_client: ps.kill_cam_client_num as u32,
+            life_sequence: latch.life_sequence,
+            authoritative_life: presented
+                .snapshot()
+                .and_then(|snapshot| snapshot.meta.for_client(local.0))
+                .map_or(0, |meta| meta.life_sequence.0),
+            time_ms: cg_clock.time(),
+            blend_ms,
+        });
+    }
+    let Some(shock) = shock.filter(|_| effects.flashed) else {
+        latch.last_start = None;
         request_hide(&mut job, latch.packed.is_empty());
         return;
     };

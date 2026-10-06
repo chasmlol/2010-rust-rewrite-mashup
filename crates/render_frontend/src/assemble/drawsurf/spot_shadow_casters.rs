@@ -1,4 +1,4 @@
-use bevy::platform::collections::HashMap;
+use bevy::platform::collections::{HashMap, HashSet};
 use bevy::prelude::*;
 use lighting_iw4::{
     GFX_LIGHT_TYPE_SPOT, SPOT_SHADOW_ENT_MARK_LEN, SPOT_SHADOW_SCORE_LUMA,
@@ -169,7 +169,7 @@ fn mix_sidecar(id: &mut u64, indices: &[u32]) {
     }
 }
 
-fn host_dvars() -> SpotShadowChooseDvars {
+fn host_dvars(sun_sample_size_near: f32) -> SpotShadowChooseDvars {
     SpotShadowChooseDvars {
         spot_enable: true,
         spot_limit: 4,
@@ -180,12 +180,13 @@ fn host_dvars() -> SpotShadowChooseDvars {
         spot_project_frac: 0.0,
         quality_spot_shadow: false,
         spot_dist_cull: false,
-        sun_sample_size_near: 0.25,
+        sun_sample_size_near,
     }
 }
 
 struct RetainedIdentityIndex<'a> {
     retained: &'a [RetainedDrawItem],
+    xmodel_retained: &'a [RetainedDrawItem],
     smodel: HashMap<(u32, u32), usize>,
     world: HashMap<u16, usize>,
     xmodel: HashMap<(u32, u16), usize>,
@@ -193,6 +194,13 @@ struct RetainedIdentityIndex<'a> {
 
 impl<'a> RetainedIdentityIndex<'a> {
     fn new(retained: &'a [RetainedDrawItem]) -> Self {
+        Self::with_xmodels(retained, retained)
+    }
+
+    fn with_xmodels(
+        retained: &'a [RetainedDrawItem],
+        xmodel_retained: &'a [RetainedDrawItem],
+    ) -> Self {
         let mut smodel = HashMap::new();
         let mut world = HashMap::new();
         let mut xmodel = HashMap::new();
@@ -206,15 +214,18 @@ impl<'a> RetainedIdentityIndex<'a> {
                 RetainedDrawKind::World { surf, .. } => {
                     world.entry(surf).or_insert(i);
                 }
-                RetainedDrawKind::XModel { surface, .. } => {
-                    let object_id = dpvs_iw4::GfxDrawSurf::from_packed(item.key).object_id();
-                    xmodel.entry((surface, object_id)).or_insert(i);
-                }
                 _ => {}
+            }
+        }
+        for (i, item) in xmodel_retained.iter().enumerate() {
+            if let RetainedDrawKind::XModel { surface, .. } = item.kind {
+                let object_id = dpvs_iw4::GfxDrawSurf::from_packed(item.key).object_id();
+                xmodel.entry((surface, object_id)).or_insert(i);
             }
         }
         Self {
             retained,
+            xmodel_retained,
             smodel,
             world,
             xmodel,
@@ -234,7 +245,7 @@ impl<'a> RetainedIdentityIndex<'a> {
     fn xmodel(&self, surface: u32, object_id: u16) -> Option<&'a RetainedDrawItem> {
         self.xmodel
             .get(&(surface, object_id))
-            .map(|&i| &self.retained[i])
+            .map(|&i| &self.xmodel_retained[i])
     }
 }
 
@@ -368,6 +379,7 @@ pub fn fill_spot_shadow_caster_plan(
     world: &WorldScene,
     view: Option<&PreparedSceneView>,
     xmodel: Option<&XModelDrawPlan>,
+    catalog: &super::RuntimeMaterialCatalog,
     retained: &[RetainedDrawItem],
     world_run_surfs: &[u16],
     world_ranges: &[(u32, u32)],
@@ -410,7 +422,7 @@ pub fn fill_spot_shadow_caster_plan(
         lights.len() as u32,
         lighting_iw4::SpotShadowUsedForce::None,
         false,
-        host_dvars(),
+        host_dvars(world.sun_sample_size_near),
         SPOT_SHADOW_SCORE_LUMA,
         None,
     ) else {
@@ -494,7 +506,10 @@ pub fn fill_spot_shadow_caster_plan(
         };
         occ.models.len()
     ];
-    let identity = RetainedIdentityIndex::new(retained);
+    let shadow_materials = xmodel.map_or_else(Vec::new, |plan| {
+        super::retained_list::xmodel_shadow_materials(plan, catalog)
+    });
+    let identity = RetainedIdentityIndex::with_xmodels(retained, &shadow_materials);
     // A scene entity can own many surfaces. Resolve them once in draw order;
     // each shadow slot then visits only that entity's retained surfaces.
     let mut xmodel_by_entity = HashMap::<u32, Vec<RetainedDrawItem>>::new();
@@ -717,6 +732,13 @@ pub fn fill_spot_shadow_caster_plan(
                 &identity,
             ));
         }
+        let mut model_surfaces = HashSet::new();
+        items.retain(|item| match item.kind {
+            RetainedDrawKind::XModel {
+                surface, object_id, ..
+            } => model_surfaces.insert((surface, object_id)),
+            _ => true,
+        });
         let xmodel_ranges = xmodel.map(|p| p.range_rows()).unwrap_or(&[]);
         let pack_draws = items
             .iter()

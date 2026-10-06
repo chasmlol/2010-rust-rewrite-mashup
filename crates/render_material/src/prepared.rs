@@ -1,7 +1,5 @@
 use std::sync::Arc;
 
-use asset_core::AssetNamespace;
-
 use crate::catalog::{
     MaterialAssetId, PortId, RemapResolution, RuntimeImageId, RuntimeMaterial,
     RuntimeMaterialCatalog, RuntimePass, RuntimeShaderPair, RuntimeTextureBinding,
@@ -10,13 +8,6 @@ use crate::catalog::{
 use crate::{RuntimeArgumentBinding, RuntimeShaderStage, TechType};
 
 const VERTEX_TYPE_COUNT: usize = asset_iw4::vertex_decl::VERTEX_TYPE_COUNT;
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct GfxPassStateBits {
-    pub namespace: AssetNamespace,
-    pub word0: u32,
-    pub word1: u32,
-}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct AdmittedPortFacts {
@@ -92,7 +83,7 @@ pub struct PreparedArgBelts {
     pub stable: PreparedArgSlice,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct PackedLocalBanks {
     pub vertex: Vec<[u32; 4]>,
     pub pixel: Vec<[u32; 4]>,
@@ -239,17 +230,17 @@ fn seed_write(
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PreparedPass {
-    pub port: [Option<PortId>; VERTEX_TYPE_COUNT],
+    pub port: Arc<[Option<PortId>; VERTEX_TYPE_COUNT]>,
 
     pub shader_pair: Option<RuntimeShaderPair>,
-    pub state: GfxPassStateBits,
+    pub state: crate::CompiledPassState,
 
     pub per_prim_arg_count: u8,
     pub per_obj_arg_count: u8,
     pub stable_arg_count: u8,
     pub belts: Option<PreparedArgBelts>,
 
-    pub local_banks: [Option<Arc<PackedLocalBanks>>; VERTEX_TYPE_COUNT],
+    pub local_banks: Arc<BankRow>,
 
     pub local_samplers: Option<Arc<PackedLocalSamplers>>,
 }
@@ -334,6 +325,7 @@ fn is_material_local(argument: &RuntimeArgumentBinding) -> bool {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PreparedTechnique {
+    pub source_selection: Option<crate::SourceTechniqueSelection>,
     pub flags: u16,
     pub passes: Vec<PreparedPass>,
 
@@ -367,6 +359,7 @@ pub struct PreparedMaterial {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct PreparedMaterialTable {
+    generation_id: crate::MaterialGenerationId,
     materials: Vec<PreparedMaterial>,
 
     census: PreparedTableCensus,
@@ -384,12 +377,26 @@ impl PreparedMaterialTable {
         catalog: &RuntimeMaterialCatalog,
         mut admit: impl FnMut(&RuntimePass, u8) -> Option<AdmittedPortFacts>,
     ) -> Self {
-        let mut materials = Vec::with_capacity(catalog.materials.len());
-        for material in &catalog.materials {
-            materials.push(prepare_one_material(catalog, &mut admit, material));
+        let mut materials = Vec::with_capacity(catalog.parts().materials.len());
+        let mut shared = SharedPacks::default();
+        for material in &catalog.parts().materials {
+            materials.push(prepare_one_material(
+                catalog,
+                &mut admit,
+                &mut shared,
+                material,
+            ));
         }
         let census = count_prepared_table(&materials);
-        Self { materials, census }
+        Self {
+            generation_id: catalog.generation_id(),
+            materials,
+            census,
+        }
+    }
+
+    pub fn generation_id(&self) -> crate::MaterialGenerationId {
+        self.generation_id
     }
 
     pub fn material(&self, id: MaterialAssetId) -> Option<&PreparedMaterial> {
@@ -483,9 +490,58 @@ fn count_prepared_table(materials: &[PreparedMaterial]) -> PreparedTableCensus {
     }
 }
 
+type BankRow = [Option<Arc<PackedLocalBanks>>; VERTEX_TYPE_COUNT];
+
+#[derive(Default)]
+struct SharedPacks {
+    banks: std::collections::HashSet<Arc<PackedLocalBanks>>,
+    samplers: std::collections::HashSet<Arc<PackedLocalSamplers>>,
+    ports: std::collections::HashSet<Arc<[Option<PortId>; VERTEX_TYPE_COUNT]>>,
+    bank_rows: std::collections::HashMap<[Option<usize>; VERTEX_TYPE_COUNT], Arc<BankRow>>,
+}
+
+impl SharedPacks {
+    fn bank(&mut self, bank: PackedLocalBanks) -> Arc<PackedLocalBanks> {
+        if let Some(shared) = self.banks.get(&bank) {
+            return Arc::clone(shared);
+        }
+        let bank = Arc::new(bank);
+        self.banks.insert(Arc::clone(&bank));
+        bank
+    }
+
+    fn ports(
+        &mut self,
+        ports: [Option<PortId>; VERTEX_TYPE_COUNT],
+    ) -> Arc<[Option<PortId>; VERTEX_TYPE_COUNT]> {
+        if let Some(shared) = self.ports.get(&ports) {
+            return Arc::clone(shared);
+        }
+        let ports = Arc::new(ports);
+        self.ports.insert(Arc::clone(&ports));
+        ports
+    }
+
+    fn bank_row(&mut self, row: BankRow) -> Arc<BankRow> {
+        let key =
+            std::array::from_fn(|index| row[index].as_ref().map(|bank| Arc::as_ptr(bank) as usize));
+        Arc::clone(self.bank_rows.entry(key).or_insert_with(|| Arc::new(row)))
+    }
+
+    fn samplers(&mut self, samplers: PackedLocalSamplers) -> Arc<PackedLocalSamplers> {
+        if let Some(shared) = self.samplers.get(&samplers) {
+            return Arc::clone(shared);
+        }
+        let samplers = Arc::new(samplers);
+        self.samplers.insert(Arc::clone(&samplers));
+        samplers
+    }
+}
+
 fn prepare_one_material(
     catalog: &RuntimeMaterialCatalog,
     admit: &mut impl FnMut(&RuntimePass, u8) -> Option<AdmittedPortFacts>,
+    shared: &mut SharedPacks,
     material: &RuntimeMaterial,
 ) -> PreparedMaterial {
     let mut tech = vec![None; TECHNIQUE_SLOT_COUNT];
@@ -496,7 +552,7 @@ fn prepare_one_material(
             return PreparedMaterial { tech };
         }
     };
-    let Some(set) = catalog.technique_sets.get(set_id.0 as usize) else {
+    let Some(set) = catalog.parts().technique_sets.get(set_id.0 as usize) else {
         return PreparedMaterial { tech };
     };
     let Some(entries) = material.state_bits_entry.as_ref() else {
@@ -511,17 +567,21 @@ fn prepare_one_material(
             continue;
         }
         let base_row = entries.get(slot).copied().unwrap_or(0xff);
-        if base_row == 0xff {
+        if base_row == 0xff
+            || usize::from(base_row)
+                .checked_add(technique.passes.len())
+                .is_none_or(|end| end > material.pass_states.len())
+        {
             continue;
         }
         let mut passes = Vec::with_capacity(technique.passes.len());
         for (pass_index, pass) in technique.passes.iter().enumerate() {
             let row = usize::from(base_row).saturating_add(pass_index);
-            let load_bits = material.state_bits_table.get(row).copied();
+            let state = material.pass_states[row];
             let mut port = [None; VERTEX_TYPE_COUNT];
             let mut bank_lens = [None; VERTEX_TYPE_COUNT];
 
-            if pass.shader_pair.is_some() && load_bits.is_some() {
+            if pass.shader_pair.is_some() {
                 for vertex_type in 0..VERTEX_TYPE_COUNT {
                     let vertex_type_u8 = u8::try_from(vertex_type).unwrap_or(u8::MAX);
                     if let Some(facts) = admit(pass, vertex_type_u8) {
@@ -531,7 +591,6 @@ fn prepare_one_material(
                     }
                 }
             }
-            let [state0, state1] = load_bits.unwrap_or([0, 0]);
             let pass_index_u8 = u8::try_from(pass_index).unwrap_or(u8::MAX);
             let belts = PreparedArgBelts::from_pass(material, pass_index_u8, pass);
             let mut local_banks = [const { None }; VERTEX_TYPE_COUNT];
@@ -540,32 +599,29 @@ fn prepare_one_material(
                     let Some((vertex_len, pixel_len)) = lens else {
                         continue;
                     };
-                    local_banks[vertex_type] =
-                        pack_local_banks(vertex_len, pixel_len, belts).map(Arc::new);
+                    local_banks[vertex_type] = pack_local_banks(vertex_len, pixel_len, belts)
+                        .map(|bank| shared.bank(bank));
                 }
             }
             let local_samplers = belts
                 .as_ref()
-                .map(|belts| Arc::new(pack_local_samplers(belts)));
+                .map(|belts| shared.samplers(pack_local_samplers(belts)));
             passes.push(PreparedPass {
-                port,
+                port: shared.ports(port),
                 shader_pair: pass.shader_pair,
-                state: GfxPassStateBits {
-                    namespace: material.namespace,
-                    word0: state0,
-                    word1: state1,
-                },
+                state,
                 per_prim_arg_count: pass.per_prim_arg_count,
                 per_obj_arg_count: pass.per_obj_arg_count,
                 stable_arg_count: pass.stable_arg_count,
                 belts,
-                local_banks,
+                local_banks: shared.bank_row(local_banks),
                 local_samplers,
             });
         }
         if !passes.is_empty() {
             let code_sampler_mask = code_sampler_mask_from_passes(&passes);
             tech[slot] = Some(PreparedTechnique {
+                source_selection: technique.source_selection,
                 flags: technique.flags,
                 passes,
                 code_sampler_mask,

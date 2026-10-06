@@ -327,6 +327,8 @@ fn paint_item(
                 &style,
                 material,
                 surface,
+                assets.catalog,
+                host.milliseconds(),
                 anim,
                 &mut frame.list,
             );
@@ -882,6 +884,30 @@ fn apply_menu_float_rect(
     Ok(rect)
 }
 
+pub(crate) fn atlas_frame_st(
+    catalog: Option<&MenuCatalog>,
+    material: &str,
+    time_ms: i32,
+) -> [f32; 4] {
+    let [rows, columns] = catalog
+        .and_then(|catalog| {
+            catalog
+                .material_2d_plans
+                .get(&material.to_ascii_lowercase())
+        })
+        .map(|plan| plan.texture_atlas.map(|n| u32::from(n.max(1))))
+        .unwrap_or([1, 1]);
+    let frame = (time_ms.max(0) as u32 / 50) % (rows * columns);
+    let column = frame % columns;
+    let row = frame / columns;
+    [
+        column as f32 / columns as f32,
+        row as f32 / rows as f32,
+        (column + 1) as f32 / columns as f32,
+        (row + 1) as f32 / rows as f32,
+    ]
+}
+
 fn push_stretch(
     menu: &MenuDef,
     index: usize,
@@ -889,6 +915,8 @@ fn push_stretch(
     style: &EvaluatedItemStyle,
     material: String,
     surface: &crate::surface::Hud2dSurface,
+    catalog: Option<&MenuCatalog>,
+    time_ms: i32,
     anim: ChromeMenuAnim,
     list: &mut Draw2dList,
 ) {
@@ -907,16 +935,17 @@ fn push_stretch(
         Ok(key) if key.kind == asset_core::AssetKind::Material => (key.namespace, key.name),
         _ => (crate::images::HUD_CHROME_NAMESPACE, material),
     };
+    let [s0, t0, s1, t1] = atlas_frame_st(catalog, &material, time_ms);
     list.cmds.push(Draw2dCmd {
         material_namespace,
         x: applied.x,
         y: applied.y,
         w: applied.w,
         h: applied.h,
-        s0: if rect.w < 0.0 { 1.0 } else { 0.0 },
-        t0: if rect.h < 0.0 { 1.0 } else { 0.0 },
-        s1: if rect.w < 0.0 { 0.0 } else { 1.0 },
-        t1: if rect.h < 0.0 { 0.0 } else { 1.0 },
+        s0: if rect.w < 0.0 { s1 } else { s0 },
+        t0: if rect.h < 0.0 { t1 } else { t0 },
+        s1: if rect.w < 0.0 { s0 } else { s1 },
+        t1: if rect.h < 0.0 { t0 } else { t1 },
         color,
         material,
         op: Draw2dOp::StretchPic,

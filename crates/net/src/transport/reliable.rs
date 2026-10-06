@@ -9,6 +9,8 @@ pub const MAX_PENDING_RELIABLE: usize = 64;
 pub enum ActionVerdict {
     Applied,
 
+    Accepted,
+
     Refused,
 
     PayloadMismatch,
@@ -20,6 +22,7 @@ impl ActionVerdict {
     const fn tag(self) -> u8 {
         match self {
             Self::Applied => 0,
+            Self::Accepted => 4,
             Self::Refused => 1,
             Self::PayloadMismatch => 2,
             Self::Expired => 3,
@@ -29,6 +32,7 @@ impl ActionVerdict {
     const fn from_tag(tag: u8) -> Option<Self> {
         match tag {
             0 => Some(Self::Applied),
+            4 => Some(Self::Accepted),
             1 => Some(Self::Refused),
             2 => Some(Self::PayloadMismatch),
             3 => Some(Self::Expired),
@@ -49,6 +53,7 @@ pub enum ReliableRow {
     Scores(String),
 
     Event(SimEvent),
+    FireCommands(Vec<sim::FireCommandResult>),
 
     ActionOutcome {
         request_id: ActionRequestId,
@@ -168,6 +173,10 @@ pub fn encode_reliable_payload(
     for (seq, row) in rows {
         out.put_u16(*seq);
         match row {
+            ReliableRow::FireCommands(results) => {
+                out.put_u8(10);
+                super::fire_result::encode_fire_results(out, results);
+            }
             ReliableRow::ScriptAudio(value) => {
                 out.put_u8(9);
                 crate::svc_script_audio::encode_script_audio(out, value);
@@ -220,10 +229,14 @@ pub fn encode_reliable_payload(
 pub fn decode_reliable_payload(input: &mut WireReader<'_>) -> Result<ReliablePayload, WireError> {
     let ack_through = input.get_u16()?;
     let count = input.get_u16()? as usize;
+    if count > MAX_PENDING_RELIABLE {
+        return Err(WireError::Malformed("reliable row capacity"));
+    }
     let mut rows = Vec::with_capacity(count.min(MAX_PENDING_RELIABLE));
     for _ in 0..count {
         let seq = input.get_u16()?;
         let row = match input.get_u8()? {
+            10 => ReliableRow::FireCommands(super::fire_result::decode_fire_results(input)?),
             ROW_TAG_EVENT => ReliableRow::Event(decode_event(input)?),
             ROW_TAG_OUTCOME => {
                 let request_id = input.get_u32()?;

@@ -412,6 +412,10 @@ pub fn dm_spawn_points_t5(s: &fastfile_t5::ZoneStream<'_>) -> Vec<SpawnPoint> {
     let Some(text) = entity_string_t5(s) else {
         return Vec::new();
     };
+    dm_spawn_points_treyarch(text)
+}
+
+pub fn dm_spawn_points_treyarch(text: &str) -> Vec<SpawnPoint> {
     let names: Vec<_> = MP_SPAWN_CLASSNAMES
         .iter()
         .map(|name| name.replace("mp_dd_", "mp_dem_"))
@@ -699,7 +703,7 @@ fn entity_string_iw5<'a>(s: &'a fastfile_iw5::ZoneStream<'_>) -> Option<&'a str>
     core::str::from_utf8(bytes).ok()
 }
 
-fn parse_intermission_view(text: &str) -> Option<IntermissionView> {
+pub fn parse_intermission_view(text: &str) -> Option<IntermissionView> {
     for entity in parse_entities(text) {
         if entity.classname.as_deref() == Some("mp_global_intermission") {
             return Some(IntermissionView {
@@ -767,7 +771,7 @@ fn parse_worldspawn_north_yaw(text: &str) -> Option<f32> {
         .and_then(|e| e.north_yaw)
 }
 
-fn parse_script_model_placements(text: &str) -> Vec<ScriptModelPlacement> {
+pub fn parse_script_model_placements(text: &str) -> Vec<ScriptModelPlacement> {
     let entities = parse_entities(text).collect::<Vec<_>>();
     let mut out = Vec::new();
     for (source_ordinal, entity) in entities.iter().enumerate() {

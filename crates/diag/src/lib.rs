@@ -1,4 +1,5 @@
 mod alloc_count;
+pub mod exit;
 pub mod gap;
 pub mod wgsl_dump;
 
@@ -226,11 +227,17 @@ pub fn exit_launch_error(message: &str) -> ! {
     }
     #[cfg(windows)]
     {
-        use std::io::IsTerminal;
-        if std::io::stdin().is_terminal() {
-            eprintln!("\nPress Enter to close.");
-            let _ = std::io::stderr().flush();
-            let _ = std::io::stdin().read_line(&mut String::new());
+        use windows_sys::Win32::UI::WindowsAndMessaging::{MB_ICONERROR, MB_OK, MessageBoxW};
+        let wide = |text: &str| text.encode_utf16().chain([0]).collect::<Vec<u16>>();
+        let (text, caption) = (wide(message), wide("iw4l"));
+        // SAFETY: both strings are NUL-terminated and outlive the modal call.
+        unsafe {
+            MessageBoxW(
+                std::ptr::null_mut(),
+                text.as_ptr(),
+                caption.as_ptr(),
+                MB_OK | MB_ICONERROR,
+            );
         }
     }
     std::process::exit(2);

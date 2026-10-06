@@ -332,6 +332,7 @@ pub struct HostClassSlot {
     pub perks: [String; 3],
 
     pub deathstreak: String,
+    pub camos: [String; 2],
 }
 
 impl Default for HostClassLoadouts {
@@ -355,9 +356,51 @@ pub struct HudInputView {
     pub action_slot_keys: [Option<String>; 4],
 }
 
+#[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct LocalSpawnArmed(pub WorldGeneration);
+
+impl LocalSpawnArmed {
+    pub fn armed_for(self, generation: WorldGeneration) -> bool {
+        generation.0.is_some() && self.0 == generation
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ReadinessState {
+    #[default]
+    Pending,
+    Ready,
+    Silent,
+    Failed,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct WorldReadiness {
+    pub generation: WorldGeneration,
+    pub state: ReadinessState,
+}
+
+impl WorldReadiness {
+    pub fn new(generation: WorldGeneration, state: ReadinessState) -> Self {
+        Self { generation, state }
+    }
+
+    pub fn ready_for(self, generation: WorldGeneration) -> bool {
+        generation.0.is_some()
+            && self.generation == generation
+            && matches!(self.state, ReadinessState::Ready | ReadinessState::Silent)
+    }
+
+    pub fn failed_for(self, generation: WorldGeneration) -> bool {
+        generation.0.is_some()
+            && self.generation == generation
+            && self.state == ReadinessState::Failed
+    }
+}
+
 /// Authority navigation is prepared while the loading screen is still active.
 #[derive(bevy::prelude::Resource, Default)]
-pub struct BotNavigationReady(pub bool);
+pub struct BotNavigationReady(pub WorldReadiness);
 
 #[derive(Component)]
 pub struct UiCamera;

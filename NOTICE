@@ -16,30 +16,31 @@ Third-party material bundled with this repository
 --------------------------------------------------------------------------------
 
 Both fonts below are compiled into the IW4L binary with `include_bytes!`, so
-they are redistributed with every build. Any archive that ships an IW4L binary
-ships these two licence texts with it.
+they are redistributed with every build. The binary also embeds this NOTICE,
+LICENSE, both licence texts and THIRD-PARTY-LICENSES.txt; `iw4l licenses`
+prints them.
 
 Oxanium (crates/ui/assets/Oxanium-Regular.ttf)
   Copyright 2019 The Oxanium Project Authors
   https://github.com/sevmeyer/oxanium
   SIL Open Font License 1.1 — full text in crates/ui/assets/OFL-Oxanium.txt
 
-GNU FreeFont (crates/console/assets/FreeMono.otf)
-  Copyright (C) 2002-2012 Free Software Foundation, Inc.
-  https://www.gnu.org/software/freefont/
-  GNU General Public License v3 or later, with the GNU font exception — full
-  text in crates/console/assets/COPYING-FreeFont.txt. The exception is what
-  makes embedding the font in an Apache-2.0 binary possible: a document or
-  program that merely uses the font is not thereby covered by the GPL. The
-  font itself is unmodified and remains under the GPL.
+Fira Mono (crates/console/assets/FiraMono-Regular.ttf)
+  Digitized data copyright (c) 2012-2015, The Mozilla Foundation and Telefonica S.A.
+  https://github.com/mozilla/Fira
+  Unmodified ttf/FiraMono-Regular.ttf from revision
+  fd8c8c0a3d353cd99e8ca1662942d165e6961407.
+  SIL Open Font License 1.1 — full text in crates/console/assets/OFL-FiraMono.txt
 
 --------------------------------------------------------------------------------
 Third-party source code
 --------------------------------------------------------------------------------
 
 No third-party source code is vendored in this repository, and the build links
-no third-party project named below. IW4L's own dependencies are the crates
-declared in Cargo.toml, under their own licences.
+no third-party project named below. The Rust crates compiled into the IW4L
+binary, with their licence and copyright texts, are listed in
+THIRD-PARTY-LICENSES.txt; the binary embeds that file and `iw4l licenses`
+prints it. `cargo xtask licenses` regenerates it from Cargo.lock.
 
 The fork carries two projects of its own author's in-tree, built as part of
 the workspace:
@@ -81,10 +82,26 @@ KisakCOD — https://github.com/SwagSoftware/KisakCOD
   engine structure, and by the fork for controller aim assist's defaults. IW4L targets IW4, so this is a neighbouring generation of
   the same engine family, not the same codebase.
 
+t6-scripts (Plutonium) — https://github.com/plutoniummod/t6-scripts
+  Decompiled Black Ops II multiplayer scripts. Read for how Black Ops II
+  equipment behaves (Bouncing Betty, Shock Charge, Trophy System, Sensor
+  Grenade, EMP Grenade, C4, Tactical Insertion) and for its constants. IW4L's
+  `crates/assets/src/t6_equipment.gsc.txt` is written for IW4L, not copied
+  from it.
+
 Ghidra — https://github.com/NationalSecurityAgency/ghidra
   The software reverse engineering framework the original game binaries were
   read with. A development tool: none of it, and none of its output, is
   committed here or distributed with IW4L. Licensed under Apache 2.0.
+
+FFmpeg — https://ffmpeg.org/
+  Read and queried during development of the native T5 WMA2 decoder.
+  Wire codeword mappings and exponent band grids were measured by submitting
+  decoder queries. No FFmpeg source or executable is distributed or linked.
+
+OxideAV WMA — https://github.com/OxideAV/oxideav-wma
+  Evaluated and read as a reference for WMA2 decoding. No source is vendored
+  or compiled into IW4L.
 
 --------------------------------------------------------------------------------
 Game content

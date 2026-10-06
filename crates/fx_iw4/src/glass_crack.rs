@@ -9,8 +9,7 @@
 
 use crate::glass::FX_GLASS_VERT_SCALE;
 use crate::glass_shatter::{FX_GLASS_SHATTER_TWO_PI, glass_interior_branch_count};
-use crate::pool::FX_RAND_TABLE_MOD;
-use crate::random::random_table_f32;
+use crate::random::{FxRandomChannel, sample_at};
 
 pub const FX_GLASS_CRACK_PT_MAX: usize = 255;
 pub const FX_GLASS_CRACK_EDGE_MAX: usize = 512;
@@ -139,27 +138,25 @@ pub struct FxGlassCrackWalk {
     pub clipped_edge: u16,
 }
 
-/// Every fracture decision is drawn from the shared effect random table through
-/// one cursor. The host seeds the cursor, so a replayed shot cracks the same way.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct FxGlassCrackRand {
-    pub cursor: u32,
+    key: u64,
+    cursor: u64,
 }
 
 impl FxGlassCrackRand {
     pub fn from_seed(seed: u64) -> Self {
         Self {
-            cursor: (seed % u64::from(FX_RAND_TABLE_MOD)) as u32,
+            key: seed,
+            cursor: 0,
         }
     }
 
     #[allow(clippy::should_implement_trait)]
     pub fn next(&mut self) -> f32 {
-        self.cursor += 1;
-        if self.cursor == FX_RAND_TABLE_MOD {
-            self.cursor = 0;
-        }
-        random_table_f32(self.cursor, 0)
+        let value = sample_at(self.key, FxRandomChannel::GlassCrack, self.cursor);
+        self.cursor = self.cursor.wrapping_add(1);
+        value
     }
 
     fn lerp(&mut self, min: f32, max: f32) -> f32 {

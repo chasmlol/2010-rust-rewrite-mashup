@@ -138,6 +138,7 @@ pub(crate) fn runtime_material_by_name<'a>(
     let want = asset_core::AssetRef::bare_name(name);
     scene
         .runtime_material_catalog
+        .parts()
         .materials
         .iter()
         .find(|material| asset_core::AssetRef::bare_name(&material.name) == want)

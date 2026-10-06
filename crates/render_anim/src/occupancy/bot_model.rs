@@ -60,7 +60,10 @@ pub(super) fn skin(
         geom.surfaces.push(CpuSurfMeta {
             index_start,
             index_count: surface.indices.len() as u32,
-            name: Some(surface.material.clone()),
+            material: Some(asset_core::MaterialKey {
+                namespace: asset_core::AssetNamespace::Iw4,
+                name: surface.material.clone(),
+            }),
         });
     }
     geom.decoded_n = geom.packed.len();

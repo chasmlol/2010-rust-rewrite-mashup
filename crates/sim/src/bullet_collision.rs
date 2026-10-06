@@ -13,6 +13,8 @@ pub const MASK_PLAYER_SOLID: u32 = 0x0281_0011;
 
 pub const MASK_SHOT: u32 = 0x0280_6831;
 
+pub const MASK_PHYS_WORLD: u32 = 0x0280_6C91;
+
 pub const CONTENTS_BODY: u32 = 0x0200_0000;
 
 pub const MASK_BULLET_WORLD: u32 = MASK_SHOT;
@@ -623,7 +625,8 @@ impl AuthorityDObjState {
             ));
             return;
         };
-        if !contents_match_mask(capability.contents, MASK_BULLET_WORLD) {
+        let uncollidable = capability.contents == Some(0) && capability.coll_surfs.is_empty();
+        if uncollidable || !contents_match_mask(capability.contents, MASK_BULLET_WORLD) {
             self.current_collision = None;
             self.materialized_model_revision = Some(self.model_revision);
             self.materialized_pose_revision = Some(self.pose_revision);
@@ -659,13 +662,18 @@ impl AuthorityDObjState {
         }
     }
 
-    pub fn tag_world_matrix(&self, tag: &str) -> Option<glam::Mat4> {
+    pub fn tag_bone(&self, tag: &str) -> Option<usize> {
         let capability = self.capability.as_ref()?;
-        let bone = capability
+        capability
             .pose
             .bone_names
             .iter()
-            .position(|name| name == tag)?;
+            .position(|name| name == tag)
+    }
+
+    pub fn tag_world_matrix(&self, tag: &str) -> Option<glam::Mat4> {
+        let capability = self.capability.as_ref()?;
+        let bone = self.tag_bone(tag)?;
         let posed = capability
             .pose(&self.pose_request, self.world_from_model)
             .ok()?;

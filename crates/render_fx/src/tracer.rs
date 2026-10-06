@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 
 use asset_game::{OwnedTracerDef, TracerDefinitions};
 use assets::{AssetEdge, TracerSpace};
@@ -21,7 +21,8 @@ pub struct PreparedTracers(pub TracerDefinitions);
 pub struct TracerDrawGate {
     counts: HashMap<u32, u8>,
 
-    shots: HashMap<(u32, u32, u16), ()>,
+    shots: HashMap<(u32, u32, u16), Option<bool>>,
+    shot_order: VecDeque<(u32, u32, u16)>,
 }
 
 impl TracerDrawGate {
@@ -31,9 +32,36 @@ impl TracerDrawGate {
         correlation: u32,
         pellet: u16,
     ) -> bool {
-        self.shots
-            .insert((source_id, correlation, pellet), ())
-            .is_none()
+        let key = (source_id, correlation, pellet);
+        if self.shots.contains_key(&key) {
+            return false;
+        }
+        if self.shot_order.len() == 1024
+            && let Some(oldest) = self.shot_order.pop_front()
+        {
+            self.shots.remove(&oldest);
+        }
+        self.shot_order.push_back(key);
+        self.shots.insert(key, None);
+        true
+    }
+
+    fn should_spawn_pellet(
+        &mut self,
+        source_id: u32,
+        correlation: u32,
+        pellet: u16,
+        draw_interval: u32,
+    ) -> bool {
+        let key = (source_id, correlation, pellet);
+        if let Some(Some(selected)) = self.shots.get(&key) {
+            return *selected;
+        }
+        let selected = self.should_spawn(source_id, draw_interval);
+        if let Some(slot) = self.shots.get_mut(&key) {
+            *slot = Some(selected);
+        }
+        selected
     }
 
     pub fn should_spawn(&mut self, source_id: u32, draw_interval: u32) -> bool {
@@ -92,6 +120,8 @@ pub fn try_spawn_tracer(
     catalog: &TracerDefinitions,
     tracer: AssetEdge<TracerSpace>,
     source_id: u32,
+    correlation: u32,
+    pellet: u16,
     start: [f32; 3],
     end: [f32; 3],
     own_shot: bool,
@@ -111,7 +141,7 @@ pub fn try_spawn_tracer(
     combat.last_tracer_speed = Some(def.speed);
     combat.last_tracer_beam_length = Some(def.beam_length);
     combat.last_tracer_draw_interval = Some(i64::from(def.draw_interval));
-    if !gate.should_spawn(source_id, def.draw_interval) {
+    if !gate.should_spawn_pellet(source_id, correlation, pellet, def.draw_interval) {
         return Err(TracerSpawnSkip::Interval);
     }
     spawn_moving_tracer(world, def, start, end, own_shot, clock).map_err(|_| TracerSpawnSkip::Short)

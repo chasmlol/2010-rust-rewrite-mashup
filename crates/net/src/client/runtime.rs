@@ -2,6 +2,7 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 
 use bevy::prelude::*;
+use entity_iw4::EntityEventKind;
 use frame::{HasWorld, MatchTornDown, RuntimeRole};
 use playerstate_iw4::UserCmd;
 
@@ -40,7 +41,19 @@ pub struct PendingPresentedEntityEvents {
 }
 
 #[derive(Resource, Default)]
-pub struct PendingPelletFx(pub Vec<sim::PelletFxRecord>);
+pub struct PendingPelletFx(Vec<(frame::WorldGeneration, sim::PelletFxRecord)>);
+
+impl PendingPelletFx {
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+    pub fn take(&mut self) -> Vec<(frame::WorldGeneration, sim::PelletFxRecord)> {
+        core::mem::take(&mut self.0)
+    }
+    fn clear(&mut self) {
+        self.0.clear();
+    }
+}
 
 fn collect_received_entity_events(
     last_tick: Option<sim::Tick>,
@@ -427,6 +440,8 @@ pub struct JoinLinkWatch {
 }
 
 pub fn receive_ticks(
+    mut account: Option<ResMut<crate::LocalAccount>>,
+    receipt: Option<Res<crate::AccountSaveReceipt>>,
     mut link: Option<ResMut<crate::transport::udp_session::UdpClientLink>>,
     loopback: Option<ResMut<ListenLoopback>>,
     mut received: ResMut<ReceivedTicks>,
@@ -451,6 +466,17 @@ pub fn receive_ticks(
                     diag::warn!(Net, "udp recv: {e}");
                 }
             }
+        }
+        if let Err(error) = link.poll_accounts(
+            reliable
+                .bridge
+                .as_ref()
+                .map(|bridge| bridge.state().identity()),
+            account.as_deref_mut(),
+            prediction.0.world().persistent_data().schemas(),
+            receipt.as_deref(),
+        ) {
+            reliable.fail(&error);
         }
         for payload in link.take_controls() {
             reliable.apply(link.assigned_client.unwrap_or(local.0), &payload);
@@ -501,9 +527,13 @@ pub fn reconcile_prediction(
     mut pending: ResMut<PendingClientSends>,
     mut entity_events: ResMut<PendingPresentedEntityEvents>,
     mut pellet_fx: ResMut<PendingPelletFx>,
+    role: Res<RuntimeRole>,
+    cg_clock: Res<FrameClock>,
     trace: Option<ResMut<ClientPhaseTrace>>,
 ) {
     push_phase(trace, "Reconcile");
+    let render_time_ms = (*role != RuntimeRole::Replay && cg_clock.started())
+        .then(|| cg_clock.time().saturating_add(cg_clock.frametime()));
     last_adopted.applied_this_frame = false;
     while let Some(mut tick) = received.0.pop_front() {
         if !collect_received_entity_events(
@@ -514,7 +544,19 @@ pub fn reconcile_prediction(
         ) {
             continue;
         }
-        pellet_fx.0.append(&mut tick.snapshot.meta.pellet_fx);
+        perf::net_leg("snap_adopt", tick.snapshot.tick.0, 0);
+        let match_key = crate::signon::live_match_key(reliable.bridge.as_deref());
+        if !match_key.is_none()
+            && tick.snapshot.meta.world_objects.map_round_epoch == match_key.match_epoch
+        {
+            pellet_fx.0.extend(
+                tick.snapshot
+                    .meta
+                    .pellet_fx
+                    .drain(..)
+                    .map(|record| (*reliable.generation, record)),
+            );
+        }
         reliable.apply(local.0, &tick.frame.reliable);
         let ack = tick.ack_for(local.0);
         if let Some(acked) = ack {
@@ -525,7 +567,8 @@ pub fn reconcile_prediction(
             last_adopted.snap = Some(old_next);
         }
         let snap = Arc::new(tick.snapshot);
-        proxy.0.push_arc(Arc::clone(&snap));
+        proxy.0.push_arc(Arc::clone(&snap), render_time_ms);
+        perf::net_leg("proxy_delay", snap.tick.0, proxy.0.delay_ms() as u32);
         last_adopted.next_snap = Some(snap);
         let newest = !received.0.iter().any(|pending| {
             pending.snapshot.tick.0 > last_adopted.next().expect("next snapshot").tick.0
@@ -580,11 +623,20 @@ pub struct SvcFrameWriters<'w> {
     notify: MessageWriter<'w, crate::SvcGameNotify>,
 }
 
+#[derive(Message, Clone, Debug)]
+pub struct FireCommandVerdicts {
+    pub world: frame::WorldGeneration,
+    pub results: Vec<sim::FireCommandResult>,
+}
+
 #[derive(bevy::ecs::system::SystemParam)]
 pub struct ReliableInbound<'w> {
     actions: ResMut<'w, ClientActionInbox>,
     ack: ResMut<'w, ClientReliableAck>,
     events: MessageWriter<'w, ReliableControlEvent>,
+    fire: MessageWriter<'w, FireCommandVerdicts>,
+    generation: Res<'w, frame::WorldGeneration>,
+    fire_verdicts: Res<'w, crate::FireVerdictState>,
     svc: SvcFrameWriters<'w>,
     scores: ResMut<'w, crate::Scoreboard>,
     signon: ResMut<'w, crate::SignonState>,
@@ -629,6 +681,20 @@ impl ReliableInbound<'_> {
                 continue;
             }
             match row {
+                crate::ReliableRow::FireCommands(results) => {
+                    if results.iter().any(|result| result.client != local) {
+                        self.fail("FireResultRecipientMismatch: connection retired");
+                        return;
+                    }
+                    if let Err(reason) = self.fire_verdicts.apply(*self.generation, results) {
+                        self.fail(reason);
+                        return;
+                    }
+                    self.fire.write(FireCommandVerdicts {
+                        world: *self.generation,
+                        results: results.clone(),
+                    });
+                }
                 crate::ReliableRow::Failure(_) => unreachable!("terminal handled before sequence"),
                 crate::ReliableRow::ScriptAudio(cmd) => {
                     self.svc.audio.write(crate::SvcScriptAudio(cmd.clone()));
@@ -673,7 +739,9 @@ impl ReliableInbound<'_> {
                             self.fail("ActionOutcomeUnknown: request expired");
                             return;
                         }
-                        crate::ActionVerdict::Applied | crate::ActionVerdict::Refused => {}
+                        crate::ActionVerdict::Applied
+                        | crate::ActionVerdict::Accepted
+                        | crate::ActionVerdict::Refused => {}
                     }
                     self.actions.retire(local, *request_id);
                 }
@@ -704,8 +772,38 @@ fn apply_weapon_switch_requests(
     }
 }
 
+fn use_reload_as_reload(
+    actions: &mut ClientActionInput,
+    cmd: &mut playerstate_iw4::UserCmd,
+    ps: Option<&playerstate_iw4::PlayerState>,
+) {
+    use playerstate_iw4::buttons::{RELOAD, USE_RELOAD};
+    let down = cmd.buttons & USE_RELOAD != 0;
+    let now = actions.now_msec;
+    let item = ps
+        .filter(|ps| ps.cursor_hint != 0)
+        .map(|ps| ps.cursor_hint_ent_index);
+    if down {
+        if !actions.use_reload_down {
+            actions.use_reload_over_item = item.map(|ent| (now, ent));
+        }
+        if actions.use_reload_over_item.is_none() && item.is_none() {
+            cmd.buttons |= RELOAD;
+        }
+    } else if let Some((since, ent)) = actions.use_reload_over_item.take()
+        && now.wrapping_sub(since) < sim::ITEM_USE_HOLD_MS
+        && item == Some(ent)
+    {
+        cmd.buttons |= RELOAD;
+    }
+    actions.use_reload_down = down;
+}
+
 pub fn sample_client_input(
-    (skate, mut minecraft): (Option<Res<frame::SkateMode>>, Option<ResMut<frame::MinecraftUi>>),
+    (skate, mut minecraft): (
+        Option<Res<frame::SkateMode>>,
+        Option<ResMut<frame::MinecraftUi>>,
+    ),
     time: Res<Time<Real>>,
     mut actions: ResMut<ClientActionInput>,
     mut look: ResMut<LookState>,
@@ -932,10 +1030,14 @@ pub fn sample_client_input(
             let events = [ps.events_0, ps.events_1, ps.events_2, ps.events_3];
             for age in (0..pending.min(4)).rev() {
                 let seq = ps.event_sequence.wrapping_sub(1 + age);
-                match events[(seq & 3) as usize] {
-                    6 => actions.client.stance_latch = 0,
-                    7 => actions.client.stance_latch = playerstate_iw4::buttons::CROUCH as i32,
-                    8 => actions.client.stance_latch = playerstate_iw4::buttons::PRONE as i32,
+                match EntityEventKind(events[(seq & 3) as usize]) {
+                    EntityEventKind::STANCE_FORCE_STAND => actions.client.stance_latch = 0,
+                    EntityEventKind::STANCE_FORCE_CROUCH => {
+                        actions.client.stance_latch = playerstate_iw4::buttons::CROUCH as i32;
+                    }
+                    EntityEventKind::STANCE_FORCE_PRONE => {
+                        actions.client.stance_latch = playerstate_iw4::buttons::PRONE as i32;
+                    }
                     _ => {}
                 }
             }
@@ -1069,13 +1171,14 @@ pub fn sample_client_input(
             );
         }
     }
+    actions.client.airborne =
+        ps.is_some_and(|ps| ps.ground_entity_num == playerstate_iw4::ENTITYNUM_NONE);
     let mut cmd = build_usercmd(&mut actions, &look, 0);
-    if cmd.buttons & playerstate_iw4::buttons::USE_RELOAD != 0
-        && ps.is_some_and(|ps| ps.cursor_hint == 0)
+    use_reload_as_reload(&mut actions, &mut cmd, ps);
+    if minecraft
+        .as_ref()
+        .is_some_and(|ui| ui.active && ui.holding_item)
     {
-        cmd.buttons |= playerstate_iw4::buttons::RELOAD;
-    }
-    if minecraft.as_ref().is_some_and(|ui| ui.active && ui.holding_item) {
         cmd.buttons &= !(playerstate_iw4::buttons::ATTACK | playerstate_iw4::buttons::ADS);
     }
     look.angles = cmd.angles;
@@ -1134,7 +1237,9 @@ pub fn sample_client_input(
         cmd.melee_charge_dist = dist;
     }
     if skate.as_ref().is_some_and(|s| s.active) {
-        cmd.forwardmove = 0; cmd.rightmove = 0; cmd.buttons = 0;
+        cmd.forwardmove = 0;
+        cmd.rightmove = 0;
+        cmd.buttons = 0;
     }
     template.cmd = cmd;
     template.ready = true;
@@ -1324,12 +1429,10 @@ pub fn enforce_client_work_limits(
     cls: Res<ClientRealtime>,
     mut signon: ResMut<crate::SignonState>,
     bridge: Option<Res<crate::MasterBridge>>,
-    mut gate: ResMut<AuthorityInputGate>,
     actions: Res<ClientActionInbox>,
     mut stalls: Local<BacklogStalls>,
 ) {
     if signon.phase.is_failed() {
-        gate.local_cmds_enabled = false;
         return;
     }
     let oldest = pending.iter().next().map(|(_, cmd, _)| cmd.server_time);
@@ -1364,7 +1467,6 @@ pub fn enforce_client_work_limits(
         }
         return;
     };
-    gate.local_cmds_enabled = false;
     prediction.0.disarm();
     let match_key = crate::signon::live_match_key(bridge.as_deref());
     if let Some(bridge) = bridge {
@@ -1650,7 +1752,10 @@ pub fn publish_presented(
         .iter()
         .any(|(id, ps)| *id == local.0 && !ps.is_live_frame());
     let snap_arc = if archived {
-        proxy.0.snapshot_at(cg_clock.time()).unwrap_or(snap_arc)
+        proxy
+            .0
+            .snapshot_at(local.0, cg_clock.time())
+            .unwrap_or(snap_arc)
     } else {
         snap_arc
     };
@@ -1715,7 +1820,7 @@ pub fn publish_presented(
     let body_time_ms = if *role == RuntimeRole::Replay {
         snapshot.tick.0 as i32 * AUTHORITY_MS - AUTHORITY_MS + clock.accumulator_ms as i32
     } else if archived {
-        cg_clock.time().saturating_sub(crate::PROXY_DELAY_MS)
+        cg_clock.time().saturating_sub(proxy.0.delay_ms())
     } else {
         cg_clock.time().saturating_sub(AUTHORITY_MS)
     };
@@ -1812,7 +1917,7 @@ pub fn publish_presented(
     presented.set_trajectory_sample(
         archived.then_some(body_time_ms),
         archived
-            .then(|| proxy.0.snapshot_after(cg_clock.time()))
+            .then(|| proxy.0.snapshot_after(local.0, cg_clock.time()))
             .flatten(),
     );
 }
@@ -1835,10 +1940,12 @@ pub fn reset_cgame_on_match_torn_down(
     mut presented: ResMut<PresentedSnapshot>,
     mut present_census: ResMut<PresentLocalCensus>,
     mut select: ResMut<WeaponSelect>,
-    (mut entity_events, mut pellet_fx, mut entity_event_cursor): (
+    (mut entity_events, mut pellet_fx, mut entity_event_cursor, mut fire_verdicts, fire_state): (
         ResMut<PendingPresentedEntityEvents>,
         ResMut<PendingPelletFx>,
         ResMut<crate::EntityEventCursor>,
+        ResMut<Messages<FireCommandVerdicts>>,
+        Res<crate::FireVerdictState>,
     ),
     (mut reliable_ack, mut actions, mut events, mut scores): (
         ResMut<ClientReliableAck>,
@@ -1870,8 +1977,10 @@ pub fn reset_cgame_on_match_torn_down(
     *select = WeaponSelect::default();
 
     *entity_events = PendingPresentedEntityEvents::default();
-    pellet_fx.0.clear();
+    pellet_fx.clear();
     *entity_event_cursor = crate::EntityEventCursor::default();
+    fire_verdicts.clear();
+    fire_state.clear();
 
     *reliable_ack = ClientReliableAck::default();
     events.clear();
@@ -1912,6 +2021,8 @@ pub fn register_client_runtime(app: &mut App) {
         .init_resource::<ClientReliableAck>()
         .init_resource::<GameplaySendPacer>()
         .add_message::<ReliableControlEvent>()
+        .add_message::<FireCommandVerdicts>()
+        .init_resource::<crate::FireVerdictState>()
         .add_message::<frame::MatchInstalled>()
         .add_message::<frame::MatchTornDown>()
         .init_resource::<RemoteProxyState>()

@@ -2,7 +2,6 @@ use bevy::app::{RunFixedMainLoop, RunFixedMainLoopSystems};
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use std::collections::HashMap;
-use std::sync::Arc;
 
 use crate::authority::inbox::{AuthorityClock, ClientActionInbox, ClientCommandInbox};
 use crate::client::predict::CmdSeq;
@@ -50,19 +49,7 @@ pub struct PendingStepResult(pub Option<ServerTickData>);
 #[derive(Resource, Default)]
 pub struct ServerTick(pub Option<ServerTickData>);
 
-#[derive(Clone, Debug)]
-pub struct ServerTickData {
-    pub input: sim::TickInput,
-    pub snapshot: sim::Snapshot,
-
-    pub weapon_script_names: Arc<[String]>,
-
-    pub pending_final_kill: Option<(ClientId, ClientId)>,
-
-    pub script_seats: Vec<(ClientId, sim::ScriptSeat)>,
-
-    pub script_exit_level: bool,
-}
+pub type ServerTickData = sim::TickResult;
 
 #[derive(Resource, Default)]
 pub struct NetDiagnostics {
@@ -418,8 +405,14 @@ fn publish_fixed_census(mut census: ResMut<FixedUpdateCensus>) {
     census.accum_steps = 0;
 }
 
-#[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Resource, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct AuthorityLoadHold(pub bool);
+
+impl Default for AuthorityLoadHold {
+    fn default() -> Self {
+        Self(true)
+    }
+}
 
 impl AuthorityLoadHold {
     pub fn get(self) -> bool {
@@ -434,7 +427,7 @@ pub fn authority_should_tick(
 ) -> bool {
     role.runs_authority()
         && world.is_some_and(|world| world.0.clip_brush_count() > 0)
-        && !hold.is_some_and(|h| h.0)
+        && hold.is_some_and(|h| !h.0)
 }
 
 fn reset_authority_on_match_torn_down(
@@ -556,7 +549,7 @@ fn retire_departed_peers(
             hub.retire_client(client);
         }
         if let Some(input) = staged.0.as_mut() {
-            input.cmds.retain(|(id, _)| *id != client);
+            input.cmds.retain(|command| command.client != client);
             input.actions.retain(|(id, _)| *id != client);
         }
         acks.0.retain(|(id, _)| *id != client);
@@ -586,6 +579,8 @@ fn advance_authority_clock(
 }
 
 fn ingress_authority(
+    mut world: ResMut<AuthorityWorld>,
+    bridge: Option<Res<crate::MasterBridge>>,
     hub: Option<ResMut<crate::transport::udp_session::UdpAuthorityHub>>,
     mut cmd_inbox: ResMut<ClientCommandInbox>,
     mut action_inbox: ResMut<ClientActionInbox>,
@@ -606,6 +601,13 @@ fn ingress_authority(
             &mut action_inbox,
             Some(&mut samples),
             Some(&mut reliable),
+            Some((
+                &mut world.0,
+                bridge
+                    .as_ref()
+                    .map(|bridge| bridge.state().identity().match_key())
+                    .unwrap_or(frame::MatchKey::NONE),
+            )),
         ) {
             diag::warn!(Net, "udp ingress: {e}");
         }
@@ -682,12 +684,12 @@ fn gather_authority_input(
     if !gate.local_cmds_enabled
         && let Some(local) = local.as_ref()
     {
-        cmds.retain(|(id, _)| *id != local.0);
+        cmds.retain(|command| command.client != local.0);
         acks.retain(|(id, _)| *id != local.0);
         samples.0.retain(|(id, _), _| *id != local.0);
     }
     for (client, _) in &backlog.0 {
-        cmds.retain(|(id, _)| id != client);
+        cmds.retain(|command| command.client != *client);
         acks.retain(|(id, _)| id != client);
         actions.retain(|(id, _)| id != client);
         samples.0.retain(|(id, _), _| id != client);
@@ -696,7 +698,15 @@ fn gather_authority_input(
         ledger.retire_client(*client);
     }
     pending_acks.0 = acks;
-    pending.0 = Some(sim::TickInput { cmds, actions });
+    pending.0 = Some(sim::TickInput {
+        cmds,
+        actions,
+        shot_samples: samples
+            .0
+            .iter()
+            .map(|(key, sample)| (*key, *sample))
+            .collect(),
+    });
 }
 
 fn step_authority(
@@ -705,7 +715,6 @@ fn step_authority(
     mut pending: ResMut<PendingAuthorityInput>,
     mut pending_step: ResMut<PendingStepResult>,
     mut pending_svc: ResMut<crate::PendingSvcSounds>,
-    samples: Res<ClientShotSamples>,
     mut exit_level: MessageWriter<ExitLevelCalled>,
     trace: Option<ResMut<AuthorityPhaseTrace>>,
 ) {
@@ -715,9 +724,6 @@ fn step_authority(
         return;
     };
 
-    world
-        .0
-        .set_lagcomp_commands(samples.0.iter().map(|(key, sample)| (*key, *sample)));
     let stepped = sim::try_step(
         &mut world.0,
         sim::Tick(clock.tick),
@@ -727,7 +733,7 @@ fn step_authority(
     );
     // A terminal script error drops the match to the lobby;
     // the world stays frozen until the swap replaces it.
-    let Ok(snapshot) = stepped else {
+    let Ok(result) = stepped else {
         if let Some(fault) = world.0.take_script_fault() {
             diag::error!(Sim, "GSC execution failed: {fault}");
             diag::script_boundary(
@@ -738,18 +744,7 @@ fn step_authority(
         }
         return;
     };
-    let weapon_script_names = world.0.weapon_script_names();
-    let pending_final_kill = world.0.take_pending_final_kill();
-    let script_seats = world.0.script_seats();
-    let script_exit_level = world.0.take_script_exit_level();
-    pending_step.0 = Some(ServerTickData {
-        input,
-        snapshot,
-        weapon_script_names,
-        pending_final_kill,
-        script_seats,
-        script_exit_level,
-    });
+    pending_step.0 = Some(result);
 }
 
 fn publish_server_tick(
@@ -764,6 +759,21 @@ fn publish_server_tick(
     if let Some(tick) = pending_step.0.as_ref() {
         record_action_outcomes(&mut ledger, &mut reliable, &mut actions, tick);
         queue_reliable_events(&mut reliable, tick);
+        let mut fire_by_client =
+            std::collections::BTreeMap::<ClientId, Vec<sim::FireCommandResult>>::new();
+        for result in &tick.fire_results {
+            fire_by_client
+                .entry(result.client)
+                .or_default()
+                .push(*result);
+        }
+        for (client, results) in fire_by_client {
+            for batch in results.chunks(crate::transport::fire_result::MAX_FIRE_RESULTS) {
+                reliable
+                    .queue_mut(client)
+                    .push(crate::ReliableRow::FireCommands(batch.to_vec()));
+            }
+        }
     }
 
     server_tick.0 = pending_step.0.take();
@@ -775,38 +785,16 @@ fn record_action_outcomes(
     actions: &mut ClientActionInbox,
     tick: &ServerTickData,
 ) {
-    for (client, action) in &tick.input.actions {
-        let request_id = sim::action_request_id(action);
-        let refused = tick
-            .snapshot
-            .meta
-            .journal
-            .iter()
-            .any(|record| sim_event_refuses(&record.event, request_id));
-        let verdict = if refused {
-            crate::ActionVerdict::Refused
-        } else {
-            crate::ActionVerdict::Applied
+    for result in &tick.action_results {
+        let request_id = sim::action_request_id(&result.action);
+        let verdict = match result.outcome {
+            sim::ActionOutcome::Applied => crate::ActionVerdict::Applied,
+            sim::ActionOutcome::Accepted => crate::ActionVerdict::Accepted,
+            sim::ActionOutcome::Refused => crate::ActionVerdict::Refused,
         };
-        ledger.record(*client, *action, verdict);
-        reliable.push_outcome(*client, request_id, verdict);
-
-        actions.retire(*client, request_id);
-    }
-}
-
-fn sim_event_refuses(event: &sim::SimEvent, request_id: sim::ActionRequestId) -> bool {
-    match event {
-        sim::SimEvent::ClassRejected {
-            request_id: rid, ..
-        }
-        | sim::SimEvent::GiveRejected {
-            request_id: rid, ..
-        }
-        | sim::SimEvent::ConfigurationChangeRejected {
-            request_id: rid, ..
-        } => *rid == request_id,
-        _ => false,
+        ledger.record(result.client, result.action, verdict);
+        reliable.push_outcome(result.client, request_id, verdict);
+        actions.retire(result.client, request_id);
     }
 }
 
@@ -838,7 +826,6 @@ struct FanoutQueues<'w> {
     pending_playercard: ResMut<'w, crate::PendingPlayerCard>,
     pending_gamenotify: ResMut<'w, crate::PendingGameNotify>,
     pending_scores: ResMut<'w, crate::PendingScoreboard>,
-    world: ResMut<'w, AuthorityWorld>,
     local: Option<Res<'w, LocalPresentClient>>,
     kb: Option<Res<'w, crate::ClientActionInput>>,
     fanout_census: ResMut<'w, ListenFanoutCensus>,
@@ -864,7 +851,7 @@ fn fanout_loopback(
     let Some(tick) = server_tick.0.as_ref() else {
         return;
     };
-    for (client, reason) in queues.world.0.take_script_kicks() {
+    for (client, reason) in tick.effects.kicks.iter().cloned() {
         reliable
             .queue_mut(client)
             .push(crate::ReliableRow::Failure(reason.clone()));
@@ -872,16 +859,13 @@ fn fanout_loopback(
     }
     queues
         .pending_playercard
-        .adopt_from_world(&mut queues.world.0);
-    queues
-        .pending_gamenotify
-        .adopt_from_world(&mut queues.world.0);
-    queues.pending_svc.adopt_from_world(&mut queues.world.0);
-    let audio = queues.world.0.take_pending_script_audio();
+        .adopt_events(&tick.effects.player_cards);
+    queues.pending_gamenotify.adopt_prints(&tick.effects.prints);
+    queues.pending_svc.adopt_sounds(&tick.effects.local_sounds);
     crate::svc_script_audio::fanout_script_audio(
         &mut reliable,
         tick.snapshot.meta.clients.iter().map(|(id, _)| *id),
-        &audio,
+        &tick.effects.script_audio,
     );
     crate::policy::killcam::play_script_seats(
         &mut seats,
@@ -922,24 +906,17 @@ fn fanout_loopback(
                 Some(i32::from(sample.lookup.tick.is_some()));
             let focus = session.map(|s| s.focus_client);
             queues.fanout_census.seat_focus_live_origin =
-                focus.and_then(|f| queues.world.0.player(f).map(|ps| ps.origin));
+                focus.and_then(|f| player_origin_flags(&tick.snapshot.players, f).map(|row| row.0));
             queues.fanout_census.seat_focus_lifecycle = focus.and_then(|f| {
-                queues
-                    .world
-                    .0
-                    .client_meta(f)
+                tick.snapshot
+                    .meta
+                    .for_client(f)
                     .map(|m| client_lifecycle_dump_label(m.lifecycle))
             });
         }
     }
     let local_id = queues.local.as_ref().map(|id| id.0);
-    let world_row = local_id.and_then(|id| {
-        queues
-            .world
-            .0
-            .player(id)
-            .map(|ps| (ps.origin, ps.e_flags as i32, ps.other_flags as i32))
-    });
+    let world_row = local_id.and_then(|id| player_origin_flags(&tick.snapshot.players, id));
     let snap_row = local_id.and_then(|id| player_origin_flags(&tick.snapshot.players, id));
     let sent_row = local_id.and_then(|id| player_origin_flags(&listen_snapshot.players, id));
     queues.fanout_census.tick = Some(tick.snapshot.tick.0);
@@ -1032,7 +1009,6 @@ fn fanout_loopback(
             .map(|id| queues.pending_gamenotify.take_for(id.0))
             .unwrap_or_default();
         if let Err(e) = loopback.send_tick(
-            &tick.input,
             &listen_snapshot,
             acks.clone(),
             svc,
@@ -1055,11 +1031,10 @@ fn fanout_loopback(
     }
     if let Some(mut hub) = hub {
         if let Err(e) = hub.fanout_with_seats(
-            &tick.input,
             &tick.snapshot,
             &acks,
             |peer, live| {
-                crate::policy::seat::snapshot_for_viewer(
+                crate::policy::seat::snapshot_override_for_viewer(
                     &archive,
                     &seats,
                     live,

@@ -34,7 +34,7 @@ pub use dispatch_state::{ConsoleCommandQueue, ConsoleDispatch, WaitMovePose};
 use dispatch_state::{WAIT_WORLD_TIMEOUT_SECS, WaitKind, parse_wait_args};
 pub use state::{ConsoleFont, ConsoleSettings, ConsoleState};
 
-const EMBEDDED_FONT: &[u8] = include_bytes!("../../assets/FreeMono.otf");
+const EMBEDDED_FONT: &[u8] = include_bytes!("../../assets/FiraMono-Regular.ttf");
 const PROMPT: &str = "> ";
 const FONT_SIZE: f32 = 15.0;
 const COLOR_BODY: Color = Color::srgb(0.82, 0.92, 0.82);
@@ -79,7 +79,10 @@ pub struct ConsolePlugin;
 
 impl Plugin for ConsolePlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Update, crate::debug_move::update_skate_overlay.in_set(ClientSet::Ui));
+        app.add_systems(
+            Update,
+            crate::debug_move::update_skate_overlay.in_set(ClientSet::Ui),
+        );
         crate::startup::install_stdin(app);
         app.init_resource::<ConsoleSettings>()
             .init_resource::<ConsoleState>()
@@ -94,11 +97,22 @@ impl Plugin for ConsolePlugin {
             .init_resource::<crate::weapon_dispatch::WeaponArgCompletions>()
             .init_resource::<crate::user_settings::PendingMenuBinding>()
             .init_resource::<crate::user_settings::UserSettingsPersistence>()
+            .init_resource::<crate::game_folders::FolderPicks>()
+            .init_resource::<crate::saved_position::SavedPosition>()
+            .init_resource::<sim::LocalPlayerProfile>()
+            .init_resource::<crate::local_profile::ProfilePersistence>()
+            .init_resource::<crate::local_account::AccountPersistence>()
             .add_message::<ConsoleCommand>()
             .add_message::<frame::TestControllerRumble>()
             .add_systems(
                 Startup,
-                (setup_console, crate::user_settings::load_user_settings).chain(),
+                (
+                    setup_console,
+                    crate::user_settings::load_user_settings,
+                    crate::local_profile::load,
+                    crate::local_account::load,
+                )
+                    .chain(),
             )
             .add_systems(PreUpdate, feed_console_keyboard.before(InputSystems))
             .init_resource::<frame::ActivePad>()
@@ -146,14 +160,23 @@ impl Plugin for ConsolePlugin {
                         apply_console_os_paste,
                         crate::feature_dispatch::route_replay_commands,
                         crate::feature_dispatch::route_ui_commands,
-                        (crate::frontend::route, crate::class_menu::route).chain(),
+                        (
+                            crate::frontend::route,
+                            crate::class_menu::route,
+                            crate::barracks_menu::route,
+                        )
+                            .chain(),
                         crate::feature_dispatch::route_capture_commands,
                         crate::feature_dispatch::route_state_dump_commands,
                         crate::feature_dispatch::route_hitvol_commands,
                         crate::feature_dispatch::route_debug_feature_commands,
                         crate::feature_dispatch::route_session_commands,
                         crate::feature_dispatch::resume_lifecycle_commands,
-                        crate::class_dispatch::route_class_commands,
+                        (
+                            crate::barracks_menu::sync_profile,
+                            crate::class_dispatch::route_class_commands,
+                        )
+                            .chain(),
                         crate::class_dispatch::complete_pending_spawn,
                         crate::weapon_dispatch::clear_weapon_args_on_torn_down,
                         crate::weapon_dispatch::refresh_weapon_arg_completions,
@@ -166,7 +189,10 @@ impl Plugin for ConsolePlugin {
                             crate::weapon_dispatch::echo_configuration_change_results,
                         )
                             .chain(),
-                        crate::debug_move::route_debug_move_commands,
+                        (
+                            crate::debug_move::route_debug_move_commands,
+                            crate::saved_position::route_saved_position_commands,
+                        ),
                         crate::debug_script_mover::route_debug_script_mover_commands,
                         crate::debug_draw_method::route_debug_draw_method_commands,
                         crate::debug_view_proj::route_view_proj_commands,
@@ -188,6 +214,8 @@ impl Plugin for ConsolePlugin {
                         (
                             crate::user_settings::native_menu_settings,
                             crate::user_settings::consume_menu_binding,
+                            crate::game_folders::game_folder_menu,
+                            crate::community_servers::community_server_menu,
                         )
                             .chain(),
                         crate::user_settings::sync_binding_view,
@@ -205,6 +233,9 @@ impl Plugin for ConsolePlugin {
                 Last,
                 (
                     paint_scrollback_selection,
+                    crate::feature_dispatch::request_exit,
+                    crate::local_profile::save,
+                    crate::local_account::save,
                     crate::feature_dispatch::exit_process,
                 )
                     .chain(),
@@ -284,7 +315,9 @@ struct PhysicalInputState {
 
 fn publish_client_action_input(
     mut skate: ResMut<frame::SkateMode>,
-    time: Res<Time>,
+    // The clock `sample_client_input` reads: a press and the samples that
+    // time its hold must agree.
+    time: Res<Time<Real>>,
     keys: Res<ButtonInput<KeyCode>>,
     mouse_buttons: Res<ButtonInput<MouseButton>>,
     mut motion: MessageReader<MouseMotion>,
@@ -293,7 +326,10 @@ fn publish_client_action_input(
     binds: Res<KeyBinds>,
     mut scripted: ResMut<ConsoleInputState>,
     console: Res<ConsoleState>,
-    (script_menus, minecraft): (Option<Res<hud::ScriptMenus>>, Option<Res<frame::MinecraftUi>>),
+    (script_menus, minecraft): (
+        Option<Res<hud::ScriptMenus>>,
+        Option<Res<frame::MinecraftUi>>,
+    ),
     mut hud_input: ResMut<frame::HudInputView>,
     settings: Res<frame::GameSettings>,
     mut out: ResMut<ClientActionInput>,
@@ -732,6 +768,7 @@ fn setup_console(
     }
     crate::weapon_dispatch::register_weapon_commands(&mut registry, &weapon_completions);
     crate::debug_move::register_debug_move_commands(&mut registry);
+    crate::saved_position::register_saved_position_commands(&mut registry);
     crate::debug_script_mover::register_debug_script_mover_commands(&mut registry);
     crate::debug_draw_method::register_debug_draw_method_commands(&mut registry);
     crate::debug_view_proj::register_view_proj_commands(&mut registry);
@@ -755,6 +792,7 @@ fn setup_console(
     crate::feature_dispatch::register_feature_commands(&mut registry, &maps);
     crate::frontend::register(&mut registry);
     crate::class_menu::register(&mut registry);
+    crate::barracks_menu::register(&mut registry);
     let font = fonts.add(Font::from_bytes(EMBEDDED_FONT.to_vec()));
     commands.insert_resource(ConsoleFont(font.clone()));
 
@@ -1801,9 +1839,11 @@ fn dispatch_console_command(
     has_world: Option<Res<HasWorld>>,
     ambient_booted: Option<Res<audio::MapAmbientBooted>>,
     presented: Option<Res<PresentedSnapshot>>,
-    (authority, clock): (
+    (authority, clock, adopted, client_clock): (
         Option<Res<net::AuthorityWorld>>,
         Option<Res<net::AuthorityClock>>,
+        Option<Res<net::LastAdoptedSnapshot>>,
+        Option<Res<net::ClientClock>>,
     ),
     local: Option<Res<net::LocalPresentClient>>,
     (mut mark_sequence, headless): (Local<u64>, Option<Res<frame::Headless>>),
@@ -2133,6 +2173,8 @@ fn dispatch_console_command(
                 clock.as_deref(),
                 presented.as_deref(),
                 local.as_deref(),
+                adopted.as_deref(),
+                client_clock.as_deref(),
             );
             let line = format!(
                 "benchmark-mark: pid={} seq={} ns={ns} label={label}{rss}{heap}{facts}",
@@ -2214,9 +2256,43 @@ fn mark_match_facts(
     clock: Option<&net::AuthorityClock>,
     presented: Option<&PresentedSnapshot>,
     local: Option<&net::LocalPresentClient>,
+    adopted: Option<&net::LastAdoptedSnapshot>,
+    client_clock: Option<&net::ClientClock>,
 ) -> String {
     let Some(authority) = authority else {
-        return String::new();
+        let Some(snapshot) = adopted
+            .and_then(net::LastAdoptedSnapshot::next)
+            .or_else(|| presented.and_then(PresentedSnapshot::snapshot))
+        else {
+            return String::new();
+        };
+        let mut out = format!(
+            " tick={} clients={}",
+            snapshot.tick.0,
+            snapshot.players.len()
+        );
+        if let Some(presented_tick) = presented
+            .and_then(PresentedSnapshot::snapshot)
+            .map(|s| s.tick.0)
+        {
+            out.push_str(&format!(" presented_tick={presented_tick}"));
+        }
+        if let Some(clock) = client_clock {
+            out.push_str(&format!(" clock_debt_ms={:.2}", clock.debt_ms()));
+        }
+        if let Some(local) = local {
+            out.push_str(&format!(" local_id={}", local.0.0));
+            if let Some(meta) = snapshot.meta.for_client(local.0) {
+                out.push_str(&format!(" local={:?}", meta.lifecycle));
+            }
+            if let Some((_, ps)) = snapshot.players.iter().find(|(id, _)| *id == local.0) {
+                out.push_str(&format!(
+                    " origin={:.1},{:.1},{:.1} yaw={:.1}",
+                    ps.origin[0], ps.origin[1], ps.origin[2], ps.viewangles[1]
+                ));
+            }
+        }
+        return out;
     };
     let board = authority.0.clients_scoreboard();
     let alive = board
@@ -2231,6 +2307,13 @@ fn mark_match_facts(
         board.len()
     );
     if let Some(local) = local {
+        out.push_str(&format!(" local_id={}", local.0.0));
+        for (id, meta) in &board {
+            out.push_str(&format!(
+                " client{}_cmds={} client{}_path={:.1}",
+                id.0, meta.input_receipt.applied_cmds, id.0, meta.input_receipt.path_units
+            ));
+        }
         let meta = authority.0.client_meta(local.0);
         let life = meta
             .map(|m| format!("{:?}", m.lifecycle))

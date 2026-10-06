@@ -1,0 +1,11 @@
+[package]
+name = "dxbc_sm5"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "D3D10/11 DXBC containers: reflection, signatures and Shader Model 4/5 instruction tokens. No game knowledge."
+
+[dependencies]
+
+[lints]
+workspace = true

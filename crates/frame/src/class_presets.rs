@@ -26,6 +26,7 @@ impl From<&ClassPreset> for HostClassSlot {
             tactical: preset.tactical.to_owned(),
             perks: preset.perks.map(str::to_owned),
             deathstreak: preset.deathstreak.to_owned(),
+            camos: Default::default(),
         }
     }
 }
@@ -34,7 +35,7 @@ pub fn showcase_classes() -> &'static [ClassPreset] {
     &SHOWCASE
 }
 
-const SHOWCASE: [ClassPreset; 15] = [
+const SHOWCASE: [ClassPreset; 20] = [
     ClassPreset {
         name: "ballistic_knife",
         primary: "t5:weapon/spectre_mp",
@@ -54,8 +55,8 @@ const SHOWCASE: [ClassPreset; 15] = [
         name: "ksg_breacher",
         primary: "iw5:weapon/iw5_ksg_mp",
         primary_attachments: &["grip"],
-        secondary: "iw4:weapon/pp2000_mp",
-        secondary_attachments: &["akimbo"],
+        secondary: "iw5:weapon/iw5_p99_mp",
+        secondary_attachments: &[],
         lethal: "iw4:weapon/semtex_mp",
         tactical: "iw4:weapon/concussion_grenade_mp",
         perks: [
@@ -216,21 +217,6 @@ const SHOWCASE: [ClassPreset; 15] = [
         deathstreak: "specialty_combathigh",
     },
     ClassPreset {
-        name: "bo_spas",
-        primary: "t5:weapon/spas_mp",
-        primary_attachments: &["silencer"],
-        secondary: "iw4:weapon/glock_mp",
-        secondary_attachments: &["akimbo"],
-        lethal: "iw4:weapon/c4_mp",
-        tactical: "iw4:weapon/flash_grenade_mp",
-        perks: [
-            "specialty_marathon",
-            "specialty_lightweight",
-            "specialty_extendedmelee",
-        ],
-        deathstreak: "specialty_grenadepulldeath",
-    },
-    ClassPreset {
         name: "mg4_bling",
         primary: "iw4:weapon/mg4_mp",
         primary_attachments: &["grip", "heartbeat"],
@@ -246,11 +232,11 @@ const SHOWCASE: [ClassPreset; 15] = [
         deathstreak: "specialty_copycat",
     },
     ClassPreset {
-        name: "msr_python",
+        name: "msr_p99",
         primary: "iw5:weapon/iw5_msr_mp",
         primary_attachments: &["silencer03"],
-        secondary: "t5:weapon/python_mp",
-        secondary_attachments: &["speed"],
+        secondary: "iw5:weapon/iw5_p99_mp",
+        secondary_attachments: &[],
         lethal: "iw4:weapon/claymore_mp",
         tactical: "iw4:weapon/flash_grenade_mp",
         perks: [
@@ -259,6 +245,96 @@ const SHOWCASE: [ClassPreset; 15] = [
             "specialty_heartbreaker",
         ],
         deathstreak: "specialty_finalstand",
+    },
+    ClassPreset {
+        name: "m4_assault",
+        primary: "iw4:weapon/m4_mp",
+        primary_attachments: &["reflex"],
+        secondary: "iw4:weapon/usp_mp",
+        secondary_attachments: &[],
+        lethal: "iw4:weapon/frag_grenade_mp",
+        tactical: "iw4:weapon/flash_grenade_mp",
+        perks: [
+            "specialty_fastreload",
+            "specialty_coldblooded",
+            "specialty_bulletaccuracy",
+        ],
+        deathstreak: "specialty_copycat",
+    },
+    ClassPreset {
+        name: "t6_an94",
+        primary: "t6:weapon/an94_mp",
+        primary_attachments: &["reflex"],
+        secondary: "t6:weapon/fnp45_mp",
+        secondary_attachments: &[],
+        lethal: "iw4:weapon/frag_grenade_mp",
+        tactical: "iw4:weapon/flash_grenade_mp",
+        perks: [
+            "specialty_fastreload",
+            "specialty_coldblooded",
+            "specialty_bulletaccuracy",
+        ],
+        deathstreak: "specialty_copycat",
+    },
+    ClassPreset {
+        name: "t6_mp7",
+        primary: "t6:weapon/mp7_mp",
+        primary_attachments: &["silencer"],
+        secondary: "t6:weapon/fiveseven_mp",
+        secondary_attachments: &[],
+        lethal: "iw4:weapon/semtex_mp",
+        tactical: "iw4:weapon/concussion_grenade_mp",
+        perks: [
+            "specialty_fastreload",
+            "specialty_coldblooded",
+            "specialty_bulletaccuracy",
+        ],
+        deathstreak: "specialty_copycat",
+    },
+    ClassPreset {
+        name: "t6_lsat",
+        primary: "t6:weapon/lsat_mp",
+        primary_attachments: &["grip"],
+        secondary: "t6:weapon/beretta93r_mp",
+        secondary_attachments: &[],
+        lethal: "iw4:weapon/c4_mp",
+        tactical: "iw4:weapon/smoke_grenade_mp",
+        perks: [
+            "specialty_fastreload",
+            "specialty_coldblooded",
+            "specialty_bulletaccuracy",
+        ],
+        deathstreak: "specialty_copycat",
+    },
+    ClassPreset {
+        name: "t6_ballista",
+        primary: "t6:weapon/ballista_mp",
+        primary_attachments: &[],
+        secondary: "t6:weapon/fnp45_mp",
+        secondary_attachments: &[],
+        lethal: "iw4:weapon/claymore_mp",
+        tactical: "iw4:weapon/smoke_grenade_mp",
+        perks: [
+            "specialty_fastreload",
+            "specialty_coldblooded",
+            "specialty_bulletaccuracy",
+        ],
+        deathstreak: "specialty_copycat",
+    },
+    ClassPreset {
+        name: "t6_870mcs",
+        primary: "t6:weapon/870mcs_mp",
+        primary_attachments: &[],
+        secondary: "t6:weapon/judge_mp",
+        secondary_attachments: &[],
+        lethal: "iw4:weapon/throwingknife_mp",
+        tactical: "iw4:weapon/flash_grenade_mp",
+        perks: [
+            "specialty_fastreload",
+            "specialty_coldblooded",
+            "specialty_bulletaccuracy",
+        ],
+        deathstreak: "specialty_copycat",
     },
 ];
 

@@ -6,6 +6,7 @@ license.workspace = true
 description = "Asset lane orchestration, linking and conversion into engine objects."
 
 [dependencies]
+structured_data_iw4.workspace = true
 render_material.workspace = true
 diag.workspace = true
 xmodel_runtime.workspace = true
@@ -20,6 +21,7 @@ asset_world.workspace = true
 weapon_iw4.workspace = true
 fastfile_iw4.workspace = true
 fastfile_t5.workspace = true
+fastfile_t6.workspace = true
 fastfile_iw5.workspace = true
 asset_iw4.workspace = true
 clipmap_iw4.workspace = true

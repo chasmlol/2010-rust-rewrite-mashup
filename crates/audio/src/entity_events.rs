@@ -73,10 +73,20 @@ fn selected_alias<'a>(
             WeaponSoundSlot::MeleeSwipePlayer,
         ),
         EntityEventKind::MELEE_HIT => {
-            return melee_impact_alias(weapons, bank, weapon, knife, WeaponSoundSlot::MeleeHit);
+            return weapons.melee_impact_sound_key(
+                weapon,
+                knife,
+                asset_game::MeleeImpact::Hit,
+                bank,
+            );
         }
         EntityEventKind::MELEE_MISS => {
-            return melee_impact_alias(weapons, bank, weapon, knife, WeaponSoundSlot::MeleeMiss);
+            return weapons.melee_impact_sound_key(
+                weapon,
+                knife,
+                asset_game::MeleeImpact::Miss,
+                bank,
+            );
         }
         _ => return None,
     };
@@ -84,45 +94,11 @@ fn selected_alias<'a>(
     weapons.weapon_sound_key(weapon, if player_view { player } else { world }, bank)
 }
 
-fn melee_impact_alias<'a>(
-    weapons: &asset_game::WeaponRegistry,
-    bank: &'a asset_audio::SoundCatalog,
-    weapon: u32,
-    knife: bool,
-    slot: WeaponSoundSlot,
-) -> Option<(asset_core::AssetNamespace, &'a str)> {
-    let ns = weapons.namespace_of(weapon).unwrap_or_default();
-    let t5 = ns == asset_core::AssetNamespace::T5;
-    let hit = slot == WeaponSoundSlot::MeleeHit;
-    let generic = |knife: bool| {
-        let name = match (knife, hit) {
-            (true, true) => "melee_knife_hit_body",
-            (true, false) => "melee_knife_hit_other",
-            (false, true) => "melee_hit",
-            (false, false) => "melee_hit_other",
-        };
-        let name = if t5 {
-            format!("wpn_{name}")
-        } else {
-            name.to_owned()
-        };
-        let order = bank.index_in(ns, &name)?;
-        Some((bank.namespace_of_alias(order), bank.name_at(order)?))
-    };
-    let own = || weapons.weapon_sound_key(weapon, slot, bank);
-    let knife_alias = || knife.then(|| generic(true)).flatten();
-    if t5 {
-        own().or_else(knife_alias)
-    } else {
-        knife_alias().or_else(own)
-    }
-    .or_else(|| generic(false))
-}
-
 fn entity_event_sound(
     sound: On<net::EntityEventSound>,
     identities: Query<&CEntity>,
     local: Res<LocalPresentClient>,
+    generation: Res<frame::WorldGeneration>,
     weapons: Option<Res<PreparedWeapons>>,
     bank: Option<Res<SoundBank>>,
     adopted: Option<Res<net::LastAdoptedSnapshot>>,
@@ -137,7 +113,17 @@ fn entity_event_sound(
         return;
     }
     if event == EntityEventKind::SOUND_ALIAS {
-        play_cs_sound_alias(&sound.event, adopted.as_deref(), &mut play);
+        play_cs_sound_alias(
+            &sound.event,
+            Some(crate::AudioEvent::from_entity(
+                *generation,
+                sound.entity,
+                &sound.event,
+                0,
+            )),
+            adopted.as_deref(),
+            &mut play,
+        );
         return;
     }
     if event == EntityEventKind::SOUND_ALIAS_AS_MASTER {
@@ -187,7 +173,11 @@ fn entity_event_sound(
         );
         return;
     };
-    if weapons.0.sounds_of(sound.event.payload.weapon).is_none() {
+    if weapons
+        .registry()
+        .sounds_of(sound.event.payload.weapon)
+        .is_none()
+    {
         diag::warn!(
             Audio,
             "audio: entity sound weapon is unavailable (typed gap)"
@@ -198,7 +188,7 @@ fn entity_event_sound(
     // A missing player alias must not fall back to the world throw sound.
     if event == EntityEventKind::USE_OFFHAND
         && weapons
-            .0
+            .registry()
             .authored_weapon_sound(
                 sound.event.payload.weapon,
                 if player_view {
@@ -213,7 +203,7 @@ fn entity_event_sound(
     }
     let Some((namespace, alias)) = bank.as_deref().and_then(|bank| {
         selected_alias(
-            &weapons.0,
+            &weapons.registry(),
             &bank.0,
             sound.event.payload.weapon,
             event,
@@ -229,6 +219,12 @@ fn entity_event_sound(
         return;
     };
     output.write(WeaponSound {
+        event: Some(crate::AudioEvent::from_entity(
+            *generation,
+            sound.entity,
+            &sound.event,
+            0,
+        )),
         namespace,
         alias: alias.to_owned(),
         origin_inches: (!player_view
@@ -243,6 +239,7 @@ fn entity_event_sound(
 
 fn play_cs_sound_alias(
     payload: &net::DispatchedEntityEvent,
+    event: Option<crate::AudioEvent>,
     adopted: Option<&net::LastAdoptedSnapshot>,
     play: &mut MessageWriter<crate::AliasCommand>,
 ) {
@@ -269,6 +266,7 @@ fn play_cs_sound_alias(
         })
         .unwrap_or((asset_core::AssetNamespace::Iw4, alias));
     play.write(crate::AliasCommand::Play(PlayAlias {
+        event,
         namespace,
         alias,
         fallback: None,
@@ -284,6 +282,7 @@ fn play_cs_sound_alias(
 fn movement_sound(
     sound: On<net::EntityMovementSound>,
     identities: Query<&CEntity>,
+    generation: Res<frame::WorldGeneration>,
     local: Res<LocalPresentClient>,
     presented: Res<PresentedSnapshot>,
     mut footsteps: MessageWriter<Footstep>,
@@ -311,6 +310,12 @@ fn movement_sound(
         let surface_flags = (index as u32) << 20;
         let (alias, fallback) = land_aliases(surface_flags, player_view, quieter);
         land.write(LandSound {
+            event: Some(crate::AudioEvent::from_entity(
+                *generation,
+                sound.entity,
+                &sound.event,
+                0,
+            )),
             alias,
             fallback,
             origin_inches,
@@ -328,6 +333,12 @@ fn movement_sound(
             let alias = gear_alias(player_view).to_owned();
             let fallback = player_view.then(|| gear_alias(false).to_owned());
             play.write(crate::AliasCommand::Play(PlayAlias {
+                event: Some(crate::AudioEvent::from_entity(
+                    *generation,
+                    sound.entity,
+                    &sound.event,
+                    0,
+                )),
                 namespace: asset_core::AssetNamespace::Iw4,
                 alias,
                 fallback,
@@ -349,12 +360,24 @@ fn movement_sound(
     let surface_flags = u32::from(sound.event.payload.surf_type) << 20;
     let (alias, fallback) = footstep_aliases(gait, surface_flags, player_view, quieter);
     footsteps.write(Footstep {
+        event: Some(crate::AudioEvent::from_entity(
+            *generation,
+            sound.entity,
+            &sound.event,
+            0,
+        )),
         alias,
         fallback,
         origin_inches,
         snd_ent: Some(u32::from(identity.number())),
     });
     gear.write(WeaponSound {
+        event: Some(crate::AudioEvent::from_entity(
+            *generation,
+            sound.entity,
+            &sound.event,
+            1,
+        )),
         namespace: asset_core::AssetNamespace::Iw4,
         alias: gear_rattle_alias(gait, player_view).to_owned(),
         origin_inches,
@@ -410,12 +433,17 @@ impl NotetrackSoundTable {
         let mut unbound = 0usize;
         let mut rumbles = HashMap::new();
         for weapon in 1..=weapons.len() as u32 {
-            let namespace = weapons
-                .namespace_of(weapon)
-                .unwrap_or(asset_core::AssetNamespace::Iw4);
+            let Some(namespace) =
+                weapons.component_namespace_of(weapon, asset_game::WeaponComponent::Sound)
+            else {
+                continue;
+            };
             for (note, action) in weapons.notetrack_actions_of(weapon) {
                 let sound = action.sound_alias.as_deref().map(|alias| {
-                    match bank.index_in(namespace, alias) {
+                    match weapons
+                        .sound_namespace_for(weapon, alias)
+                        .and_then(|namespace| bank.index_in(namespace, alias))
+                    {
                         Some(index) => NotetrackSound::Bound(index),
                         None => {
                             unbound += 1;
@@ -486,10 +514,10 @@ pub(crate) fn bind_notetrack_sounds(
         }
         return;
     };
-    if table.owns(&bank.0, &weapons.0) {
+    if table.owns(&bank.0, &weapons.registry()) {
         return;
     }
-    *table = NotetrackSoundTable::bind(&bank.0, &weapons.0);
+    *table = NotetrackSoundTable::bind(&bank.0, &weapons.registry());
 }
 
 pub(crate) fn play_viewmodel_notetrack_messages(
@@ -506,7 +534,7 @@ pub(crate) fn play_viewmodel_notetrack_messages(
     let bound_bank = bank
         .as_deref()
         .zip(weapons.as_deref())
-        .filter(|(bank, weapons)| table.owns(&bank.0, &weapons.0))
+        .filter(|(bank, weapons)| table.owns(&bank.0, &weapons.registry()))
         .map(|(bank, _)| Arc::clone(&bank.0));
     for batch in notes.read() {
         if batch.generation != *generation
@@ -521,10 +549,18 @@ pub(crate) fn play_viewmodel_notetrack_messages(
         {
             continue;
         }
-        for name in &batch.names {
+        if batch.discarded != 0 {
+            diag::warn!(
+                Audio,
+                "audio: discarded {} viewmodel notetracks beyond frame budget",
+                batch.discarded
+            );
+        }
+        for record in &batch.records {
             apply_viewmodel_notetrack(
                 batch.weapon,
-                name,
+                &record.name,
+                record.event,
                 bound_bank.as_deref(),
                 &mut table,
                 &mut output,
@@ -537,6 +573,7 @@ pub(crate) fn play_viewmodel_notetrack_messages(
 fn apply_viewmodel_notetrack(
     weapon: u32,
     note: &str,
+    event: crate::AudioEvent,
     bank: Option<&asset_audio::SoundCatalog>,
     table: &mut NotetrackSoundTable,
     output: &mut MessageWriter<crate::BoundWeaponSound>,
@@ -581,6 +618,7 @@ fn apply_viewmodel_notetrack(
     match action.sound {
         Some(NotetrackSound::Bound(index)) => {
             output.write(crate::BoundWeaponSound {
+                event: Some(event),
                 bank_revision: bank.revision(),
                 index,
                 origin_inches: None,
@@ -605,6 +643,7 @@ fn apply_viewmodel_notetrack(
 
 fn grenade_contact(
     contact: On<net::EntityGrenadeContact>,
+    generation: Res<frame::WorldGeneration>,
     weapons: Option<Res<PreparedWeapons>>,
     bank: Option<Res<SoundBank>>,
     mut output: MessageWriter<WeaponSound>,
@@ -614,12 +653,11 @@ fn grenade_contact(
     let Some((namespace, alias)) = weapons.as_deref().and_then(|weapons| {
         let bank = bank.as_deref()?;
         let alias = weapons
-            .0
+            .registry()
             .bounce_sound_alias(payload.weapon, surf, &bank.0)?;
         let namespace = weapons
-            .0
-            .namespace_of(payload.weapon)
-            .unwrap_or(asset_core::AssetNamespace::Iw4);
+            .registry()
+            .component_namespace_of(payload.weapon, asset_game::WeaponComponent::Sound)?;
         Some((namespace, alias))
     }) else {
         diag::warn!(
@@ -630,6 +668,12 @@ fn grenade_contact(
         return;
     };
     output.write(WeaponSound {
+        event: Some(crate::AudioEvent::from_entity(
+            *generation,
+            contact.entity,
+            &contact.event,
+            0,
+        )),
         namespace,
         alias: alias.to_owned(),
         origin_inches: Some(payload.origin),

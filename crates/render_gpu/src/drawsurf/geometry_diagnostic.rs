@@ -72,10 +72,13 @@ impl Drop for DiagnosticStamp {
     }
 }
 
-static NO_DIAGNOSTIC: OnceLock<bool> = OnceLock::new();
+static DIAGNOSTIC: OnceLock<bool> = OnceLock::new();
 
 pub fn geometry_diagnostic_enabled() -> bool {
-    !*NO_DIAGNOSTIC.get_or_init(|| std::env::var_os("IW4L_NO_DIAGNOSTIC").is_some())
+    *DIAGNOSTIC.get_or_init(|| {
+        std::env::var_os("IW4L_GEOMETRY_DIAGNOSTIC").is_some()
+            && std::env::var_os("IW4L_NO_DIAGNOSTIC").is_none()
+    })
 }
 
 #[derive(Default)]

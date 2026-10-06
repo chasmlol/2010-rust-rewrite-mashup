@@ -15,6 +15,7 @@ asset_transport.workspace = true
 assets.workspace = true
 frame.workspace = true
 net = { path = "../net" }
+updater = { path = "../updater" }
 session.workspace = true
 sim.workspace = true
 

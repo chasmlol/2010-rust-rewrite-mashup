@@ -84,15 +84,3 @@ pub fn material_constant_name(name: &[u8; 12]) -> &str {
     let end = name.iter().position(|&b| b == 0).unwrap_or(name.len());
     std::str::from_utf8(&name[..end]).unwrap_or("")
 }
-
-pub fn material_alpha_test(namespace: crate::AssetNamespace, bits: [u32; 2]) -> Option<AlphaTest> {
-    match namespace {
-        crate::AssetNamespace::T5 => fastfile_t5::state_bits::alpha_test(bits[0])
-            .map(|(func, reference)| AlphaTest::from_raw(func, reference)),
-        crate::AssetNamespace::Iw4 | crate::AssetNamespace::Iw5 => {
-            alpha_test_from_state_bits(bits).map(Gfxs0AlphaTest::d3d)
-        }
-    }
-}
-
-pub use fastfile_t5::state_bits::smodel_camera_emits as t5_smodel_camera_emits;

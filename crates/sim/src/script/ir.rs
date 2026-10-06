@@ -1,7 +1,7 @@
 use crate::script::error::Location;
 use crate::script::value::Value;
 
-pub const IR_VERSION: u32 = 3;
+pub const IR_VERSION: u32 = 5;
 
 #[derive(Clone, Debug)]
 pub(crate) struct Function {

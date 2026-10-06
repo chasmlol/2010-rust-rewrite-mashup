@@ -4,7 +4,8 @@ use crate::world_objects::WorldObjectSnapshot;
 
 use super::ClientLifecycle;
 use super::client_view::{
-    KillcamHud, LocationSelection, MenuCommand, RadarMode, RemoteMissile, ViewEffects,
+    KillcamHud, LinkedWeaponView, LocationSelection, MenuCommand, RadarMode, RemoteMissile,
+    ViewEffects,
 };
 use super::events::{EntityEventRecord, EventRecord, PelletFxRecord, SimEvent};
 use super::loadout::LoadoutSpec;
@@ -17,11 +18,13 @@ pub struct ClientSnapshotMeta {
     pub weapon_lock: crate::WeaponLock,
     pub killcam_hud: Option<KillcamHud>,
     pub lifecycle: ClientLifecycle,
+    pub god_mode: bool,
     pub loadout: Option<LoadoutSpec>,
     pub life_sequence: LifeSequence,
 
     pub item_use_spawn_ms: i32,
     pub item_use_entity: Option<crate::EntityRef>,
+    pub item_use_press_ms: i32,
 
     pub ammo_clip: i32,
 
@@ -32,7 +35,9 @@ pub struct ClientSnapshotMeta {
     pub deaths: i32,
     pub kill_streak: i32,
     pub radar: RadarMode,
+    pub radar_blocked: bool,
     pub remote_missile: Option<RemoteMissile>,
+    pub linked_weapon_view: Option<LinkedWeaponView>,
 
     pub ammo_by_weapon: Vec<(u32, i32, i32)>,
 
@@ -43,6 +48,7 @@ pub struct ClientSnapshotMeta {
     pub burst_latch_secondary: bool,
     pub rechamber_pending: bool,
     pub rechamber_pending_secondary: bool,
+    pub pending_brass: [Option<crate::PendingBrass>; 2],
 
     pub dead_since_tick: Option<u32>,
 
@@ -184,6 +190,62 @@ impl SnapshotMeta {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TargetBoxDvar {
+    Scale,
+    MinSize,
+    SpawnDelay,
+    SpawnFade,
+}
+
+impl TargetBoxDvar {
+    pub fn named(name: &str) -> Option<Self> {
+        match name.to_ascii_lowercase().as_str() {
+            "foficonscale" => Some(Self::Scale),
+            "foficonminsize" => Some(Self::MinSize),
+            "foficonspawntimedelay" => Some(Self::SpawnDelay),
+            "foficonspawntimefade" => Some(Self::SpawnFade),
+            _ => None,
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Scale => "FoFIconScale",
+            Self::MinSize => "FoFIconMinSize",
+            Self::SpawnDelay => "FoFIconSpawnTimeDelay",
+            Self::SpawnFade => "FoFIconSpawnTimeFade",
+        }
+    }
+
+    pub fn default_value(self) -> f32 {
+        match self {
+            Self::Scale => 1.3,
+            Self::MinSize => 30.0,
+            Self::SpawnDelay => 2.0,
+            Self::SpawnFade => 5.0,
+        }
+    }
+
+    pub fn accepts(self, value: f32) -> bool {
+        let minimum = if self == Self::Scale { 0.1 } else { 0.0 };
+        minimum <= value && value <= f32::MAX
+    }
+
+    pub fn parse(self, value: &str) -> Option<f32> {
+        let value = parse_float_dvar(value);
+        self.accepts(value).then_some(value)
+    }
+}
+
+fn parse_float_dvar(value: &str) -> f32 {
+    let mut end = value.len().min(1023);
+    while !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    crate::script::host::natives::iw4::atof(&value[..end]) as f32
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 pub struct ScriptDvars<'a> {
     client: &'a [(String, String)],
@@ -197,6 +259,10 @@ impl<'a> ScriptDvars<'a> {
             .chain(self.server)
             .find(|(key, _)| key.eq_ignore_ascii_case(name))
             .map(|(_, value)| value.as_str())
+    }
+
+    pub fn float(&self, name: &str) -> Option<f32> {
+        self.string(name).map(parse_float_dvar)
     }
 
     pub fn int(&self, name: &str) -> Option<i32> {

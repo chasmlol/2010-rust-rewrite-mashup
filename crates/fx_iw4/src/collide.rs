@@ -1,6 +1,6 @@
 use crate::at_rest::FX_ON_GROUND_NORMAL_Z;
 use crate::origin::sample_float_range;
-use crate::random::{FX_RAND_CH_REFLECTION, random_table_f32};
+use crate::random::{FxRandomChannel, sample_f32};
 use crate::vec::vec3_length_sq;
 
 pub const FX_COLLIDE_SUBSTEP_MS: i32 = 0x32;
@@ -77,11 +77,11 @@ pub fn impact_child_speed_allows(pre_impact_speed_sq: f32) -> bool {
 }
 
 #[inline]
-pub fn sample_reflection_factor(base: f32, amplitude: f32, seed: u32) -> f32 {
+pub fn sample_reflection_factor(base: f32, amplitude: f32, seed: u64) -> f32 {
     sample_float_range(
         base,
         amplitude,
-        random_table_f32(seed, FX_RAND_CH_REFLECTION),
+        sample_f32(seed, FxRandomChannel::Reflection),
     )
 }
 

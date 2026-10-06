@@ -183,7 +183,7 @@ pub fn spark_elem_world_origin(
 pub fn spark_elem_axis(
     spawn_angles: [[f32; 2]; 3],
     angular_velocity: [[f32; 2]; 3],
-    seed: u32,
+    seed: u64,
     age_msec: i32,
     life_msec: i32,
     at_rest_fraction: u8,

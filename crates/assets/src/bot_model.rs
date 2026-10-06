@@ -126,7 +126,8 @@ fn install_materials(catalog: &mut MaterialCatalog, model: &BotModel) {
         .materials
         .iter()
         .filter(|m| {
-            m.name.as_str().starts_with("mc/")
+            m.namespace == asset_core::AssetNamespace::Iw4
+                && m.name.as_str().starts_with("mc/")
                 && !m.name.as_str().contains("gfx_")
                 && !m.name.as_str().contains("fx_")
                 && catalog.takes_model_lighting(m) == Some(true)

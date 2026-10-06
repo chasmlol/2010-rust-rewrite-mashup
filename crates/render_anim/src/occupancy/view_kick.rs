@@ -1,4 +1,4 @@
-use asset_game::{WeaponBodyFacts, WeaponKickFacts};
+use asset_game::{WeaponFpvFacts, WeaponKickFacts};
 use assets::PreparedWeapons;
 use bevy::prelude::*;
 use frame::{LifeStarted, ViewSubject};
@@ -21,7 +21,7 @@ use crate::anim::view_kick_state::{KickParams, ViewKickState, add_kick_to_viewan
 use crate::anim::view_sway::ViewSwayState;
 use crate::occupancy::remote_body::RemotePlayer;
 use crate::occupancy::third_person::{
-    death_watch_camera, presented_is_third_person, remote_missile_camera,
+    linked_weapon_camera, presented_is_third_person, remote_missile_camera, third_person_camera,
 };
 use render_scene::{FlyCamera, FpvLens, SimCamera, transform_from_iw_view};
 use render_scene::{WorldCameraPose, WorldScriptModelInstance};
@@ -29,38 +29,7 @@ use render_scene::{WorldCameraPose, WorldScriptModelInstance};
 const MISSILE_CAM_FOV: f32 = 15.0;
 
 fn kick_params(k: &WeaponKickFacts) -> KickParams {
-    KickParams {
-        f_ads_view_kick_center_speed: k.f_ads_view_kick_center_speed,
-        f_hip_view_kick_center_speed: k.f_hip_view_kick_center_speed,
-        gun_max_pitch: k.gun_max_pitch,
-        gun_max_yaw: k.gun_max_yaw,
-        ads_gun_kick_reduced_kick_percent: k.ads_gun_kick_reduced_kick_percent,
-        ads_gun_kick_pitch_min: k.ads_gun_kick_pitch_min,
-        ads_gun_kick_pitch_max: k.ads_gun_kick_pitch_max,
-        ads_gun_kick_yaw_min: k.ads_gun_kick_yaw_min,
-        ads_gun_kick_yaw_max: k.ads_gun_kick_yaw_max,
-        ads_gun_kick_accel: k.ads_gun_kick_accel,
-        ads_gun_kick_speed_max: k.ads_gun_kick_speed_max,
-        ads_gun_kick_speed_decay: k.ads_gun_kick_speed_decay,
-        ads_gun_kick_static_decay: k.ads_gun_kick_static_decay,
-        ads_view_kick_pitch_min: k.ads_view_kick_pitch_min,
-        ads_view_kick_pitch_max: k.ads_view_kick_pitch_max,
-        ads_view_kick_yaw_min: k.ads_view_kick_yaw_min,
-        ads_view_kick_yaw_max: k.ads_view_kick_yaw_max,
-        hip_gun_kick_reduced_kick_percent: k.hip_gun_kick_reduced_kick_percent,
-        hip_gun_kick_pitch_min: k.hip_gun_kick_pitch_min,
-        hip_gun_kick_pitch_max: k.hip_gun_kick_pitch_max,
-        hip_gun_kick_yaw_min: k.hip_gun_kick_yaw_min,
-        hip_gun_kick_yaw_max: k.hip_gun_kick_yaw_max,
-        hip_gun_kick_accel: k.hip_gun_kick_accel,
-        hip_gun_kick_speed_max: k.hip_gun_kick_speed_max,
-        hip_gun_kick_speed_decay: k.hip_gun_kick_speed_decay,
-        hip_gun_kick_static_decay: k.hip_gun_kick_static_decay,
-        hip_view_kick_pitch_min: k.hip_view_kick_pitch_min,
-        hip_view_kick_pitch_max: k.hip_view_kick_pitch_max,
-        hip_view_kick_yaw_min: k.hip_view_kick_yaw_min,
-        hip_view_kick_yaw_max: k.hip_view_kick_yaw_max,
-    }
+    *k
 }
 
 #[derive(Resource, Default)]
@@ -114,7 +83,7 @@ pub struct SessionViewKick {
 
     pub seeded_this_frame: u32,
 
-    last_weapon_pos_frac: f32,
+    pub(super) last_weapon_pos_frac: f32,
 
     pub b_position_to_ads: bool,
 }
@@ -191,7 +160,11 @@ pub fn tick_session_view_kick(
     let Some(reg) = weapons.as_ref() else {
         return;
     };
-    let Some(facts) = reg.0.facts_of(viewmodel) else {
+    let Some(facts) = reg
+        .snapshot_weapon(presented.weapon_epoch(), viewmodel)
+        .ok()
+        .and_then(|weapon| weapon.fpv_facts())
+    else {
         return;
     };
     if !facts.body_resolved {
@@ -217,11 +190,8 @@ pub fn tick_session_view_kick(
         kick.seeded_this_frame = n;
     }
 
-    let dt_ms = clock.frametime();
-    let weapon_index = if viewmodel == 0 { 0 } else { 1 };
     let params = kick_params(&facts.kick);
-    kick.state
-        .advance(&params, weapon_index, ps.f_weapon_pos_frac, dt_ms);
+    kick.state.advance(&params, ps.f_weapon_pos_frac, dt);
 
     let overlay_active = facts.overlay_reticle != 0;
     kick.sway.advance(
@@ -337,8 +307,14 @@ pub fn sync_camera_from_presented(
         kick.horiz_fov_deg = horiz;
         return;
     }
-    if presented_is_third_person(&presented, local.0, view.in_killcam()) {
-        let Some(pose) = death_watch_camera(&presented, local.0, death_cam_clip.0.as_deref())
+    if presented_is_third_person(
+        &presented,
+        local.0,
+        view.in_killcam(),
+        settings.third_person,
+    ) {
+        let Some(pose) = linked_weapon_camera(&presented, local.0)
+            .or_else(|| third_person_camera(&presented, local.0, death_cam_clip.0.as_deref()))
         else {
             return;
         };
@@ -348,7 +324,9 @@ pub fn sync_camera_from_presented(
             transform.translation = eye.translation;
             transform.rotation = eye.rotation;
         }
-        apply_fpv_lens_fov(
+        kick.refdef_vieworg = pose.origin;
+        kick.refdef_view_angles = pose.angles;
+        kick.horiz_fov_deg = apply_fpv_lens_fov(
             &mut lenses,
             settings.fov,
             ps.pm_type,
@@ -356,10 +334,15 @@ pub fn sync_camera_from_presented(
             ps.e_flags,
             0.0,
             viewmodel,
-            weapons.as_ref().and_then(|w| w.0.facts_of(viewmodel)),
+            weapons.as_ref().and_then(|w| {
+                w.snapshot_weapon(presented.weapon_epoch(), viewmodel)
+                    .ok()
+                    .and_then(|weapon| weapon.fpv_facts())
+            }),
             false,
             actions.as_deref_mut(),
-        );
+        )
+        .unwrap_or(settings.fov);
         return;
     }
     let offset = presented.view_offset();
@@ -386,7 +369,11 @@ pub fn sync_camera_from_presented(
         ps.viewangles,
         clock.time(),
     );
-    let bob_angles = match weapons.as_ref().and_then(|w| w.0.facts_of(viewmodel)) {
+    let bob_angles = match weapons.as_ref().and_then(|w| {
+        w.snapshot_weapon(presented.weapon_epoch(), viewmodel)
+            .ok()
+            .and_then(|weapon| weapon.fpv_facts())
+    }) {
         Some(facts) if facts.body_resolved => view_angle_bob(ViewAngleBobInputs {
             org,
             e_flags: ps.e_flags,
@@ -478,7 +465,11 @@ pub fn sync_camera_from_presented(
         ps.e_flags,
         ps.f_weapon_pos_frac,
         viewmodel,
-        weapons.as_ref().and_then(|w| w.0.facts_of(viewmodel)),
+        weapons.as_ref().and_then(|w| {
+            w.snapshot_weapon(presented.weapon_epoch(), viewmodel)
+                .ok()
+                .and_then(|weapon| weapon.fpv_facts())
+        }),
         kick.b_position_to_ads,
         actions.as_deref_mut(),
     ) {
@@ -494,7 +485,7 @@ fn apply_fpv_lens_fov(
     e_flags: u32,
     f_weapon_pos_frac: f32,
     viewmodel: u32,
-    facts: Option<WeaponBodyFacts>,
+    facts: Option<WeaponFpvFacts>,
     b_position_to_ads: bool,
     actions: Option<&mut ClientActionInput>,
 ) -> Option<f32> {

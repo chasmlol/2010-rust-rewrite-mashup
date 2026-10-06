@@ -264,6 +264,7 @@ pub enum WorldVertexPayload {
     Iw5(Vec<[u8; fastfile_iw5::size::GFX_WORLD_VERTEX]>),
 
     T5(Vec<[u8; fastfile_t5::size::GFX_WORLD_VERTEX]>),
+    T6(Vec<[u8; asset_iw4::size::GFX_WORLD_VERTEX]>),
     Unavailable { source_layout: &'static str },
 }
 
@@ -284,7 +285,7 @@ impl WorldVertexPayload {
         const _: () =
             assert!(asset_iw4::size::GFX_WORLD_VERTEX == fastfile_t5::size::GFX_WORLD_VERTEX);
         match self {
-            Self::Iw4(rows) | Self::Iw5(rows) | Self::T5(rows) => Ok(rows),
+            Self::Iw4(rows) | Self::Iw5(rows) | Self::T5(rows) | Self::T6(rows) => Ok(rows),
             Self::Unavailable { source_layout } => Err(*source_layout),
         }
     }
@@ -294,6 +295,7 @@ impl WorldVertexPayload {
             Self::Iw4(_) => "iw4",
             Self::Iw5(_) => "iw5",
             Self::T5(_) => "t5",
+            Self::T6(_) => "t6",
             Self::Unavailable { source_layout } => *source_layout,
         }
     }
@@ -373,8 +375,9 @@ pub struct WorldDraw {
     pub sun_effects: Option<SunEffectsCapture>,
 
     pub t5_sun_parse_exposure: Option<f32>,
+    pub t6_exposure: Option<f32>,
 
-    pub t5_sky_dynamic_intensity: Option<[f32; 4]>,
+    pub sky_dynamic_intensity: Option<[f32; 4]>,
 
     pub t5_sun_light: Option<WorldSunLight>,
 
@@ -497,7 +500,7 @@ pub struct WorldPrimaryLight {
     pub t5_specular_color: Option<[f32; 4]>,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CapturedLightDef {
     pub namespace: crate::AssetNamespace,
     pub name: crate::AssetRef,
@@ -583,6 +586,7 @@ impl WorldPrimaryLight {
 pub struct WorldReflectionProbe {
     pub image: Option<usize>,
     pub origin: [f32; 3],
+    pub lighting_sh: Option<[[f32; 4]; 3]>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -915,7 +919,8 @@ pub fn build_world_draw(
             outdoor_lookup: geometry.outdoor_lookup,
             sun_effects,
             t5_sun_parse_exposure: None,
-            t5_sky_dynamic_intensity: None,
+            t6_exposure: None,
+            sky_dynamic_intensity: None,
             t5_sun_light: None,
             t5_tree_scatter_intensity: None,
             t5_tree_scatter_amount: None,
@@ -1481,13 +1486,19 @@ pub(crate) fn find_light_def<'a>(
     if want.is_empty() {
         return None;
     }
-    let pick = |defs: &'a [CapturedLightDef]| {
+    let pick = |defs: &'a [CapturedLightDef], imaged: bool| {
+        let named = |def: &&CapturedLightDef| {
+            def.name.as_str() == want && (!imaged || def.attenuation_image_name.is_some())
+        };
         defs.iter()
             .rev()
-            .find(|def| def.name.is_real() && def.name.as_str() == want)
-            .or_else(|| defs.iter().rev().find(|def| def.name.as_str() == want))
+            .find(|def| def.name.is_real() && named(def))
+            .or_else(|| defs.iter().rev().find(named))
     };
-    pick(map_defs).or_else(|| pick(common_defs))
+    pick(map_defs, true)
+        .or_else(|| pick(common_defs, true))
+        .or_else(|| pick(map_defs, false))
+        .or_else(|| pick(common_defs, false))
 }
 
 pub fn resolve_primary_light_attenuation(
@@ -1650,6 +1661,7 @@ fn extract_reflection_probes(
         let origin = origins.at(i * 12);
         probes.push(WorldReflectionProbe {
             image: materials.image_index(images.at(i * s.pointer_bytes())),
+            lighting_sh: None,
             origin: [
                 s.f32_at(origin, 0)?,
                 s.f32_at(origin, 4)?,

@@ -265,8 +265,8 @@ fn resolve_trace_path(root: &Path, arg: Option<&Path>) -> Result<PathBuf, String
             if abs.is_file() {
                 return Ok(abs);
             }
-            let as_run = root
-                .join("iw4l-artifacts/runs")
+            let as_run = artifacts_dir(root)
+                .join("runs")
                 .join(path)
                 .join("trace.pftrace");
             if as_run.is_file() {
@@ -299,7 +299,7 @@ pub fn ensure_trace_health(root: &Path, processor: &Path, trace: &Path) -> Resul
 }
 
 fn newest_trace(root: &Path) -> Option<PathBuf> {
-    let dir = root.join("iw4l-artifacts").join("runs");
+    let dir = artifacts_dir(root).join("runs");
     let mut best: Option<(SystemTime, PathBuf)> = None;
     for run in std::fs::read_dir(dir).ok()?.flatten() {
         let trace = run.path().join("trace.pftrace");
@@ -311,6 +311,12 @@ fn newest_trace(root: &Path) -> Option<PathBuf> {
         }
     }
     best.map(|(_, p)| p)
+}
+
+fn artifacts_dir(root: &Path) -> PathBuf {
+    std::env::var_os("IW4L_ARTIFACTS_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| root.join("iw4l-artifacts"))
 }
 
 fn refuse_sqlite(path: &Path) -> Result<(), String> {

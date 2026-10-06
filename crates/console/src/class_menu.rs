@@ -15,7 +15,58 @@ pub(crate) struct ClassMenuState {
     folder: Option<ClassPickerFolder>,
     page: usize,
     attachments: bool,
+    camo: bool,
     hover: usize,
+}
+
+fn camo_names(catalog: &ClassLoadoutCatalog, weapon: &str) -> Vec<String> {
+    let Some(registry) = catalog.resolver.0.as_deref() else {
+        return Vec::new();
+    };
+    let Ok(id) =
+        session::resolve_class_weapon(registry, weapon, &[], asset_game::LoadoutRules::default())
+    else {
+        return Vec::new();
+    };
+    registry
+        .camouflage_choices(id)
+        .into_iter()
+        .map(|(_, name)| name.to_owned())
+        .collect()
+}
+
+fn camo_preview(catalog: &ClassLoadoutCatalog, weapon: &str, camo: &str) -> String {
+    let Some(registry) = catalog.resolver.0.as_deref() else {
+        return String::new();
+    };
+    session::resolve_class_weapon(registry, weapon, &[], asset_game::LoadoutRules::default())
+        .map_or_else(
+            |_| String::new(),
+            |id| registry.camouflage_preview(id, camo),
+        )
+}
+
+fn camo_label(camo: &str) -> String {
+    if camo.is_empty() {
+        return "None".into();
+    }
+    camo.split('_')
+        .map(|word| {
+            let mut chars = word.chars();
+            chars.next().map_or_else(String::new, |first| {
+                first.to_uppercase().chain(chars).collect::<String>()
+            })
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn camo_slot(row: ClassEditRow) -> Option<usize> {
+    match row {
+        ClassEditRow::Primary => Some(0),
+        ClassEditRow::Secondary => Some(1),
+        _ => None,
+    }
 }
 
 impl ClassMenuState {
@@ -47,7 +98,14 @@ impl ClassMenuState {
         let Some(row) = self.row else {
             return Vec::new();
         };
-        if self.attachments {
+        if self.camo {
+            let Some(slot) = store.slots.get(store.selected) else {
+                return Vec::new();
+            };
+            std::iter::once(String::new())
+                .chain(camo_names(catalog, slot.row_value(row)))
+                .collect()
+        } else if self.attachments {
             let Some(slot) = store.slots.get(store.selected) else {
                 return Vec::new();
             };
@@ -77,6 +135,7 @@ pub(crate) fn register(registry: &mut ConsoleRegistry) {
         "ui_class_pick",
         "ui_class_page",
         "ui_class_attachments",
+        "ui_class_camo",
         "ui_class_reset",
         "ui_class_rename",
         "ui_class_hover",
@@ -134,6 +193,7 @@ pub(crate) fn route(
                     state.page = 0;
                     state.hover = 0;
                     state.attachments = command.name == "ui_class_attachments";
+                    state.camo = false;
                     if state.attachments
                         && !matches!(row, ClassEditRow::Primary | ClassEditRow::Secondary)
                     {
@@ -146,13 +206,39 @@ pub(crate) fn route(
                     };
                     menus.write(UiMenuRequest::Open(menu.into()));
                 }
+                "ui_class_camo" => {
+                    let row = match index(command)? {
+                        0 => ClassEditRow::Primary,
+                        1 => ClassEditRow::Secondary,
+                        _ => return Err("Unknown weapon slot".into()),
+                    };
+                    let slot = store
+                        .slots
+                        .get(store.selected)
+                        .ok_or("Class is unavailable")?;
+                    if camo_names(&catalog, slot.row_value(row)).is_empty() {
+                        return Err("This weapon has no camouflage".into());
+                    }
+                    *state = ClassMenuState {
+                        row: Some(row),
+                        camo: true,
+                        ..Default::default()
+                    };
+                    menus.write(UiMenuRequest::Open("class_picker".into()));
+                }
                 "ui_class_game" => {
                     let games = state.games(&catalog);
                     state.game = Some(*games.get(index(command)?).ok_or("Game is unavailable")?);
                     state.folder = None;
                     state.page = 0;
                     state.hover = 0;
-                    menus.write(UiMenuRequest::Open("class_categories".into()));
+                    let folders = state.folders(&catalog);
+                    if folders.len() == 1 && folders[0].category.is_none() {
+                        state.folder = Some(folders[0]);
+                        menus.write(UiMenuRequest::Open("class_picker".into()));
+                    } else {
+                        menus.write(UiMenuRequest::Open("class_categories".into()));
+                    }
                 }
                 "ui_class_category" => {
                     state.folder = Some(
@@ -195,7 +281,10 @@ pub(crate) fn route(
                         .get_mut(selected)
                         .ok_or("Class is unavailable")?;
                     let mut candidate = slot.clone();
-                    if state.attachments {
+                    if state.camo {
+                        let at = camo_slot(row).ok_or("This slot takes no camouflage")?;
+                        candidate.camos[at] = value;
+                    } else if state.attachments {
                         let mut chosen = if row == ClassEditRow::Primary {
                             candidate.primary_attachments.clone()
                         } else {
@@ -236,6 +325,12 @@ pub(crate) fn route(
                                 chosen.pop();
                             }
                         }
+                        let weapons = [candidate.primary.clone(), candidate.secondary.clone()];
+                        for (weapon, camo) in weapons.iter().zip(&mut candidate.camos) {
+                            if !camo.is_empty() && !camo_names(&catalog, weapon).contains(camo) {
+                                camo.clear();
+                            }
+                        }
                     }
                     catalog.validate_edit(&candidate, row)?;
                     candidate.lock_reason = catalog.validate_class(&candidate).err();
@@ -245,19 +340,37 @@ pub(crate) fn route(
                         return Err(reason.clone());
                     }
                     *slot = candidate;
-                    echo.write(format!(
-                        "menu: class {} {} = {}",
-                        selected + 1,
-                        row.label(),
-                        slot.row_value(row)
-                    ));
+                    if state.camo {
+                        let camo = camo_slot(row).map_or("", |at| slot.camos[at].as_str());
+                        echo.write(format!(
+                            "menu: class {} {} camouflage = {}",
+                            selected + 1,
+                            row.label(),
+                            camo_label(camo)
+                        ));
+                    } else {
+                        echo.write(format!(
+                            "menu: class {} {} = {}",
+                            selected + 1,
+                            row.label(),
+                            slot.row_value(row)
+                        ));
+                    }
                     for menu in ["class_picker", "class_categories", "class_games"] {
                         menus.write(UiMenuRequest::Close(menu.into()));
                     }
+                    let has_camo = !camo_names(&catalog, slot.row_value(row)).is_empty();
                     if !state.attachments
+                        && !state.camo
                         && matches!(row, ClassEditRow::Primary | ClassEditRow::Secondary)
                     {
                         state.attachments = true;
+                        state.page = 0;
+                        state.hover = 0;
+                        menus.write(UiMenuRequest::Open("class_picker".into()));
+                    } else if state.attachments && has_camo {
+                        state.attachments = false;
+                        state.camo = true;
                         state.page = 0;
                         state.hover = 0;
                         menus.write(UiMenuRequest::Open("class_picker".into()));
@@ -367,6 +480,20 @@ pub(crate) fn route(
                     .unwrap_or_default(),
             );
         }
+        for (at, camo) in slot.camos.iter().enumerate() {
+            dvars.set(
+                &format!("ui_class_camo_image_{at}"),
+                camo_preview(
+                    &catalog,
+                    if at == 0 {
+                        &slot.primary
+                    } else {
+                        &slot.secondary
+                    },
+                    camo,
+                ),
+            );
+        }
         for (name, selected) in [
             ("primary", &slot.primary_attachments),
             ("secondary", &slot.secondary_attachments),
@@ -438,14 +565,19 @@ pub(crate) fn route(
         "ui_class_more_pages",
         if choices.len() > PAGE_SIZE { "1" } else { "0" },
     );
-    dvars.set(
-        "ui_class_nested",
-        if !state.attachments && state.row.is_some_and(ClassLoadoutCatalog::uses_categories) {
-            "1"
-        } else {
-            "0"
-        },
-    );
+    let picker_depth = if state.attachments
+        || state.camo
+        || state
+            .row
+            .is_none_or(|row| !ClassLoadoutCatalog::uses_categories(row))
+    {
+        1
+    } else if state.folder.is_some_and(|folder| folder.category.is_none()) {
+        2
+    } else {
+        3
+    };
+    dvars.set("ui_class_picker_depth", picker_depth.to_string());
     let mut caption = state.row.map_or_else(
         || localized(&loc, "MENU_CLASSES", "Classes"),
         |row| localized(&loc, row.loc_key(), row.label()),
@@ -453,6 +585,8 @@ pub(crate) fn route(
     if state.attachments {
         caption.push_str(" / ");
         caption.push_str(&localized(&loc, "MENU_ATTACHMENTS_CAPS", "Attachments"));
+    } else if state.camo {
+        caption.push_str(" / Camouflage");
     }
     dvars.set("ui_class_caption", caption);
     dvars.set(
@@ -491,6 +625,16 @@ pub(crate) fn route(
                 .get(state.page * PAGE_SIZE + at)
                 .map(|value| {
                     let slot = store.slots.get(store.selected);
+                    if state.camo {
+                        let selected = slot
+                            .zip(state.row.and_then(camo_slot))
+                            .is_some_and(|(slot, at)| slot.camos[at] == *value);
+                        return format!(
+                            "{}{}",
+                            if selected { "* " } else { "" },
+                            camo_label(value)
+                        );
+                    }
                     let key = if state.attachments && !value.is_empty() {
                         slot.zip(state.row)
                             .map(|(slot, row)| format!("{}+{value}", slot.row_value(row)))
@@ -523,7 +667,9 @@ pub(crate) fn route(
                 .unwrap_or_default(),
         );
     }
-    let title = if state.attachments {
+    let title = if state.camo {
+        "Camouflage".to_owned()
+    } else if state.attachments {
         localized(&loc, "MENU_ATTACHMENTS_CAPS", "Attachments")
     } else if let Some(folder) = state.folder {
         format!(
@@ -540,6 +686,7 @@ pub(crate) fn route(
     dvars.set("ui_class_picker_title", title);
     let preview = choices
         .get(state.page * PAGE_SIZE + state.hover)
+        .filter(|_| !state.camo)
         .and_then(|key| {
             let lookup = if state.attachments {
                 let slot = store.slots.get(store.selected)?;
@@ -548,9 +695,7 @@ pub(crate) fn route(
                 key.clone()
             };
             let preview = catalog.previews.get(&lookup)?;
-            let ns = asset_core::AssetKey::parse(&lookup)
-                .map(|key| key.namespace)
-                .unwrap_or(asset_core::AssetNamespace::Iw4);
+            let ns = asset_core::AssetKey::parse(&lookup).ok()?.namespace;
             Some((ns, preview))
         });
     let image = preview
@@ -563,6 +708,24 @@ pub(crate) fn route(
             }
         })
         .unwrap_or_default();
+    let image = if state.camo {
+        choices
+            .get(state.page * PAGE_SIZE + state.hover)
+            .filter(|camo| !camo.is_empty())
+            .map_or_else(String::new, |camo| {
+                camo_preview(
+                    &catalog,
+                    store
+                        .slots
+                        .get(store.selected)
+                        .zip(state.row)
+                        .map_or("", |(slot, row)| slot.row_value(row)),
+                    camo,
+                )
+            })
+    } else {
+        image
+    };
     dvars.set("ui_class_preview", image);
     let square_preview = state.attachments
         || matches!(

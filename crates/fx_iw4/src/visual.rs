@@ -1,5 +1,5 @@
 use crate::origin::sample_float_range;
-use crate::random::{FX_RAND_CH_INITIAL_ROTATION, FX_RAND_CH_ROTATION_DELTA, random_table_f32};
+use crate::random::{FxRandomChannel, sample_f32};
 
 pub const FX_ELEM_VIS_STATE_SAMPLE_SIZE: usize = 0x30;
 
@@ -63,11 +63,11 @@ fn read_f32(bytes: &[u8], off: usize) -> Option<f32> {
 pub fn integrate_rotation_from_zero(
     s0: &[u8],
     s1: &[u8],
-    seed: u32,
+    seed: u64,
     sample_lerp: f32,
     life_msec: f32,
 ) -> f32 {
-    let r = random_table_f32(seed, FX_RAND_CH_ROTATION_DELTA);
+    let r = sample_f32(seed, FxRandomChannel::RotationDelta);
     let half_sq = sample_lerp * sample_lerp * 0.5;
     let base_delta0 = read_f32(s0, FX_VIS_ROT_DELTA_OFF).unwrap_or(0.0);
     let amp_delta0 = read_f32(s0, FX_ELEM_VISUAL_STATE_SIZE + FX_VIS_ROT_DELTA_OFF).unwrap_or(0.0);
@@ -86,7 +86,7 @@ pub fn evaluate_rotation_total(
     samples: &[u8],
     interval_count: u8,
     norm_time: f32,
-    seed: u32,
+    seed: u64,
     initial_rotation: [f32; 2],
     life_msec: f32,
 ) -> Option<f32> {
@@ -95,7 +95,7 @@ pub fn evaluate_rotation_total(
     let initial = sample_float_range(
         initial_rotation[0],
         initial_rotation[1],
-        random_table_f32(seed, FX_RAND_CH_INITIAL_ROTATION),
+        sample_f32(seed, FxRandomChannel::InitialRotation),
     );
     Some(initial + integrate_rotation_from_zero(s0, s1, seed, frac, life_msec))
 }

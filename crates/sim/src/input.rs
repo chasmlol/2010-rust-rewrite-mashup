@@ -28,6 +28,7 @@ pub enum ClientAction {
     GiveWeapon {
         request_id: ActionRequestId,
         weapon: u32,
+        model: u8,
     },
 
     ChangeWeaponConfiguration {
@@ -69,9 +70,18 @@ pub enum ClientAction {
         speed: f32,
     },
 
+    ToggleGod {
+        request_id: ActionRequestId,
+    },
+
     DebugDamage {
         request_id: ActionRequestId,
         amount: i32,
+    },
+
+    SetProfile {
+        request_id: ActionRequestId,
+        profile: PlayerProfile,
     },
 
     SetName {
@@ -109,6 +119,13 @@ pub enum ClientAction {
     },
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct PlayerProfile {
+    pub title: u32,
+    pub emblem: u32,
+    pub killstreaks: [u32; 3],
+}
+
 pub const MENU_RESPONSE_BYTES: usize = 48;
 
 pub fn menu_response_field(text: &str) -> Option<[u8; MENU_RESPONSE_BYTES]> {
@@ -132,22 +149,57 @@ pub enum SpawnPick {
     At { origin: [f32; 3], yaw: f32 },
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct CommandSequence(pub u32);
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PlayerCommand {
+    pub client: ClientId,
+    pub command: UserCmd,
+    pub sequence: Option<CommandSequence>,
+}
+
+impl PlayerCommand {
+    pub fn unsequenced(client: ClientId, command: UserCmd) -> Self {
+        Self {
+            client,
+            command,
+            sequence: None,
+        }
+    }
+
+    pub fn sequenced(client: ClientId, command: UserCmd, sequence: CommandSequence) -> Self {
+        Self {
+            client,
+            command,
+            sequence: Some(sequence),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct TickInput {
-    pub cmds: Vec<(ClientId, UserCmd)>,
+    pub cmds: Vec<PlayerCommand>,
     pub actions: Vec<(ClientId, ClientAction)>,
+    pub shot_samples: Vec<((ClientId, i32), crate::ShotSampleProvenance)>,
 }
 
 impl TickInput {
     pub fn from_cmds(cmds: Vec<(ClientId, UserCmd)>) -> Self {
         Self {
-            cmds,
+            cmds: cmds
+                .into_iter()
+                .map(|(client, command)| PlayerCommand::unsequenced(client, command))
+                .collect(),
             actions: Vec::new(),
+            shot_samples: Vec::new(),
         }
     }
 
     pub fn canonicalize(&mut self) {
-        self.cmds.sort_by_key(|(id, _)| id.0);
+        self.cmds.sort_by_key(|input| input.client.0);
+        self.shot_samples
+            .sort_by_key(|((id, time), _)| (id.0, *time));
 
         self.actions
             .sort_by_key(|(id, action)| (id.0, action_request_id(action)));
@@ -168,8 +220,10 @@ pub fn action_request_id(action: &ClientAction) -> ActionRequestId {
         | ClientAction::SetMatchPhase { request_id, .. }
         | ClientAction::Move { request_id, .. }
         | ClientAction::BeginScriptMoverRotateVelocity { request_id, .. }
+        | ClientAction::ToggleGod { request_id }
         | ClientAction::DebugDamage { request_id, .. }
         | ClientAction::SetName { request_id, .. }
+        | ClientAction::SetProfile { request_id, .. }
         | ClientAction::UseCopycat { request_id }
         | ClientAction::ActionSlot { request_id, .. }
         | ClientAction::ChooseDefaultClass { request_id, .. }

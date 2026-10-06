@@ -1,9 +1,22 @@
 use std::collections::BTreeMap;
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[repr(u8)]
+pub enum SourceOrigin {
+    Packaged = 0,
+    BuiltIn = 1,
+    #[default]
+    External = 2,
+}
+
 pub trait SourceResolver {
     fn read(&self, module: &str) -> Result<String, String>;
     fn read_bytes(&self, module: &str) -> Result<Vec<u8>, String> {
         self.read(module).map(String::into_bytes)
+    }
+    /// Unclassified sources cannot authorize persistent account mutations.
+    fn origin(&self, _module: &str) -> SourceOrigin {
+        SourceOrigin::External
     }
 }
 

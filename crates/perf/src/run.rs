@@ -17,7 +17,11 @@ static RUN: OnceLock<Result<(PathBuf, String), String>> = OnceLock::new();
 fn slot() -> &'static Result<(PathBuf, String), String> {
     RUN.get_or_init(|| {
         let id = uuid::Uuid::new_v4().to_string();
-        let dir = PathBuf::from("iw4l-artifacts/runs").join(&id);
+        let dir = std::env::var_os("IW4L_ARTIFACTS_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("iw4l-artifacts"))
+            .join("runs")
+            .join(&id);
         std::fs::create_dir_all(&dir)
             .map_err(|error| format!("create {}: {error}", dir.display()))?;
         Ok((dir, id))

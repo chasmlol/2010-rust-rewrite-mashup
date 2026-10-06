@@ -12,14 +12,6 @@ use crate::zone::{ZoneMemory, open_zone_shared};
 use crate::zone_sound::{ZoneSoundOrigin, ensure_zone_sound};
 use crate::{AssetNamespace, ZoneGame};
 
-pub fn namespace_for_zone(games: &GamesRoot, zone: &str) -> AssetNamespace {
-    find_zone_file(games, zone)
-        .ok()
-        .and_then(|found| crate::zone_game_for_path(&found.path))
-        .map(AssetNamespace::from_zone_game)
-        .unwrap_or(AssetNamespace::Iw4)
-}
-
 struct SoundSink {
     catalog: SoundCatalog,
     walked: usize,
@@ -157,6 +149,7 @@ pub(crate) fn walk_zone_sound(path: &Path) -> Result<SoundCatalog, String> {
         ZoneGame::Iw4 => load_sound_catalog(path),
         ZoneGame::Iw5 => crate::sound_load_iw5::load_sound_catalog_iw5(path),
         ZoneGame::T5 => crate::sound_load_t5::load_sound_catalog_t5(path),
+        ZoneGame::T6 => Err(format!("{}: T6 sound banks are not read", path.display())),
     }
 }
 
@@ -205,6 +198,11 @@ fn sound_sources(games: &GamesRoot, map: &Path) -> (Vec<SoundSource>, Vec<SoundS
     let after_map = vec![
         donor(
             AssetNamespace::Iw5,
+            "code_post_gfx_mp",
+            fastfile_iw5::ZONE_VERSION_PC,
+        ),
+        donor(
+            AssetNamespace::Iw5,
             "common_mp",
             fastfile_iw5::ZONE_VERSION_PC,
         ),
@@ -227,6 +225,11 @@ fn sound_sources(games: &GamesRoot, map: &Path) -> (Vec<SoundSource>, Vec<SoundS
             AssetNamespace::T5,
             "localized_common_mp",
             fastfile_t5::ZONE_VERSION_PC,
+        ),
+        donor(
+            AssetNamespace::T6,
+            "common_mp",
+            fastfile_t6::ZONE_VERSION_PC,
         ),
     ];
     (before_map, after_map)

@@ -39,7 +39,7 @@ pub fn build_sky_model_draw_plan(
     if exact.is_empty() {
         return;
     }
-    let (mut geometry, _, _) = pack_smodel_meshes(std::slice::from_ref(model));
+    let (mut geometry, _, _, _) = pack_smodel_meshes(std::slice::from_ref(model), &[]);
     let mut draws = Vec::new();
     let mut refusals = Vec::new();
     for &(surface, authored) in &geometry.meshes[0].surfaces_by_lod[0] {
@@ -53,6 +53,7 @@ pub fn build_sky_model_draw_plan(
         };
         let Some(ordinal) = scene
             .runtime_material_catalog
+            .parts()
             .sorted_materials
             .ordinal_for_asset_id(authored.order())
         else {
@@ -89,6 +90,7 @@ pub fn build_sky_model_draw_plan(
             packed_lighting: None,
             is_scope: false,
             scene_entnum: None,
+            body_client: None,
             caster_bound: None,
         });
     }

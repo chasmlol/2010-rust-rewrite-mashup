@@ -31,6 +31,17 @@ impl OverheadPosedPlayerFrame {
     }
 }
 
+#[derive(Resource, Debug, Default)]
+pub struct OverheadPosedModelFrame {
+    models: std::collections::HashSet<(sim::ScriptModelId, u16)>,
+}
+impl OverheadPosedModelFrame {
+    pub fn replace(&mut self, rows: impl IntoIterator<Item = (sim::ScriptModelId, u16)>) {
+        self.models.clear();
+        self.models.extend(rows);
+    }
+}
+
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub struct OverheadPosedPlayerFramePublished;
 
@@ -43,16 +54,63 @@ pub(crate) struct NameMemory {
     seen: HashMap<u16, (i32, i32, bool)>,
 }
 
+#[derive(Clone, Copy, Debug)]
+struct TargetBoxSettings {
+    client: Option<sim::ClientId>,
+    scale: f32,
+    min_size: f32,
+    delay_seconds: f32,
+    fade_seconds: f32,
+}
+
+impl Default for TargetBoxSettings {
+    fn default() -> Self {
+        Self {
+            client: None,
+            scale: sim::TargetBoxDvar::Scale.default_value(),
+            min_size: sim::TargetBoxDvar::MinSize.default_value(),
+            delay_seconds: sim::TargetBoxDvar::SpawnDelay.default_value(),
+            fade_seconds: sim::TargetBoxDvar::SpawnFade.default_value(),
+        }
+    }
+}
+
+impl TargetBoxSettings {
+    fn update(&mut self, client: sim::ClientId, dvars: sim::ScriptDvars<'_>) {
+        if self.client != Some(client) {
+            *self = Self {
+                client: Some(client),
+                ..Self::default()
+            };
+        }
+        for (setting, slot) in [
+            (sim::TargetBoxDvar::Scale, &mut self.scale),
+            (sim::TargetBoxDvar::MinSize, &mut self.min_size),
+            (sim::TargetBoxDvar::SpawnDelay, &mut self.delay_seconds),
+            (sim::TargetBoxDvar::SpawnFade, &mut self.fade_seconds),
+        ] {
+            match dvars.float(setting.name()) {
+                Some(value) if setting.accepts(value) => *slot = value,
+                None => *slot = setting.default_value(),
+                _ => {}
+            }
+        }
+    }
+}
+
 pub(crate) fn register(app: &mut App) {
-    app.init_resource::<OverheadPosedPlayerFrame>().add_systems(
-        Update,
-        update_overhead_names
-            .after(OverheadPosedPlayerFramePublished)
-            .after(crate::surface::update_hud_surface)
-            .before(crate::plugin::flush_overhead_names_tess)
-            .before(crate::gaps::report_hud_gaps)
-            .in_set(frame::LifeFrontPublished),
-    );
+    app.init_resource::<OverheadPosedModelFrame>()
+        .init_resource::<OverheadPosedPlayerFrame>()
+        .add_systems(
+            Update,
+            update_overhead_names
+                .after(OverheadPosedPlayerFramePublished)
+                .after(frame::ScreenEffectsPublished)
+                .after(crate::surface::update_hud_surface)
+                .before(crate::plugin::flush_overhead_names_tess)
+                .before(crate::gaps::report_hud_gaps)
+                .in_set(frame::LifeFrontPublished),
+        );
 }
 
 fn name_color(local_team: i32, target_team: i32) -> [f32; 4] {
@@ -110,6 +168,7 @@ fn update_overhead_names(
     presented: Res<PresentedSnapshot>,
     local: Res<LocalPresentClient>,
     posed: Res<OverheadPosedPlayerFrame>,
+    posed_models: Res<OverheadPosedModelFrame>,
     players: Query<(&CEntity, &CEntityRuntime)>,
     cg_clock: Res<FrameClock>,
     surface: Res<crate::surface::Hud2dSurface>,
@@ -117,8 +176,10 @@ fn update_overhead_names(
     cameras: Query<(&Camera, &GlobalTransform), With<Camera3d>>,
     prediction: Option<Res<net::ClientPredictionState>>,
     view: Res<frame::ViewSubject>,
+    effects: Res<frame::ScreenEffectsView>,
     mut pass: ResMut<HudTessPass>,
     mut memory: Local<NameMemory>,
+    mut target_settings: Local<TargetBoxSettings>,
     mut gaps: ResMut<HudPresentationGaps>,
 ) {
     pass.overhead_names = TessJob::Hide;
@@ -129,17 +190,59 @@ fn update_overhead_names(
     }
     memory.last_time = Some(now);
     let Some(snapshot) = presented.snapshot() else {
+        *target_settings = TargetBoxSettings::default();
         memory.seen.clear();
         return;
     };
-    if !surface.is_ready() || view.in_killcam() {
+    target_settings.update(local.0, snapshot.meta.script_dvars(local.0));
+    if !surface.is_ready() {
         memory.seen.clear();
         return;
     }
-    let Some(ps) = presented.alive_player(local.0) else {
+    let Some(ps) = presented.player(local.0) else {
         memory.seen.clear();
         return;
     };
+    if ps.other_flags & 0x10 != 0 {
+        memory.seen.clear();
+        let dvars = snapshot.meta.script_dvars(local.0);
+        if matches!(ps.pm_type, 5 | 6)
+            || (view.in_killcam() && (!effects.ready || effects.default_killcam_view))
+            || dvars.int("cg_draw2D") == Some(0)
+            || dvars.int("net_showprofile").is_some_and(|value| value != 0)
+        {
+            return;
+        }
+        let Some((camera, transform)) = cameras.iter().find(|(c, _)| c.is_active) else {
+            return;
+        };
+        let mut quads = thermal_target_quads(
+            snapshot,
+            local.0,
+            now,
+            &surface,
+            (camera, transform),
+            &players,
+            &target_settings,
+        );
+        quads.extend(vehicle_target_quads(
+            snapshot,
+            local.0,
+            &surface,
+            (camera, transform),
+            &players,
+            &posed_models,
+            &target_settings,
+        ));
+        if !quads.is_empty() {
+            pass.overhead_names = TessJob::Quads(quads);
+        }
+        return;
+    }
+    if view.in_killcam() || presented.alive_player(local.0).is_none() {
+        memory.seen.clear();
+        return;
+    }
     let Some(local_meta) = snapshot.meta.for_client(local.0) else {
         return;
     };
@@ -158,16 +261,6 @@ fn update_overhead_names(
     let Some((camera, transform)) = cameras.iter().find(|(c, _)| c.is_active) else {
         return;
     };
-    if ps.other_flags & 0x10 != 0 {
-        memory.seen.clear();
-        let quads = thermal_target_quads(
-            snapshot, local.0, now, &surface, camera, transform, &players,
-        );
-        if !quads.is_empty() {
-            pass.overhead_names = TessJob::Quads(quads);
-        }
-        return;
-    }
     let Some(world) = prediction
         .as_ref()
         .filter(|p| p.0.is_armed() && p.0.world().has_world_clip())
@@ -201,6 +294,16 @@ fn update_overhead_names(
             continue;
         };
         if meta.lifecycle != sim::ClientLifecycle::Alive {
+            continue;
+        }
+        let enemy = local_meta.client_state_team == 0
+            || local_meta.client_state_team != meta.client_state_team;
+        if enemy
+            && snapshot
+                .players
+                .iter()
+                .any(|(id, ps)| *id == client && ps.perks[1] & playerstate_iw4::PERK1_SPYGAME != 0)
+        {
             continue;
         }
         let Some(name) = entity_iw4::client_state_name(&meta.name) else {
@@ -408,28 +511,19 @@ fn thermal_target_quads(
     local: sim::ClientId,
     now: i32,
     surface: &crate::surface::Hud2dSurface,
-    camera: &Camera,
-    transform: &GlobalTransform,
+    view: (&Camera, &GlobalTransform),
     players: &Query<(&CEntity, &CEntityRuntime)>,
+    settings: &TargetBoxSettings,
 ) -> Vec<crate::draw2d::Draw2dQuad> {
     let Some(local_meta) = snapshot.meta.for_client(local) else {
         return Vec::new();
     };
-    let dvars = snapshot.meta.script_dvars(local);
-    let setting = |name: &str, default: f32| {
-        dvars
-            .string(name)
-            .and_then(|s| s.parse::<f32>().ok())
-            .filter(|v| v.is_finite())
-            .unwrap_or(default)
-            .max(0.0)
-    };
-    let scale = setting("FoFIconScale", 1.3);
-    let virtual_scale = surface.scale_virtual_to_real()[1];
-    let min_size = setting("FoFIconMinSize", 30.0) * virtual_scale;
-    let max_size = (setting("FoFIconMaxSize", 640.0) * virtual_scale).max(min_size);
-    let delay = setting("FoFIconSpawnTimeDelay", 1.0) * 1000.0;
-    let fade = setting("FoFIconSpawnTimeFade", 5.0) * 1000.0;
+    let (camera, transform) = view;
+    let scale = settings.scale;
+    let virtual_scale = surface.scale_virtual_to_real()[0];
+    let min_size = settings.min_size * virtual_scale;
+    let delay = (settings.delay_seconds * 1000.0) as i32;
+    let fade = settings.fade_seconds * 1000.0;
     let mut quads = Vec::new();
     for (identity, runtime) in players {
         if !runtime.in_next_snap() || runtime.next_state.e_type != entity_iw4::ET_PLAYER {
@@ -461,18 +555,18 @@ fn thermal_target_quads(
         let alpha = if own {
             1.0
         } else {
-            let age = now.saturating_sub(meta.item_use_spawn_ms) as f32 - delay;
-            if age <= 0.0 {
+            let age = now.wrapping_sub(meta.item_use_spawn_ms);
+            if age <= delay {
                 continue;
             }
             if fade > 0.0 {
-                (age / fade).min(1.0)
+                (age.wrapping_sub(delay) as f32 / fade).min(1.0)
             } else {
                 1.0
             }
         };
         let origin = Vec3::from_array(runtime.origin);
-        let top = origin + Vec3::Z * (ps.view_height_current + 12.0).max(1.0);
+        let top = origin + Vec3::Z * 60.0;
         let (Ok(base), Ok(head)) = (
             camera.world_to_viewport(transform, origin),
             camera.world_to_viewport(transform, top),
@@ -480,22 +574,18 @@ fn thermal_target_quads(
             continue;
         };
         let center = (base + head) * 0.5;
-        if !center.is_finite()
-            || center.x < 0.0
-            || center.y < 0.0
-            || center.x > surface.width()
-            || center.y > surface.height()
-        {
+        if !center.is_finite() {
             continue;
         }
-        let size = (base.distance(head) * scale).clamp(min_size, max_size);
+        let size = (base.distance(head) * scale).max(min_size);
         let half = size * 0.5;
+        let half_height = half * surface.display_pixel_aspect();
         quads.push(crate::draw2d::Draw2dQuad {
             xy: [
-                [center.x - half, center.y - half],
-                [center.x + half, center.y - half],
-                [center.x + half, center.y + half],
-                [center.x - half, center.y + half],
+                [center.x - half, center.y - half_height],
+                [center.x + half, center.y - half_height],
+                [center.x + half, center.y + half_height],
+                [center.x - half, center.y + half_height],
             ],
             st: [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]],
             color: [1.0, 1.0, 1.0, alpha],
@@ -508,6 +598,81 @@ fn thermal_target_quads(
             material_namespace: crate::images::HUD_CHROME_NAMESPACE,
             provenance: Draw2dProvenance::CgDraw {
                 site: "thermal_targets",
+            },
+            layer: 1,
+            clip: None,
+        });
+    }
+    quads
+}
+
+fn vehicle_target_quads(
+    snapshot: &sim::Snapshot,
+    local: sim::ClientId,
+    surface: &crate::surface::Hud2dSurface,
+    view: (&Camera, &GlobalTransform),
+    entities: &Query<(&CEntity, &CEntityRuntime)>,
+    posed: &OverheadPosedModelFrame,
+    settings: &TargetBoxSettings,
+) -> Vec<crate::draw2d::Draw2dQuad> {
+    let Some(local_meta) = snapshot.meta.for_client(local) else {
+        return Vec::new();
+    };
+    let (camera, transform) = view;
+    let mut quads = Vec::new();
+    for target in &snapshot.meta.objectives.vehicle_targets {
+        if target.owner == local
+            || (local_meta.client_state_team != 0
+                && snapshot
+                    .meta
+                    .for_client(target.owner)
+                    .is_some_and(|owner| owner.client_state_team == local_meta.client_state_team))
+        {
+            continue;
+        }
+        if !posed.models.contains(&(target.model, target.entity)) {
+            continue;
+        }
+        let Some((_, runtime)) = entities
+            .iter()
+            .find(|(identity, _)| identity.number() == target.entity)
+        else {
+            continue;
+        };
+        if !runtime.in_next_snap()
+            || runtime.next_state.e_type != entity_iw4::ET_SCRIPTMOVER
+            || runtime.next_state.e_flags & entity_iw4::CG_SCRIPT_MOVER_NODRAW != 0
+        {
+            continue;
+        }
+        let origin = Vec3::from_array(runtime.origin);
+        let (Ok(a), Ok(b)) = (
+            camera.world_to_viewport(transform, origin + Vec3::new(-60.0, -60.0, -160.0)),
+            camera.world_to_viewport(transform, origin + Vec3::new(60.0, 60.0, -40.0)),
+        ) else {
+            continue;
+        };
+        let center = (a + b) * 0.5;
+        if !center.is_finite() {
+            continue;
+        }
+        let half = (a.distance(b) * settings.scale)
+            .max(settings.min_size * surface.scale_virtual_to_real()[0])
+            * 0.5;
+        let height = half * surface.display_pixel_aspect();
+        quads.push(crate::draw2d::Draw2dQuad {
+            xy: [
+                [center.x - half, center.y - height],
+                [center.x + half, center.y - height],
+                [center.x + half, center.y + height],
+                [center.x - half, center.y + height],
+            ],
+            st: [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]],
+            color: [1.0; 4],
+            material: "hud_fofbox_hostile".into(),
+            material_namespace: crate::images::HUD_CHROME_NAMESPACE,
+            provenance: Draw2dProvenance::CgDraw {
+                site: "thermal_vehicle_targets",
             },
             layer: 1,
             clip: None,

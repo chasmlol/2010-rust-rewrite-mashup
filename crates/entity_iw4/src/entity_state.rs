@@ -32,6 +32,7 @@ pub struct EntityState {
     pub wes: u32,
     pub torso_anim: i32,
     pub legs_anim: i32,
+    pub weapon_model: u8,
     pub client_link_info: u32,
     pub part_bits_0: u32,
     pub part_bits_1: u32,

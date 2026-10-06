@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 
-use crate::classes::icons::cac_weapon_image;
+use asset_game::{CacItemPresentation, prepare_cac_preview};
 
 pub const NO_PERK: &str = "specialty_null";
 
@@ -95,6 +95,7 @@ pub struct ClassLoadoutCatalog {
     pub excluded: Vec<(String, String)>,
     pub previews: std::collections::BTreeMap<String, asset_game::CacWeaponPreview>,
     pub resolver: CatalogResolver,
+    pub presentation: std::collections::BTreeMap<String, CacItemPresentation>,
 }
 
 impl Default for ClassLoadoutCatalog {
@@ -120,6 +121,21 @@ impl Default for ClassLoadoutCatalog {
             excluded: Vec::new(),
             previews: std::collections::BTreeMap::new(),
             resolver: CatalogResolver::default(),
+            presentation: ClassEditRow::ALL
+                .into_iter()
+                .flat_map(|row| {
+                    cac_roster(row).iter().map(move |key| {
+                        (
+                            (*key).to_owned(),
+                            if row.perk_slot().is_some() {
+                                CacItemPresentation::prepare_perk(key)
+                            } else {
+                                CacItemPresentation::prepare_weapon(key)
+                            },
+                        )
+                    })
+                })
+                .collect(),
         }
     }
 }
@@ -130,25 +146,41 @@ impl ClassLoadoutCatalog {
         let mut catalog = Self::default();
         for family in families.offered() {
             let key = family.key.asset_key();
+            catalog
+                .presentation
+                .insert(key.clone(), CacItemPresentation::prepare_weapon(&key));
             catalog.previews.insert(
                 key.clone(),
-                asset_game::CacWeaponPreview {
-                    reference: family.key.base.clone(),
-                    name_key: format!("@{}", family.display_key.trim_start_matches('@')),
-                    image: family.image.clone(),
-                    ..Default::default()
-                },
+                prepare_cac_preview(
+                    family.key.namespace,
+                    asset_game::CacWeaponPreview {
+                        reference: family.key.base.clone(),
+                        name_key: family.name_key(),
+                        image: family.image.clone(),
+                        ..Default::default()
+                    },
+                ),
             );
             for choice in &family.attachments {
+                catalog.presentation.insert(
+                    attachment_preview_key(&key, &choice.name),
+                    CacItemPresentation::prepare_attachment(&attachment_preview_key(
+                        &key,
+                        &choice.name,
+                    )),
+                );
                 catalog.previews.insert(
                     attachment_preview_key(&key, &choice.name),
-                    asset_game::CacWeaponPreview {
-                        reference: choice.name.clone(),
-                        name_key: format!("@{}", choice.caption_key),
-                        image: choice.icon.clone(),
-                        desc_key: format!("@{}", choice.desc_key),
-                        bars: Vec::new(),
-                    },
+                    prepare_cac_preview(
+                        family.key.namespace,
+                        asset_game::CacWeaponPreview {
+                            reference: choice.name.clone(),
+                            name_key: choice.caption_key.clone(),
+                            image: choice.icon.clone(),
+                            desc_key: choice.desc_key.clone(),
+                            bars: Vec::new(),
+                        },
+                    ),
                 );
             }
             let offer = frame::CacWeaponOffer {
@@ -185,7 +217,7 @@ impl ClassLoadoutCatalog {
                 if asset_core::AssetKey::parse(key).is_ok_and(|key| key.namespace == *namespace)
                     && let Some(authored) = asset_game::weapon_preview(table, key)
                 {
-                    *preview = authored;
+                    *preview = prepare_cac_preview(*namespace, authored);
                 }
             }
         }
@@ -236,34 +268,30 @@ impl ClassLoadoutCatalog {
         ];
         self.deathstreak = of_slot(asset_game::CacPerkSlot::Deathstreak);
         for offer in self.lethal.iter().chain(&self.tactical) {
-            if asset_core::AssetKey::parse(&offer.key)
-                .is_ok_and(|key| key.namespace == asset_core::AssetNamespace::Iw4)
+            if let Some(preview) = self.previews.get_mut(&offer.key)
+                && let Some(prepared) =
+                    asset_game::prepare_cac_equipment_preview(table, &offer.key, preview)
             {
-                let leaf = offer.key.rsplit('/').next().unwrap_or(&offer.key);
-                let reference = if leaf.ends_with("_mp") {
-                    leaf.to_owned()
-                } else {
-                    format!("{leaf}_mp")
-                };
-                let icon = table.lookup(1, &reference, 3);
-                if !icon.is_empty()
-                    && let Some(preview) = self.previews.get_mut(&offer.key)
-                {
-                    preview.image = icon.to_owned();
-                    preview.desc_key = format!("@{}", table.lookup(1, &reference, 4));
-                }
+                *preview = prepared;
             }
         }
         for row in rows {
+            self.presentation.insert(
+                row.reference.clone(),
+                CacItemPresentation::prepare_perk(&row.reference),
+            );
             self.previews.insert(
                 row.reference.clone(),
-                asset_game::CacWeaponPreview {
-                    reference: row.reference,
-                    name_key: row.name_key,
-                    image: row.image,
-                    desc_key: row.desc_key,
-                    ..Default::default()
-                },
+                prepare_cac_preview(
+                    asset_core::AssetNamespace::Iw4,
+                    asset_game::CacWeaponPreview {
+                        reference: row.reference,
+                        name_key: row.name_key,
+                        image: row.image,
+                        desc_key: row.desc_key,
+                        ..Default::default()
+                    },
+                ),
             );
         }
         self
@@ -428,6 +456,7 @@ pub struct ClassSlotState {
     pub perk2: String,
     pub perk3: String,
     pub deathstreak: String,
+    pub camos: [String; 2],
 
     pub lock_reason: Option<String>,
 }
@@ -446,6 +475,7 @@ impl ClassSlotState {
             perk2: slot.perks[1].clone(),
             perk3: slot.perks[2].clone(),
             deathstreak: slot.deathstreak.clone(),
+            camos: slot.camos.clone(),
             lock_reason: None,
         }
     }
@@ -475,6 +505,7 @@ impl ClassSlotState {
             perk2: perk(1),
             perk3: perk(2),
             deathstreak: preset.deathstreak.to_owned(),
+            camos: Default::default(),
             lock_reason: None,
         }
     }
@@ -536,110 +567,30 @@ impl ClassPickerFolder {
 }
 
 fn cac_roster(row: ClassEditRow) -> &'static [&'static str] {
-    match row {
-        ClassEditRow::Primary => &[
-            "m4_mp",
-            "famas_mp",
-            "scar_mp",
-            "tar21_mp",
-            "fal_mp",
-            "m16_mp",
-            "masada_mp",
-            "fn2000_mp",
-            "ak47_mp",
-            "mp5k_mp",
-            "uzi_mp",
-            "p90_mp",
-            "kriss_mp",
-            "ump45_mp",
-            "rpd_mp",
-            "sa80_mp",
-            "mg4_mp",
-            "m240_mp",
-            "aug_mp",
-            "barrett_mp",
-            "cheytac_mp",
-            "wa2000_mp",
-            "m21_mp",
-            "riotshield_mp",
-        ],
-        ClassEditRow::Secondary => &[
-            "glock_mp",
-            "beretta393_mp",
-            "pp2000_mp",
-            "tmp_mp",
-            "ranger_mp",
-            "model1887_mp",
-            "striker_mp",
-            "aa12_mp",
-            "m1014_mp",
-            "spas12_mp",
-            "usp_mp",
-            "beretta_mp",
-            "deserteagle_mp",
-            "coltanaconda_mp",
-            "at4_mp",
-            "rpg_mp",
-            "stinger_mp",
-            "javelin_mp",
-        ],
-        ClassEditRow::Lethal => &[
-            "frag_grenade_mp",
-            "semtex_mp",
-            "throwingknife_mp",
-            "claymore_mp",
-            "c4_mp",
-        ],
-        ClassEditRow::Tactical => &[
-            "flash_grenade_mp",
-            "concussion_grenade_mp",
-            "smoke_grenade_mp",
-            "flare_mp",
-        ],
-        ClassEditRow::Perk1 => &[
-            "specialty_null",
-            "specialty_marathon",
-            "specialty_fastreload",
-            "specialty_scavenger",
-            "specialty_onemanarmy",
-            "specialty_bling",
-        ],
-        ClassEditRow::Perk2 => &[
-            "specialty_null",
-            "specialty_bulletdamage",
-            "specialty_lightweight",
-            "specialty_hardline",
-            "specialty_coldblooded",
-            "specialty_explosivedamage",
-        ],
-        ClassEditRow::Perk3 => &[
-            "specialty_null",
-            "specialty_extendedmelee",
-            "specialty_bulletaccuracy",
-            "specialty_localjammer",
-            "specialty_heartbreaker",
-            "specialty_detectexplosive",
-            "specialty_pistoldeath",
-        ],
-        ClassEditRow::Deathstreak => &[
-            "specialty_null",
-            "specialty_grenadepulldeath",
-            "specialty_c4death",
-            "specialty_combathigh",
-            "specialty_finalstand",
-            "specialty_copycat",
-        ],
-    }
+    use asset_game::CacHostSlot;
+    asset_game::cac_host_roster(match row {
+        ClassEditRow::Primary => CacHostSlot::Primary,
+        ClassEditRow::Secondary => CacHostSlot::Secondary,
+        ClassEditRow::Lethal => CacHostSlot::Lethal,
+        ClassEditRow::Tactical => CacHostSlot::Tactical,
+        ClassEditRow::Perk1 => CacHostSlot::Perk1,
+        ClassEditRow::Perk2 => CacHostSlot::Perk2,
+        ClassEditRow::Perk3 => CacHostSlot::Perk3,
+        ClassEditRow::Deathstreak => CacHostSlot::Deathstreak,
+    })
 }
 
-pub fn picker_icon_stems() -> Vec<&'static str> {
+pub fn picker_icon_stems() -> Vec<String> {
     let mut stems = Vec::new();
     for row in ClassEditRow::ALL {
         for opt in cac_roster(row) {
-            if row.perk_slot().is_some() {
-                stems.push(crate::classes::icons::cac_material_iwd_stem(opt));
-            } else if let Some(stem) = cac_weapon_image(opt) {
-                stems.push(stem);
+            let presentation = if row.perk_slot().is_some() {
+                CacItemPresentation::prepare_perk(opt)
+            } else {
+                CacItemPresentation::prepare_weapon(opt)
+            };
+            if let Some(stem) = presentation.archive_image() {
+                stems.push(stem.to_owned());
             }
         }
     }

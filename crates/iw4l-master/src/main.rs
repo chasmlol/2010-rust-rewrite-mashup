@@ -1,5 +1,7 @@
 #![forbid(unsafe_code)]
 
+mod updates;
+
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufReader, Write};
@@ -87,6 +89,7 @@ enum Command {
         bind: SocketAddr,
         cert: PathBuf,
         key: PathBuf,
+        updates: PathBuf,
     },
     Status(ClientTarget),
     List(ClientTarget),
@@ -96,6 +99,7 @@ enum Command {
 /// Everything `serve` will be started with. Kept next to the `serve` parser so
 /// a new flag cannot reach one without the other.
 struct UnitSpec {
+    updates: PathBuf,
     channel: Channel,
     exec: PathBuf,
     cert: PathBuf,
@@ -386,7 +390,17 @@ impl ServiceState {
 #[tokio::main]
 async fn main() -> Result<()> {
     match parse_args()? {
-        Command::Serve { bind, cert, key } => serve(bind, &cert, &key).await,
+        Command::Serve {
+            bind,
+            cert,
+            key,
+            updates,
+        } => {
+            tokio::select! {
+                result = serve(bind, &cert, &key) => result,
+                result = updates::serve(bind, cert.clone(), key.clone(), updates) => result,
+            }
+        }
         Command::Status(target) => tokio::time::timeout(CLI_DEADLINE, status(&target))
             .await
             .map_err(|_| "master status deadline (connect + RPC)")?,
@@ -402,6 +416,7 @@ fn parse_args() -> Result<Command> {
     let command = args
         .next()
         .ok_or("usage: iw4l-master serve|status|list|print-unit ...")?;
+    let mut updates = PathBuf::from("updates");
     let mut bind = None;
     let mut cert = None;
     let mut key = None;
@@ -417,6 +432,7 @@ fn parse_args() -> Result<Command> {
             .next()
             .ok_or_else(|| format!("missing value for {flag}"))?;
         match flag.as_str() {
+            "--updates" => updates = PathBuf::from(value),
             "--bind" => bind = Some(value.parse()?),
             "--cert" => cert = Some(PathBuf::from(value)),
             "--key" => key = Some(PathBuf::from(value)),
@@ -435,6 +451,7 @@ fn parse_args() -> Result<Command> {
             bind: bind.ok_or("serve requires --bind HOST:PORT")?,
             cert: cert.ok_or("serve requires --cert PATH")?,
             key: key.ok_or("serve requires --key PATH")?,
+            updates,
         }),
         "status" | "list" => {
             let target = ClientTarget {
@@ -449,6 +466,7 @@ fn parse_args() -> Result<Command> {
             }
         }
         "print-unit" => Ok(Command::PrintUnit(UnitSpec {
+            updates,
             channel: channel.ok_or("print-unit requires --channel prod|dev")?,
             exec: exec.ok_or("print-unit requires --exec PATH")?,
             cert: cert.ok_or("print-unit requires --cert PATH")?,
@@ -466,6 +484,7 @@ fn parse_args() -> Result<Command> {
 /// a flag, and `Channel` alone decides the port.
 fn print_unit(spec: &UnitSpec) -> Result<()> {
     let UnitSpec {
+        updates,
         channel,
         exec,
         cert,
@@ -474,6 +493,7 @@ fn print_unit(spec: &UnitSpec) -> Result<()> {
         group,
     } = spec;
     let port = channel.port();
+    let updates = updates.display();
     let exec = exec.display();
     let cert = cert.display();
     let key = key.display();
@@ -488,7 +508,7 @@ Wants=network-online.target
 Type=simple
 User={user}
 Group={group}
-ExecStart={exec} serve --bind 0.0.0.0:{port} --cert {cert} --key {key}
+ExecStart={exec} serve --bind 0.0.0.0:{port} --cert {cert} --key {key} --updates {updates}
 Restart=on-failure
 RestartSec=2
 NoNewPrivileges=true

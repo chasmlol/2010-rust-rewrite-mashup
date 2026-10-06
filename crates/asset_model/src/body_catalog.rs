@@ -166,10 +166,23 @@ impl BodyMeshBuild {
     }
 
     pub fn insert_captured(&mut self, skel: crate::ModelSkel, materials: Option<&MaterialCatalog>) {
+        self.insert_in(asset_core::AssetNamespace::Iw4, skel, materials);
+    }
+
+    pub fn insert_in(
+        &mut self,
+        namespace: asset_core::AssetNamespace,
+        skel: ModelSkel,
+        materials: Option<&MaterialCatalog>,
+    ) {
         self.insert_entry(
             skel.name.clone(),
-            BodyMeshEntry::from_skel(skel, materials, asset_core::AssetNamespace::Iw4),
+            BodyMeshEntry::from_skel(skel, materials, namespace),
         );
+    }
+
+    pub fn set_kits(&mut self, kits: SoldierKits) {
+        self.catalog.kits_cache = std::sync::OnceLock::from(kits);
     }
 
     pub fn resolve_materials(&mut self, materials: &MaterialDefinitions) {

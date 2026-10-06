@@ -13,7 +13,7 @@ use anim_iw4::DOBJ_RADIUS_PARENT_ROOT;
 use render_scene::{
     HostGfxScene, ModelLightingOwner, ModelLightingRequest, ModelLightingRequests,
     SmodelPassMaterial, TessMaterials, WorldModelLightingAtlas, WorldPresentFacts,
-    XModelSurfaceDraw, scene_quat_from_angles,
+    WorldScriptModelInstance, XModelSurfaceDraw, scene_quat_from_angles,
 };
 
 pub const MISSILE_LIGHTING_Z_OFS: f32 = 4.0;
@@ -151,6 +151,7 @@ fn occupy_missile_scene_ents(
     mut scene_submissions: MessageWriter<AnimDObjSceneSubmission>,
     cg_clock: Option<Res<net::FrameClock>>,
     local: Option<Res<net::LocalPresentClient>>,
+    script_models: Query<(Entity, &WorldScriptModelInstance, &Transform, &Visibility)>,
 ) {
     occupancy.rows.clear();
     let Some(snapshot) = presented.as_ref() else {
@@ -163,7 +164,13 @@ fn occupy_missile_scene_ents(
         .map(|clock| clock.time())
         .unwrap_or_else(|| snapshot.tick().map(sim::level_time_ms).unwrap_or(0));
     let at_time = snapshot.trajectory_time_ms(at_time);
-    let weapons_reg = weapons.as_ref().map(|w| &w.0).filter(|reg| !reg.is_empty());
+    let bound = weapons
+        .as_deref()
+        .and_then(|weapons| weapons.for_snapshot(snapshot.weapon_epoch()).ok());
+    let weapons_reg = bound
+        .as_ref()
+        .map(|w| w.registry())
+        .filter(|reg| !reg.is_empty());
     let catalog = missile_pose_catalog(projectile_meshes.as_deref());
     let Some(catalog) = catalog else {
         return;
@@ -184,13 +191,11 @@ fn occupy_missile_scene_ents(
         if piloted.is_some() && row.authoritative_id() == piloted {
             continue;
         }
-        let model = weapons_reg.and_then(|reg| reg.projectile_model_of(row.weapon()));
-        let Some(name) = model else {
+        let Some((ns, name)) =
+            weapons_reg.and_then(|reg| reg.projectile_model_reference_of(row.weapon()))
+        else {
             continue;
         };
-        let ns = weapons_reg
-            .and_then(|reg| reg.namespace_of(row.weapon()))
-            .unwrap_or(asset_core::AssetNamespace::Iw4);
         let Some(entry) = catalog.get(ns, name) else {
             continue;
         };
@@ -240,7 +245,8 @@ fn occupy_missile_scene_ents(
             weapon: row.weapon(),
             ignited: match row {
                 net::PresentedProjectile::Authoritative(p) => weapons_reg
-                    .and_then(|reg| reg.facts_of(p.weapon))
+                    .and_then(|reg| reg.bind_published_row(p.weapon).ok())
+                    .and_then(|weapon| weapon.event_facts())
                     .is_none_or(|facts| {
                         at_time >= p.spawn_time_ms.saturating_add(facts.ignition_delay_ms)
                     }),
@@ -252,6 +258,63 @@ fn occupy_missile_scene_ents(
             namespace: ns,
             lighting_origin,
             lighting_owner,
+        });
+    }
+    for (entity, owner, transform, visibility) in &script_models {
+        if *visibility == Visibility::Hidden {
+            continue;
+        }
+        let Some(entnum) = owner.gentity_number.map(u32::from) else {
+            continue;
+        };
+        let Some((namespace, name, entry)) = owner
+            .dobj_state
+            .composition
+            .models
+            .iter()
+            .skip(1)
+            .find_map(|attached| {
+                let weapon = sim::weapon_model_attachment(&attached.model)?;
+                let reg = weapons_reg?;
+                let (ns, name) = reg.projectile_model_reference_of(weapon)?;
+                Some((ns, name, catalog.get(ns, name)?))
+            })
+        else {
+            continue;
+        };
+        if entry.skel.pose.is_none() {
+            continue;
+        }
+        let origin = transform.translation.to_array();
+        let (yaw, pitch, roll) = transform.rotation.to_euler(EulerRot::ZYX);
+        let angles = [pitch, yaw, roll].map(f32::to_degrees);
+        let lighting_origin = missile_lighting_origin(origin);
+        scene_submissions.write(AnimDObjSceneSubmission {
+            render_fx_flags: 0,
+            has_tree: false,
+            origin,
+            lighting_origin,
+            radius: entry.skel.radius,
+            entnum,
+            quat: Some(scene_quat_from_angles(angles)),
+            occupy_model_n: 1,
+            models: vec![scene_skels.shared(name, &entry.skel, 0)],
+            hide_part_bits: [0; 6],
+            store_skin: true,
+        });
+        let index = rows.len() + occupancy.rows.len();
+        occupancy.rows.push(OccupiedMissile {
+            index,
+            id: None,
+            entnum: Some(entnum),
+            weapon: 0,
+            ignited: false,
+            origin,
+            angles,
+            name: name.to_owned(),
+            namespace,
+            lighting_origin,
+            lighting_owner: ModelLightingOwner::ScriptModel(entity),
         });
     }
 }
@@ -379,7 +442,7 @@ fn append_missile_draws(
             .map(|surface| {
                 let authored = entry.material_index(surface.surface_index)?;
                 prepared
-                    .projectile_material(&tess.catalog, authored)
+                    .projectile_material(&tess.catalog(), authored)
                     .cloned()
             })
             .collect();
@@ -427,6 +490,7 @@ fn append_missile_draws(
                 packed_lighting: None,
                 is_scope: false,
                 scene_entnum: row.entnum,
+                body_client: None,
                 caster_bound,
             });
         }

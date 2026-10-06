@@ -220,7 +220,7 @@ fn schedule_admitted_pipelines(
             for (material, prepared_pass) in
                 prepared_table.passes_for_tech(super::super::TechType(tech))
             {
-                let state = super::super::state::GfxPassState::from_bits(prepared_pass.state);
+                let state = super::super::state::GfxPassState::from_prepared(prepared_pass.state);
                 let state0 = state.apply_change_state_0_host(AlphaMode::Opaque, false);
                 let state1 = state.apply_change_state_1_host();
                 let target = exact_colour_target_format(

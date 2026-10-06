@@ -79,6 +79,36 @@ pub fn death(victim: u32, attacker: Option<u32>, suicide: u8, tick: u32) {
     track_event_end!("iw4l.sim");
 }
 
+pub fn owner_shot(source: &str, ordinal: u32, tick: u32) {
+    track_event_begin!("iw4l.sim", "owner_shot", |ctx: &mut EventContext| {
+        str_arg(ctx, "source", source);
+        i64_arg(ctx, "ordinal", i64::from(ordinal));
+        i64_arg(ctx, "tick", i64::from(tick));
+    });
+    track_event_end!("iw4l.sim");
+}
+
+pub fn net_leg(leg: &str, key: u32, bytes: u32) {
+    track_event_begin!("iw4l.sim", "net_leg", |ctx: &mut EventContext| {
+        str_arg(ctx, "leg", leg);
+        i64_arg(ctx, "key", i64::from(key));
+        i64_arg(ctx, "bytes", i64::from(bytes));
+    });
+    track_event_end!("iw4l.sim");
+}
+
+pub fn net_path(role: &str, rtt_us: u64, cwnd: u64, lost: u64, congestion: u64, queued: u64) {
+    track_event_begin!("iw4l.sim", "net_path", |ctx: &mut EventContext| {
+        str_arg(ctx, "role", role);
+        i64_arg(ctx, "rtt_us", rtt_us as i64);
+        i64_arg(ctx, "cwnd", cwnd as i64);
+        i64_arg(ctx, "lost", lost as i64);
+        i64_arg(ctx, "congestion", congestion as i64);
+        i64_arg(ctx, "queued", queued as i64);
+    });
+    track_event_end!("iw4l.sim");
+}
+
 pub fn projectile_phase(weapon: u32, projectile: u32, phase: &str, deadline_ms: i32) {
     track_event_begin!("iw4l.sim", "projectile_phase", |ctx: &mut EventContext| {
         i64_arg(ctx, "weapon", i64::from(weapon));
@@ -219,6 +249,15 @@ pub fn item(e_type: i32, clip_r: Option<i32>, scavenger: Option<i32>, present_ga
 pub fn pickup(picker_pm_type: i32) {
     track_event_begin!("iw4l.sim", "pickup", |ctx: &mut EventContext| {
         i64_arg(ctx, "picker_pm_type", i64::from(picker_pm_type));
+    });
+    track_event_end!("iw4l.sim");
+}
+
+pub fn pickup_rejected(picker: u32, item: i32, pm_type: i32) {
+    track_event_begin!("iw4l.sim", "pickup_rejected", |ctx: &mut EventContext| {
+        i64_arg(ctx, "picker", i64::from(picker));
+        i64_arg(ctx, "item", i64::from(item));
+        i64_arg(ctx, "picker_pm_type", i64::from(pm_type));
     });
     track_event_end!("iw4l.sim");
 }

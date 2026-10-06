@@ -25,12 +25,18 @@ pub struct NamespaceTrees {
     iw4: Option<NamespaceTree>,
     t5: Option<NamespaceTree>,
     iw5: Option<NamespaceTree>,
+    t6: Option<NamespaceTree>,
 }
 
 impl NamespaceTrees {
     pub fn discover(root: &GamesRoot) -> Self {
         let mut trees = Self::default();
-        for ns in [AssetNamespace::Iw4, AssetNamespace::T5, AssetNamespace::Iw5] {
+        for ns in [
+            AssetNamespace::Iw4,
+            AssetNamespace::T5,
+            AssetNamespace::Iw5,
+            AssetNamespace::T6,
+        ] {
             let version = zone_version(zone_game_of(ns));
             if let Ok(found) = find_zone_file_version(root, "common_mp", version) {
                 *trees.slot_mut(ns) = Some(NamespaceTree::from_anchor(found.path));
@@ -52,6 +58,7 @@ impl NamespaceTrees {
             AssetNamespace::Iw4 => self.iw4.as_ref(),
             AssetNamespace::T5 => self.t5.as_ref(),
             AssetNamespace::Iw5 => self.iw5.as_ref(),
+            AssetNamespace::T6 => self.t6.as_ref(),
         }
     }
 
@@ -60,7 +67,7 @@ impl NamespaceTrees {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.iw4.is_none() && self.t5.is_none() && self.iw5.is_none()
+        self.iw4.is_none() && self.t5.is_none() && self.iw5.is_none() && self.t6.is_none()
     }
 
     pub fn present(&self) -> impl Iterator<Item = (AssetNamespace, &NamespaceTree)> {
@@ -68,26 +75,32 @@ impl NamespaceTrees {
             (AssetNamespace::Iw4, self.iw4.as_ref()),
             (AssetNamespace::T5, self.t5.as_ref()),
             (AssetNamespace::Iw5, self.iw5.as_ref()),
+            (AssetNamespace::T6, self.t6.as_ref()),
         ]
         .into_iter()
         .filter_map(|(ns, tree)| tree.map(|tree| (ns, tree)))
     }
 
     pub fn report_lines(&self) -> Vec<String> {
-        [AssetNamespace::Iw4, AssetNamespace::T5, AssetNamespace::Iw5]
-            .into_iter()
-            .map(|ns| match self.get(ns) {
-                Some(tree) => format!(
-                    "namespace tree {}: main={} anchor={}",
-                    ns.as_str(),
-                    tree.main
-                        .as_deref()
-                        .map_or_else(|| "-".to_owned(), |m| m.display().to_string()),
-                    tree.anchor.display(),
-                ),
-                None => format!("namespace tree {}: not installed", ns.as_str()),
-            })
-            .collect()
+        [
+            AssetNamespace::Iw4,
+            AssetNamespace::T5,
+            AssetNamespace::Iw5,
+            AssetNamespace::T6,
+        ]
+        .into_iter()
+        .map(|ns| match self.get(ns) {
+            Some(tree) => format!(
+                "namespace tree {}: main={} anchor={}",
+                ns.as_str(),
+                tree.main
+                    .as_deref()
+                    .map_or_else(|| "-".to_owned(), |m| m.display().to_string()),
+                tree.anchor.display(),
+            ),
+            None => format!("namespace tree {}: not installed", ns.as_str()),
+        })
+        .collect()
     }
 
     fn slot_mut(&mut self, ns: AssetNamespace) -> &mut Option<NamespaceTree> {
@@ -95,6 +108,7 @@ impl NamespaceTrees {
             AssetNamespace::Iw4 => &mut self.iw4,
             AssetNamespace::T5 => &mut self.t5,
             AssetNamespace::Iw5 => &mut self.iw5,
+            AssetNamespace::T6 => &mut self.t6,
         }
     }
 }
@@ -104,6 +118,7 @@ const fn zone_game_of(ns: AssetNamespace) -> ZoneGame {
         AssetNamespace::Iw4 => ZoneGame::Iw4,
         AssetNamespace::T5 => ZoneGame::T5,
         AssetNamespace::Iw5 => ZoneGame::Iw5,
+        AssetNamespace::T6 => ZoneGame::T6,
     }
 }
 
@@ -135,7 +150,9 @@ impl NamespaceSoundIwd {
                         index.indexed_dir().display(),
                         index.sound_count()
                     ));
-                    *opened.slot_mut(ns) = Some(index);
+                    if let Some(slot) = opened.slot_mut(ns) {
+                        *slot = Some(index);
+                    }
                 }
                 Err(e) => lines.push(format!(
                     "audio: IWD sounds {} unavailable ({e})",
@@ -151,6 +168,7 @@ impl NamespaceSoundIwd {
             AssetNamespace::Iw4 => self.iw4.as_ref(),
             AssetNamespace::T5 => self.t5.as_ref(),
             AssetNamespace::Iw5 => self.iw5.as_ref(),
+            AssetNamespace::T6 => None,
         }
     }
 
@@ -166,11 +184,12 @@ impl NamespaceSoundIwd {
         self.iw4.is_none() && self.t5.is_none() && self.iw5.is_none()
     }
 
-    fn slot_mut(&mut self, ns: AssetNamespace) -> &mut Option<crate::iwd::IwdSoundIndex> {
+    fn slot_mut(&mut self, ns: AssetNamespace) -> Option<&mut Option<crate::iwd::IwdSoundIndex>> {
         match ns {
-            AssetNamespace::Iw4 => &mut self.iw4,
-            AssetNamespace::T5 => &mut self.t5,
-            AssetNamespace::Iw5 => &mut self.iw5,
+            AssetNamespace::Iw4 => Some(&mut self.iw4),
+            AssetNamespace::T5 => Some(&mut self.t5),
+            AssetNamespace::Iw5 => Some(&mut self.iw5),
+            AssetNamespace::T6 => None,
         }
     }
 }

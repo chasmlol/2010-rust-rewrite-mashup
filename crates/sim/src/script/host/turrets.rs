@@ -15,23 +15,14 @@ const ON_TARGET_DEGREES: f32 = 2.0;
 const DEFAULT_RANGE: f32 = 4096.0;
 const MUZZLE_HEIGHT: f32 = 40.0;
 const TARGET_HEIGHT: f32 = 40.0;
-const PLACE_DISTANCE: f32 = 42.0 + 5.0;
-const PLACE_PITCH: f32 = 20.0;
-const PLACE_RADIUS: f32 = 30.0;
-const PLACE_HEIGHT: f32 = 60.0;
-const PLACE_MIN_NORMAL: f32 = 0.7;
-const PLACE_MASK: u32 = 0x0281_0011;
-const FOOT_OFFSET: [f32; 3] = [17.0, 20.0, 10.0];
-const FOOT_REACH: f32 = 20.0;
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct Turret {
     weapon: u32,
     mode: Arc<str>,
-    owner: Option<u64>,
+    pub(super) owner: Option<u64>,
     team: Option<Arc<str>>,
-    carried: bool,
-    operable: bool,
+    pub(super) carried: bool,
     fire_enabled: bool,
     manual: Option<(u64, [f32; 3])>,
     target: Option<u64>,
@@ -138,7 +129,6 @@ pub(crate) fn register(registry: &mut NativeRegistry) {
                 owner: None,
                 team: None,
                 carried: false,
-                operable: true,
                 fire_enabled: true,
                 manual: None,
                 target: None,
@@ -224,10 +214,10 @@ pub(crate) fn register(registry: &mut NativeRegistry) {
         edit(world, receiver, |t| t.carried = carried)
     });
     registry.register(Method, "maketurretinoperable", |world, receiver, _| {
-        edit(world, receiver, |t| t.operable = false)
+        edit(world, receiver, |_| {})
     });
     registry.register(Method, "maketurretoperable", |world, receiver, _| {
-        edit(world, receiver, |t| t.operable = true)
+        edit(world, receiver, |_| {})
     });
     registry.register(Method, "turretfiredisable", |world, receiver, _| {
         edit(world, receiver, |t| t.fire_enabled = false)
@@ -290,7 +280,8 @@ pub(crate) fn register(registry: &mut NativeRegistry) {
             .map_or(([0.0; 3], 0.0, 0.0), |ps| {
                 (ps.origin, ps.viewangles[1], ps.view_height_current)
             });
-        let (placed, origin, angles) = place_sentry(world, client, origin, yaw, eye);
+        let (placed, origin, angles) =
+            super::sentry_placement::place(world, client, origin, yaw, eye);
         keyed_array(
             world,
             vec![
@@ -300,103 +291,6 @@ pub(crate) fn register(registry: &mut NativeRegistry) {
             ],
         )
     });
-}
-
-fn place_sentry(
-    world: &mut World,
-    client: u32,
-    origin: [f32; 3],
-    yaw: f32,
-    eye_height: f32,
-) -> (bool, [f32; 3], [f32; 3]) {
-    let (sp, cp) = PLACE_PITCH.to_radians().sin_cos();
-    let (sy, cy) = yaw.to_radians().sin_cos();
-    let dir = Vec3::new(cp * cy, cp * sy, -sp);
-    let top = Vec3::from_array(origin) + dir * PLACE_DISTANCE + Vec3::Z * PLACE_HEIGHT;
-    let bottom = top - Vec3::Z * PLACE_HEIGHT;
-    let flat = [0.0, yaw, 0.0];
-    let eye = [origin[0], origin[1], origin[2] + eye_height];
-    let past = [
-        top.x + dir.x * PLACE_RADIUS,
-        top.y + dir.y * PLACE_RADIUS,
-        top.z,
-    ];
-    let ignore = TraceIgnore {
-        client: Some(ClientId(client)),
-        ..Default::default()
-    };
-    if !matches!(
-        entity_trace(world, eye, past, PLACE_MASK, ignore),
-        TraceOutcome::Miss { .. }
-    ) {
-        return (false, [top.x, top.y, origin[2]], flat);
-    }
-    let half = [PLACE_RADIUS; 3];
-    let t = super::natives::engine::trace(
-        world,
-        top.to_array(),
-        bottom.to_array(),
-        half.map(|h| -h),
-        half,
-        PLACE_MASK,
-    );
-    let mut seat = top.lerp(bottom, t.fraction);
-    let normal = Vec3::from_array(t.normal);
-    if t.startsolid != 0 || t.allsolid != 0 || normal.z < PLACE_MIN_NORMAL {
-        seat.z = origin[2];
-        return (false, seat.to_array(), flat);
-    }
-    seat.z -= PLACE_RADIUS;
-    let left = normal.cross(dir);
-    let mut axis = [left.cross(normal), left, normal];
-    let angles = math_iw4::axis_to_angles(axis.map(|v| v.to_array()));
-    if !settle_feet(world, &mut seat, &mut axis) {
-        return (false, seat.to_array(), angles);
-    }
-    (
-        true,
-        seat.to_array(),
-        math_iw4::axis_to_angles(axis.map(|v| v.to_array())),
-    )
-}
-
-fn settle_feet(world: &mut World, seat: &mut Vec3, axis: &mut [Vec3; 3]) -> bool {
-    let [forward, left, up] = *axis;
-    let [ahead, side, lift] = FOOT_OFFSET;
-    let first = *seat + forward * ahead + left * side + up * lift;
-    let mut legs = [
-        first,
-        first - forward * 2.0 * ahead,
-        first - forward * 2.0 * ahead - left * 2.0 * side,
-        first - left * 2.0 * side,
-    ];
-    let mut elevation = [None; 4];
-    for (leg, rise) in legs.iter_mut().zip(&mut elevation) {
-        let end = *leg - up * FOOT_REACH;
-        let t = super::natives::engine::trace(
-            world,
-            leg.to_array(),
-            end.to_array(),
-            [0.0; 3],
-            [0.0; 3],
-            PLACE_MASK,
-        );
-        if t.fraction < 1.0 || t.startsolid != 0 {
-            let height = t.fraction * FOOT_REACH - lift;
-            *leg -= up * height;
-            *rise = Some(height);
-        }
-    }
-    let missed = elevation.iter().filter(|e| e.is_none()).count();
-    let height = |i: usize| elevation[i].or(elevation[(i + 2) % 4]).unwrap_or(0.0);
-    let drop = (0.5 * height(0) + 0.5 * height(2)).max(0.5 * height(1) + 0.5 * height(3));
-    *seat -= up * drop;
-    let normal = (legs[0] - legs[2])
-        .cross(legs[1] - legs[3])
-        .normalize_or(up);
-    let side = normal.cross(axis[0]);
-    *axis = [side.cross(normal), side, normal];
-    missed <= 1
 }
 
 fn aim_point(world: &mut World, object: u64, offset: [f32; 3]) -> Option<Vec3> {
@@ -414,7 +308,7 @@ fn hostile(world: &mut World, turret: &Turret, target: u64) -> bool {
     let team = |world: &mut World, object: u64| match super::players::entity_field(
         world, object, "team",
     ) {
-        Value::String(team) => Some(team),
+        Value::String(team) => Some(Arc::<str>::from(team)),
         _ => None,
     };
     let own = turret
@@ -510,7 +404,7 @@ pub(crate) fn advance(world: &mut World) {
         }
         let mut turret = world.resource::<Runtime>().engine.turrets[&object].clone();
         let from = muzzle(world, object);
-        let active = turret.operable && !turret.carried && &*turret.mode != "sentry_offline";
+        let active = !turret.carried && &*turret.mode != "sentry_offline";
         let found = if active {
             acquire(world, object, &turret, from)
         } else {
@@ -584,13 +478,19 @@ pub(crate) fn fire_bullet(
     let range = weapon_range(world, weapon);
     let end = (Vec3::from_array(from) + Vec3::from_array(dir) * range).to_array();
     let ignore = ignore_self(world, object);
-    let TraceOutcome::Hit { collider, .. } = entity_trace(world, from, end, MASK_SHOT, ignore)
+    let TraceOutcome::Hit {
+        collider,
+        end,
+        normal,
+        ..
+    } = entity_trace(world, from, end, MASK_SHOT, ignore)
     else {
         return;
     };
-    let amount = FrameWorld::from_world(world)
-        .combat_facts_for(weapon)
-        .map_or(0, |f| f.damage);
+    let Some(facts) = FrameWorld::from_world(world).combat_facts_for(weapon) else {
+        return;
+    };
+    let amount = facts.damage;
     let hit = match collider {
         ColliderId::Player { .. } | ColliderId::World { .. } => None,
         _ => match collider_entity(world, collider) {
@@ -598,6 +498,58 @@ pub(crate) fn fire_bullet(
             _ => return,
         },
     };
+    let runtime = world.resource::<Runtime>();
+    let number = runtime.entities[&object].number;
+    let other_entity_num = match collider {
+        ColliderId::Player { client, .. } => client.0 as i32,
+        _ => hit
+            .and_then(|hit| runtime.entities.get(&hit))
+            .map_or(playerstate_iw4::ENTITYNUM_NONE, |entity| entity.number),
+    };
+    let surface_flags = match collider {
+        ColliderId::World { surface_flags, .. }
+        | ColliderId::EntityDObjBone { surface_flags, .. }
+        | ColliderId::EntityLinkedBrush { surface_flags, .. } => surface_flags,
+        ColliderId::Player { .. } => 0,
+    };
+    let surf_type = if matches!(collider, ColliderId::Player { .. }) {
+        weapon_iw4::SURF_TYPE_FLESH as u8
+    } else {
+        trace_iw4::surface_type_from_flags(surface_flags) as u8
+    };
+    let tick = world.resource::<crate::step::StepRequest>().tick;
+    let mut frame = FrameWorld::from_world(world);
+    let correlation = frame.alloc_shot_id().0;
+    let payload = crate::EntityEventPayload {
+        number,
+        attacker_entity_num: number,
+        other_entity_num,
+        weapon,
+        correlation,
+        origin: end,
+        origin2: from,
+        direction: normal,
+        surf_type,
+        surface_flags,
+        ..Default::default()
+    };
+    if let Some(event) = entity_iw4::bullet_hit_event(facts.impact_type, false) {
+        frame.push_entity_event(tick, crate::EventAudience::All, event, payload);
+    } else if fx_iw4::impact_table_row(facts.impact_type, false).is_some() {
+        frame.push_pellet_fx(crate::PelletFxRecord {
+            attacker: number,
+            weapon,
+            correlation,
+            pellet: 0,
+            hand: 0,
+            start: from,
+            end,
+            normal,
+            surf_type,
+            surface_flags,
+            flesh_flags: 0,
+        });
+    }
     let runtime = world.resource::<Runtime>();
     let target = match collider {
         ColliderId::Player { client, .. } => crate::script::HitTarget::Player(client),

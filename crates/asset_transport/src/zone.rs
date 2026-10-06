@@ -22,6 +22,7 @@ pub enum ZoneOpenError {
     Iw4Header(Iw4HeaderError),
     T5Header(fastfile_t5::FileHeaderError),
     Iw5Header(fastfile_iw5::FileHeaderError),
+    T6(T6ZoneError),
 
     UnsupportedVersion {
         got: u32,
@@ -54,10 +55,11 @@ impl std::fmt::Display for ZoneOpenError {
             ZoneOpenError::Iw4Header(e) => write!(f, "bad IW4 fastfile header: {e:?}"),
             ZoneOpenError::T5Header(e) => write!(f, "bad T5 fastfile header: {e:?}"),
             ZoneOpenError::Iw5Header(e) => write!(f, "bad IW5 fastfile header: {e:?}"),
+            ZoneOpenError::T6(e) => write!(f, "{e}"),
             ZoneOpenError::UnsupportedVersion { got } => {
                 write!(
                     f,
-                    "unsupported fastfile version {got:#x} (want IW4 0x114, T5 0x1d9, or IW5 0x1)"
+                    "unsupported fastfile version {got:#x} (want IW4 0x114, T5 0x1d9, IW5 0x1 or T6 0x93)"
                 )
             }
             ZoneOpenError::BadAuthHeader => {
@@ -253,6 +255,15 @@ pub fn parse_zone_image(bytes: &[u8]) -> Result<ZoneImage, ZoneOpenError> {
         fastfile_iw4::ZONE_VERSION_PC => parse_iw4_zone_image(bytes),
         fastfile_t5::ZONE_VERSION_PC => parse_t5_zone_image(bytes),
         fastfile_iw5::ZONE_VERSION_PC => parse_iw5_zone_image(bytes),
+        fastfile_t6::ZONE_VERSION_PC if bytes.starts_with(fastfile_t6::MAGIC_SIGNED) => {
+            let image = parse_t6_zone_image(bytes).map_err(ZoneOpenError::T6)?;
+            Ok(ZoneImage {
+                game: ZoneGame::T6,
+                version: image.header.version,
+                bytes: image.bytes,
+                iw4_wire_format: None,
+            })
+        }
         other => Err(ZoneOpenError::UnsupportedVersion { got: other }),
     }
 }
@@ -492,5 +503,83 @@ impl Iw5ZoneMemory {
             b8.as_mut_slice(),
         ];
         fastfile_iw5::ZoneStream::new(image, blocks, &mut self.insert_map)
+    }
+}
+
+pub struct T6ZoneImage {
+    pub header: fastfile_t6::FileHeader,
+    pub bytes: Vec<u8>,
+}
+
+#[derive(Debug)]
+pub enum T6ZoneError {
+    Io(std::io::Error),
+    Header(fastfile_t6::FileHeaderError),
+    ChunkOverrun(usize),
+    Inflate { chunk: usize, error: String },
+}
+
+impl std::fmt::Display for T6ZoneError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Io(e) => write!(f, "reading zone: {e}"),
+            Self::Header(e) => write!(f, "bad T6 fastfile header: {e:?}"),
+            Self::ChunkOverrun(at) => write!(f, "T6 chunk at {at:#x} runs past end of file"),
+            Self::Inflate { chunk, error } => {
+                write!(f, "T6 chunk {chunk}: inflate failed: {error}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for T6ZoneError {}
+
+pub fn open_t6_zone(path: impl AsRef<Path>) -> Result<T6ZoneImage, T6ZoneError> {
+    let bytes = std::fs::read(path).map_err(T6ZoneError::Io)?;
+    parse_t6_zone_image(&bytes)
+}
+
+pub fn parse_t6_zone_image(bytes: &[u8]) -> Result<T6ZoneImage, T6ZoneError> {
+    let header = fastfile_t6::parse_file_header(bytes).map_err(T6ZoneError::Header)?;
+    let mut cipher = fastfile_t6::ZoneCipher::new(header.name());
+    let mut out = Vec::with_capacity(bytes.len() * 3);
+    let mut plain = Vec::new();
+    // Each chunk inflates into `scratch` first: `decompress_vec` initializes
+    // all spare capacity of the vector it writes to, and the image's spare
+    // capacity is hundreds of megabytes.
+    let mut scratch = Vec::new();
+    for chunk in fastfile_t6::Chunks::new(bytes) {
+        let chunk = chunk.map_err(T6ZoneError::ChunkOverrun)?;
+        plain.clear();
+        plain.extend_from_slice(chunk.bytes);
+        cipher.decrypt(chunk.index, &mut plain);
+        scratch.clear();
+        inflate_raw_into(&plain, &mut scratch).map_err(|error| T6ZoneError::Inflate {
+            chunk: chunk.index,
+            error,
+        })?;
+        out.extend_from_slice(&scratch);
+    }
+    Ok(T6ZoneImage { header, bytes: out })
+}
+
+fn inflate_raw_into(input: &[u8], out: &mut Vec<u8>) -> Result<(), String> {
+    let mut decoder = flate2::Decompress::new(false);
+    loop {
+        out.reserve((input.len() * 4).max(64 * 1024));
+        let before = (decoder.total_in(), decoder.total_out());
+        let status = decoder
+            .decompress_vec(
+                &input[decoder.total_in() as usize..],
+                out,
+                flate2::FlushDecompress::Finish,
+            )
+            .map_err(|e| e.to_string())?;
+        if status == flate2::Status::StreamEnd {
+            return Ok(());
+        }
+        if before == (decoder.total_in(), decoder.total_out()) {
+            return Err("truncated deflate stream".into());
+        }
     }
 }

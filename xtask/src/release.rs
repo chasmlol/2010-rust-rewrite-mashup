@@ -1,9 +1,3 @@
-//! Prepare a local release: Windows bins, static master, zstd cache, manifest,
-//! descriptor. Talks to no VPS.
-//!
-//! Everything a publish is allowed to disagree about later — git, protocol,
-//! SHA, master port — is frozen into `deployment.json` here.
-
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -15,13 +9,9 @@ use crate::shell::{Res, Step, capture, require_tools, run};
 use crate::windows;
 
 const ZSTD_LEVEL: &str = "3";
-/// `-T0`: one worker per core. Part of the cache key, so changing it only
-/// re-compresses, it never silently reuses a differently produced blob.
 const ZSTD_THREADS: &str = "0";
 
-/// The password on the portable ZIPs. Not a secret — it exists so a browser
-/// or an antivirus scanner cannot open the archive on the way down.
-const ARCHIVE_PASSWORD: &[u8] = b"contextrot";
+const ARCHIVE_PASSWORD: &[u8] = b"t.me/contextrot";
 
 pub struct Git {
     pub rev: String,
@@ -48,9 +38,6 @@ pub fn git_identity(root: &Path) -> Res<Git> {
     })
 }
 
-/// The bare host from `IW4L_DEPLOY_HOST`: it goes into the master address and
-/// the update URL that get written into the release, so a release cannot be
-/// prepared without knowing where it will live.
 pub fn public_host(env: &Env) -> Res<String> {
     let target = env.require("IW4L_DEPLOY_HOST")?;
     let host = crate::shell::Ssh::new(&target)?.host().to_string();
@@ -82,8 +69,6 @@ fn sha256_hex(bytes: &[u8]) -> String {
     hex(&Sha256::digest(bytes))
 }
 
-/// `json.dumps(data, indent=2, sort_keys=True) + "\n"`. `serde_json::Map` is a
-/// `BTreeMap`, so the sort is free and every writer here is deterministic.
 fn write_json(path: &Path, value: &Value) -> Res<()> {
     let mut text = serde_json::to_string_pretty(value)
         .map_err(|error| format!("encoding {}: {error}", path.display()))?;
@@ -93,7 +78,6 @@ fn write_json(path: &Path, value: &Value) -> Res<()> {
 
 fn zstd_version() -> Res<String> {
     let text = capture(Command::new("zstd").arg("--version"))?;
-    // "*** Zstandard CLI (64-bit) v1.5.6, by Yann Collet ***"
     let version = text
         .split('v')
         .find_map(|chunk| {
@@ -108,7 +92,6 @@ fn zstd_version() -> Res<String> {
     Ok(version.trim_end_matches('.').to_string())
 }
 
-/// A staging directory that is removed unless it is renamed into place.
 struct Scratch {
     path: PathBuf,
     keep: bool,
@@ -165,8 +148,6 @@ struct GameBlob {
     blob_size: u64,
 }
 
-/// Compress `iw4l.exe` once per (exe, zstd version, level, threads). The cache
-/// is why an ordinary re-release calls no zstd at all.
 fn package_game(root: &Path, game_exe: &Path, dest_dir: &Path) -> Res<GameBlob> {
     require_tools(&["zstd"])?;
     let exe_sha = file_sha256(game_exe)?;
@@ -197,7 +178,7 @@ fn package_game(root: &Path, game_exe: &Path, dest_dir: &Path) -> Res<GameBlob> 
         step.done("");
     }
     let blob_sha = file_sha256(&cache_blob)?;
-    let name = format!("iw4l-{blob_sha}.exe.zst");
+    let name = format!("iw4l-{exe_sha}.exe.zst");
     let dest = dest_dir.join(&name);
     if dest.is_file() {
         if file_sha256(&dest)? != blob_sha {
@@ -219,40 +200,24 @@ fn package_game(root: &Path, game_exe: &Path, dest_dir: &Path) -> Res<GameBlob> 
     })
 }
 
-fn client_manifest(
-    channel: Channel,
-    host: &str,
-    git_rev: &str,
-    release_id: &str,
-    ca_path: &Path,
-    blob: &GameBlob,
-) -> Res<Value> {
-    Ok(json!({
-        "id": release_id,
-        "channel": channel.as_str(),
-        "protocol": PROTOCOL_VERSION,
-        "git": git_rev,
-        "env": {
-            "IW4L_MASTER_ADDR": format!("{host}:{}", channel.port()),
-            "IW4L_MASTER_SERVER_NAME": channel.server_name(),
-            "IW4L_MASTER_CA_CERT": "iw4l-ca.pem",
+fn write_toml(path: &Path, value: &impl serde::Serialize) -> Res<()> {
+    let text = toml::to_string_pretty(value).map_err(|e| e.to_string())?;
+    std::fs::write(path, text).map_err(|e| format!("write {}: {e}", path.display()))
+}
+
+fn community(channel: Channel, host: &str, ca_path: &Path) -> Res<updater::Community> {
+    Ok(updater::Community {
+        schema: 1,
+        name: format!("IW4L {channel}"),
+        master: updater::Master {
+            address: format!("{host}:{}", channel.port()),
+            server_name: channel.server_name().into(),
         },
-        "files": [
-            {
-                "path": "iw4l.exe",
-                "sha256": blob.exe_sha,
-                "size": blob.exe_size,
-                "download": blob.name,
-                "download_sha256": blob.blob_sha,
-                "download_size": blob.blob_size,
-            },
-            {
-                "path": "iw4l-ca.pem",
-                "sha256": file_sha256(ca_path)?,
-                "size": file_size(ca_path)?,
-            },
-        ],
-    }))
+        updates: updater::Updates {
+            url: format!("https://{host}:{}/updates/manifest.toml", channel.port()),
+            ca_pem: std::fs::read_to_string(ca_path).map_err(|e| e.to_string())?,
+        },
+    })
 }
 
 fn entry(role: &str, local: &str, remote: String, stage: &Path, immutable: bool) -> Res<Value> {
@@ -267,7 +232,6 @@ fn entry(role: &str, local: &str, remote: String, stage: &Path, immutable: bool)
     }))
 }
 
-/// What tells one release apart from another, once the bytes are on disk.
 struct Meta<'a> {
     release_id: &'a str,
     channel: Channel,
@@ -288,12 +252,12 @@ fn release_descriptor(stage: &Path, meta: &Meta<'_>, blob: &GameBlob) -> Res<Val
     } = *meta;
     let mut manifest = entry(
         "manifest",
-        "client/manifest.json",
-        format!("manifests/{release_id}.json"),
+        "server/updates/manifest.toml",
+        format!("manifests/{release_id}.toml"),
         stage,
         false,
     )?;
-    manifest["live"] = json!("manifest.json");
+    manifest["live"] = json!("manifest.toml");
     Ok(json!({
         "id": release_id,
         "channel": channel.as_str(),
@@ -307,29 +271,15 @@ fn release_descriptor(stage: &Path, meta: &Meta<'_>, blob: &GameBlob) -> Res<Val
         "files": [
             entry(
                 "game-blob",
-                &format!("client/{}", blob.name),
+                &format!("server/updates/{}", blob.name),
                 blob.name.clone(),
                 stage,
                 true,
             )?,
             manifest,
             entry(
-                "launcher",
-                "client/iw4launcher.exe",
-                "iw4launcher.exe".to_string(),
-                stage,
-                false,
-            )?,
-            entry(
-                "ca",
-                "client/iw4l-ca.pem",
-                "iw4l-ca.pem".to_string(),
-                stage,
-                false,
-            )?,
-            entry(
                 "master",
-                "master/iw4l-master",
+                "server/iw4l-master",
                 format!("masters/{master_sha}/iw4l-master"),
                 stage,
                 true,
@@ -343,7 +293,7 @@ pub fn prepare(root: &Path, env: &Env, channel: Channel, profile: &str) -> Res<P
     let host = public_host(env)?;
     let git = git_identity(root)?;
     let ca_cert = windows::public_ca(env)?;
-    let update_url = format!("https://{host}:8443/{channel}");
+    let update_url = format!("https://{host}:{}/updates/manifest.toml", channel.port());
 
     let bins = windows::build(profile, &ca_cert)?;
     let master_bin = build_master(root, profile)?;
@@ -356,20 +306,31 @@ pub fn prepare(root: &Path, env: &Env, channel: Channel, profile: &str) -> Res<P
     let client_dir = stage.join("client");
     std::fs::create_dir_all(&client_dir)
         .map_err(|error| format!("creating {}: {error}", client_dir.display()))?;
-    std::fs::create_dir_all(stage.join("master"))
-        .map_err(|error| format!("creating {}/master: {error}", stage.display()))?;
+    let updates_dir = stage.join("server/updates");
+    std::fs::create_dir_all(&updates_dir)
+        .map_err(|error| format!("creating {}: {error}", updates_dir.display()))?;
 
-    let blob = package_game(root, &bins.game, &client_dir)?;
-    copy(&bins.launcher, &client_dir.join("iw4launcher.exe"))?;
+    let blob = package_game(root, &bins.game, &updates_dir)?;
+    copy(&bins.game, &client_dir.join("iw4l.exe"))?;
+    write_toml(
+        &client_dir.join("community.iw4l-server"),
+        &community(channel, &host, &ca_cert)?,
+    )?;
+    for (from, to) in LEGAL_FILES {
+        copy(&root.join(from), &stage.join("server").join(to))?;
+    }
     copy(&ca_cert, &client_dir.join("iw4l-ca.pem"))?;
-    let staged_master = stage.join("master/iw4l-master");
+    let staged_master = stage.join("server/iw4l-master");
     copy(&master_bin, &staged_master)?;
     set_mode(&staged_master, 0o755)?;
     let master_sha = file_sha256(&staged_master)?;
 
-    // The release id is a hash of exactly what makes this release different
-    // from another one: sources, profile, target, and every shipped file.
+    let licenses = LEGAL_FILES
+        .iter()
+        .map(|(from, name)| Ok(json!({ "name": name, "sha256": file_sha256(&root.join(from))? })))
+        .collect::<Res<Vec<_>>>()?;
     let identity = json!({
+        "licenses": licenses,
         "channel": channel.as_str(),
         "dirty": git.dirty,
         "git": git.rev,
@@ -379,24 +340,30 @@ pub fn prepare(root: &Path, env: &Env, channel: Channel, profile: &str) -> Res<P
         "target": windows::TARGET,
         "files": {
             "ca": file_sha256(&client_dir.join("iw4l-ca.pem"))?,
+            "community": file_sha256(&client_dir.join("community.iw4l-server"))?,
             "game_blob": blob.blob_sha,
             "game_exe": blob.exe_sha,
-            "launcher": file_sha256(&client_dir.join("iw4launcher.exe"))?,
         },
     });
     let compact =
         serde_json::to_string(&identity).map_err(|error| format!("encoding identity: {error}"))?;
     let release_id = sha256_hex(compact.as_bytes())[..16].to_string();
 
-    let manifest = client_manifest(
-        channel,
-        &host,
-        &git.rev,
-        &release_id,
-        &client_dir.join("iw4l-ca.pem"),
-        &blob,
-    )?;
-    write_json(&client_dir.join("manifest.json"), &manifest)?;
+    let client_identity = json!({ "exe": blob.exe_sha, "size": blob.exe_size,
+        "compressed_size": blob.blob_size, "protocol": PROTOCOL_VERSION });
+    let manifest = updater::Manifest {
+        schema: 1,
+        release: sha256_hex(client_identity.to_string().as_bytes())[..16].into(),
+        protocol: PROTOCOL_VERSION,
+        file: updater::ManifestFile {
+            name: "iw4l.exe".into(),
+            path: blob.name.clone(),
+            sha256: blob.exe_sha.clone(),
+            size: blob.exe_size,
+            compressed_size: blob.blob_size,
+        },
+    };
+    write_toml(&updates_dir.join("manifest.toml"), &manifest)?;
 
     let dest = releases.join(&release_id);
     if dest.join("deployment.json").is_file() {
@@ -424,25 +391,28 @@ pub fn prepare(root: &Path, env: &Env, channel: Channel, profile: &str) -> Res<P
     }
     std::fs::write(releases.join("LATEST"), format!("{release_id}\n"))
         .map_err(|error| format!("writing LATEST: {error}"))?;
+    server_archive(
+        &dest.join("server"),
+        &dest.join(format!("iw4l-server-release-{release_id}.zip")),
+    )?;
+    player_archive(
+        &dest.join("client"),
+        &dest.join(format!("iw4l-windows-{channel}.zip")),
+        true,
+    )?;
+    // The GitHub download: the descriptor names the master, which stays private.
+    player_archive(&dest.join("client"), &dest.join("iw4l-windows.zip"), false)?;
     println!("release.done path=dist/releases/{channel}/{release_id}");
     Ok(dest)
 }
 
-/// What every archive carries beside the binaries, as `(repo path, name in the
-/// archive)`. `iw4l.exe` embeds both fonts, so a build is never distributed
-/// without their licence texts.
 const LEGAL_FILES: &[(&str, &str)] = &[
     ("LICENSE", "LICENSE"),
     ("NOTICE", "NOTICE"),
     ("crates/ui/assets/OFL-Oxanium.txt", "OFL-Oxanium.txt"),
-    (
-        "crates/console/assets/COPYING-FreeFont.txt",
-        "COPYING-FreeFont.txt",
-    ),
+    ("crates/console/assets/OFL-FiraMono.txt", "OFL-FiraMono.txt"),
 ];
 
-/// `make launcher windows`: the two portable ZIPs. Not a deploy — no master is
-/// built and nothing is uploaded.
 pub fn bundles(root: &Path, env: &Env, profile: &str) -> Res<()> {
     windows::require_profile(profile)?;
     let host = public_host(env)?;
@@ -459,38 +429,56 @@ pub fn bundles(root: &Path, env: &Env, profile: &str) -> Res<()> {
         let stage = scratch.path.join(channel.as_str());
         std::fs::create_dir_all(&stage)
             .map_err(|error| format!("creating {}: {error}", stage.display()))?;
-        copy(&bins.launcher, &stage.join("iw4launcher.exe"))?;
-        // The archive is self-contained: the folder runs offline, and the
-        // launcher fetches a build only when asked (`iw4launcher update`).
         copy(&bins.game, &stage.join("iw4l.exe"))?;
-        copy(&ca_cert, &stage.join("iw4l-ca.pem"))?;
-        // Apache-2.0 asks that a distribution carry LICENSE and NOTICE; the two
-        // fonts are `include_bytes!`d into iw4l.exe, so their licences ship too.
-        for (from, to) in LEGAL_FILES {
-            copy(&root.join(from), &stage.join(to))?;
-        }
-        std::fs::write(
-            stage.join(".env"),
-            format!(
-                "IW4L_UPDATE_URL=https://{host}:8443/{channel}\n\
-                 IW4L_MASTER_ADDR={host}:{port}\n\
-                 IW4L_MASTER_SERVER_NAME={name}\n\
-                 IW4L_MASTER_CA_CERT=iw4l-ca.pem\n",
-                port = channel.port(),
-                name = channel.server_name(),
-            ),
-        )
-        .map_err(|error| format!("writing {}/.env: {error}", stage.display()))?;
+        write_toml(
+            &stage.join("community.iw4l-server"),
+            &community(channel, &host, &ca_cert)?,
+        )?;
         let archive = out.join(format!("iw4l-windows-{channel}.zip"));
-        let mut names = vec![".env", "iw4l-ca.pem", "iw4launcher.exe", "iw4l.exe"];
-        names.extend(LEGAL_FILES.iter().map(|(_, to)| *to));
-        let files = names
-            .into_iter()
-            .map(|name| stage.join(name).display().to_string())
-            .collect::<Vec<_>>();
-        crate::bundle_zip::write_archive(&archive, &files, ARCHIVE_PASSWORD)?;
+        player_archive(&stage, &archive, true)?;
         println!("[windows] {channel} archive: {}", archive.display());
     }
+    Ok(())
+}
+
+fn player_archive(stage: &Path, archive: &Path, descriptor: bool) -> Res<()> {
+    let mut names = vec!["iw4l.exe"];
+    if descriptor {
+        names.push("community.iw4l-server");
+    }
+    let files = names
+        .into_iter()
+        .map(|n| stage.join(n).display().to_string())
+        .collect::<Vec<_>>();
+    crate::bundle_zip::write_archive(archive, &files, ARCHIVE_PASSWORD)
+}
+
+fn server_archive(stage: &Path, archive: &Path) -> Res<()> {
+    use zip::write::SimpleFileOptions;
+    let mut writer =
+        zip::ZipWriter::new(std::fs::File::create(archive).map_err(|e| e.to_string())?);
+    let mut files = vec![stage.join("iw4l-master")];
+    files.extend(LEGAL_FILES.iter().map(|(_, name)| stage.join(name)));
+    for entry in std::fs::read_dir(stage.join("updates")).map_err(|e| e.to_string())? {
+        files.push(entry.map_err(|e| e.to_string())?.path());
+    }
+    files.sort();
+    for path in files {
+        let name = path
+            .strip_prefix(stage)
+            .map_err(|e| e.to_string())?
+            .to_string_lossy();
+        let mode = if name == "iw4l-master" { 0o755 } else { 0o644 };
+        writer
+            .start_file(name, SimpleFileOptions::default().unix_permissions(mode))
+            .map_err(|e| e.to_string())?;
+        std::io::copy(
+            &mut std::fs::File::open(path).map_err(|e| e.to_string())?,
+            &mut writer,
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    writer.finish().map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -512,7 +500,6 @@ fn set_mode(_path: &Path, _mode: u32) -> Res<()> {
     Ok(())
 }
 
-/// `chmod -R a+rX`: the release directory is read by rsync and by a browser.
 #[cfg(unix)]
 fn world_readable(path: &Path) -> Res<()> {
     use std::os::unix::fs::PermissionsExt as _;
@@ -543,13 +530,13 @@ fn world_readable(_path: &Path) -> Res<()> {
     Ok(())
 }
 
-/// `cargo xtask release <prod|dev|bundles>`.
 pub fn run_cli(root: &Path, env: &Env, args: &[String]) -> Res<()> {
     let what = args
         .first()
         .map(String::as_str)
         .ok_or("usage: cargo xtask release <prod|dev|bundles>")?;
     let profile = windows::profile(env)?;
+    crate::licenses::check(root)?;
     if what == "bundles" {
         return bundles(root, env, &profile);
     }

@@ -44,13 +44,15 @@ pub use packet::{
     SRC_XMODEL_RIGID_PTR,
 };
 pub use products::{
-    FrameProduct, FrameProductKind, FrameProductStatus, FrameProductsSnapshot, MissingProductCause,
-    PACKED_SEGMENT_OWNERS, PackedSegment, PackedSegments, ProductTarget, RenderFocusFrame,
-    SourceRevisions, SpotShadowFrameSlot, publish_rows,
+    FrameMaterialRefusal, FrameProduct, FrameProductKind, FrameProductStatus,
+    FrameProductsSnapshot, MissingProductCause, PACKED_SEGMENT_OWNERS, PackedSegment,
+    PackedSegments, ProductTarget, RenderFocusFrame, SourceRevisions, SpotShadowFrameSlot,
+    publish_rows,
 };
 pub use retained::{
-    BspCameraLane, LightAttenuationBind, RENDER_FX_DEPTH_HACK, RetainedDrawItem, RetainedDrawKind,
-    T5LightFalloffPack, XMODEL_OBJECT_ID_VIEWMODEL, host_viewmodel_render_fx_flags, DEPTH_HACK_SCENE_ENTNUM, depth_hack_scene_entnum,
+    BspCameraLane, DEPTH_HACK_SCENE_ENTNUM, LightAttenuationBind, RENDER_FX_DEPTH_HACK,
+    RetainedDrawItem, RetainedDrawKind, XMODEL_OBJECT_ID_VIEWMODEL, depth_hack_scene_entnum,
+    host_viewmodel_render_fx_flags,
 };
 pub use sun_effects::{SunEffectsDef, SunEffectsFrame, angular_lerp};
 pub use sun_shadow::{

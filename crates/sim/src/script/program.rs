@@ -5,7 +5,7 @@ use std::sync::Arc;
 use crate::script::error::Fault;
 use crate::script::ir::{Function, IR_VERSION};
 use crate::script::profile::catalog::{Builtin, Catalog};
-use crate::script::source::SourceResolver;
+use crate::script::source::{SourceOrigin, SourceResolver};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Site {
@@ -13,19 +13,14 @@ pub enum Site {
     Client,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub enum Realm {
-    Iw4,
-    Iw5,
-    T5,
-}
-
+pub use asset_core::FamilyId as Realm;
 #[derive(Clone, Debug)]
 pub struct ModuleIdentity {
     pub site: Site,
     pub realm: Realm,
     pub module: String,
     pub sha256: [u8; 32],
+    pub origin: SourceOrigin,
 }
 
 #[derive(Resource, Clone, Debug)]
@@ -37,6 +32,7 @@ pub struct Program {
     pub(crate) symbol_ids: BTreeMap<Arc<str>, u32>,
     pub(crate) natives: Vec<Builtin>,
     pub(crate) rules: Realm,
+    pub(crate) impure_scripts: bool,
 }
 impl Program {
     pub fn load(
@@ -48,6 +44,9 @@ impl Program {
     }
     pub fn modules(&self) -> &[ModuleIdentity] {
         &self.modules
+    }
+    pub fn has_impure_scripts(&self) -> bool {
+        self.impure_scripts
     }
     pub fn rules(&self) -> Realm {
         self.rules
@@ -64,6 +63,7 @@ impl Program {
         digest.update(IR_VERSION.to_le_bytes());
         for module in &self.modules {
             digest.update([module.site as u8, module.realm as u8]);
+            digest.update([module.origin as u8]);
             digest.update((module.module.len() as u64).to_le_bytes());
             digest.update(module.module.as_bytes());
             digest.update(module.sha256);

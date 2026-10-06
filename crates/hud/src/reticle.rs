@@ -73,6 +73,7 @@ pub(crate) fn update_reticle(
     mut gaps: ResMut<HudPresentationGaps>,
     mut ads_latch: ResMut<ReticleAdsLatch>,
     aim: Res<ViewweaponAim>,
+    settings: Res<frame::GameSettings>,
     cg_clock: Res<FrameClock>,
     mut quads: Query<(&ReticleQuad, &mut Node, &mut ImageNode, &mut UiTransform)>,
     life: (
@@ -119,7 +120,11 @@ pub(crate) fn update_reticle(
         hide_all(&mut quads);
         return;
     };
-    let Some(facts) = weapons.0.facts_of(viewmodel_index) else {
+    let Some(facts) = weapons
+        .snapshot_weapon(presented.weapon_epoch(), viewmodel_index)
+        .ok()
+        .and_then(|weapon| weapon.hud_facts())
+    else {
         gaps.raise(GapCause::ReticleWeaponNotInCatalog { viewmodel_index });
         hide_all(&mut quads);
         return;
@@ -147,16 +152,21 @@ pub(crate) fn update_reticle(
     let aim_spread = ps.aim_spread_scale;
 
     let mantle_inactive = is_weapon_inactive(ps, true);
+    let linked_weapon_view = presented
+        .snapshot()
+        .and_then(|snapshot| snapshot.meta.for_client(local.0))
+        .is_some_and(|meta| meta.linked_weapon_view.is_some());
     let rendering_third_person = (view.in_killcam()
         && ps.kill_cam_entity != playerstate_iw4::ENTITYNUM_NONE)
-        || is_third_person_view(ThirdPersonViewInputs {
-            pm_type: ps.pm_type,
-            other_flags: ps.other_flags,
-            link_flags: ps.link_flags,
-            cg_third_person: false,
-            in_killcam: view.in_killcam(),
-            killcam_mode: KillCamMode::Mode0,
-        });
+        || (!linked_weapon_view
+            && is_third_person_view(ThirdPersonViewInputs {
+                pm_type: ps.pm_type,
+                other_flags: ps.other_flags,
+                link_flags: ps.link_flags,
+                cg_third_person: settings.third_person && !view.in_killcam(),
+                in_killcam: view.in_killcam(),
+                killcam_mode: KillCamMode::Mode0,
+            }));
     let gate = HipCrosshairGate {
         rendering_third_person,
         e_flags: ps.e_flags,
@@ -194,7 +204,7 @@ pub(crate) fn update_reticle(
         return;
     }
 
-    let Some(assets) = weapons.0.reticle_of(viewmodel_index) else {
+    let Some(assets) = weapons.registry().reticle_of(viewmodel_index) else {
         gaps.raise(GapCause::ReticleNoAuthoredMaterials { viewmodel_index });
         hide_all(&mut quads);
         return;
@@ -251,8 +261,8 @@ pub(crate) fn update_reticle(
     };
 
     let weapon_ns = weapons
-        .0
-        .namespace_of(viewmodel_index)
+        .registry()
+        .component_namespace_of(viewmodel_index, asset_game::WeaponComponent::Material)
         .unwrap_or(crate::images::HUD_CHROME_NAMESPACE);
     let center = resolve_slot(
         ReticleSlot::Center,

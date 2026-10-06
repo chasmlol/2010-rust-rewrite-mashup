@@ -1,19 +1,18 @@
 use asset_core::AssetNamespace;
-use bevy::{audio::Volume, prelude::*};
+use bevy::prelude::*;
 use frame::{AppScreen, LifeEnded, MatchTornDown};
 use hud_iw4::shellshock_remaining_ms;
 use net::{FrameClock, LocalPresentClient, PresentedSnapshot};
 
-use crate::{
-    PlayAlias, SND_ENT_LOCAL,
-    clip_store::{ClipStore, clip_keys_for_alias},
-    pcm::LoopingPcmAudio,
-    playback::{MissingAliasGaps, SoundBank},
-};
+use crate::sources::{DesiredSource, SourceCueRequest, SourceKey};
+use crate::{PlayAlias, SND_ENT_LOCAL, playback::SoundBank};
 
-#[derive(Component)]
-pub(crate) struct ShellshockTinnitus {
-    alias: String,
+#[derive(Resource, Default)]
+pub(crate) struct ShellshockSources {
+    pub source: Option<DesiredSource>,
+    context: Option<(u64, u32, u32)>,
+    next_version: u64,
+    was_active: bool,
 }
 
 pub(crate) fn update_shellshock_tinnitus(
@@ -24,34 +23,42 @@ pub(crate) fn update_shellshock_tinnitus(
     presented: Option<Res<PresentedSnapshot>>,
     local: Option<Res<LocalPresentClient>>,
     bank: Option<Res<SoundBank>>,
-    mut clips: Option<ResMut<ClipStore>>,
-    mut looping_assets: ResMut<Assets<LoopingPcmAudio>>,
-    mut commands: Commands,
+    runtime: Res<crate::AudioRuntime>,
+    mut sources: ResMut<ShellshockSources>,
     mut play: MessageWriter<crate::AliasCommand>,
-    mut gaps: ResMut<MissingAliasGaps>,
     epoch: Res<crate::backend::MatchEpoch>,
-    playing: Query<(Entity, &ShellshockTinnitus)>,
-    mut was_active: Local<bool>,
 ) {
     let torn = torn.read().next().is_some();
     let local_id = local.as_ref().map(|l| l.0.0);
+    let life = local.as_ref().and_then(|local| {
+        presented
+            .as_ref()?
+            .snapshot()?
+            .meta
+            .for_client(local.0)
+            .map(|meta| meta.life_sequence.0)
+    });
     let died = died
         .read()
-        .any(|ev| local_id.is_some_and(|id| ev.client == id));
+        .any(|ev| local_id == Some(ev.client) && life == Some(ev.life));
     if torn || !screen.is_some_and(|s| matches!(*s, AppScreen::InGame)) {
-        stop_loop(&mut commands, &playing);
-        *was_active = false;
+        sources.source = None;
+        sources.context = None;
+        sources.was_active = false;
         return;
     }
-    let Some(cg_clock) = cg_clock else {
+    let (Some(cg_clock), Some(presented), Some(local)) = (cg_clock, presented, local) else {
+        sources.source = None;
+        sources.context = None;
+        sources.was_active = false;
         return;
     };
-    let Some(presented) = presented else {
-        return;
-    };
-    let Some(local) = local else {
-        return;
-    };
+    let context = (epoch.0, local.0.0, life.unwrap_or(0));
+    if sources.context != Some(context) {
+        sources.source = None;
+        sources.was_active = false;
+        sources.context = Some(context);
+    }
     let alive = presented.alive_player(local.0).is_some();
     let remaining = presented
         .player(local.0)
@@ -63,34 +70,62 @@ pub(crate) fn update_shellshock_tinnitus(
         .shellshock(local.0)
         .map(|shock| shock.sound.clone())
     else {
-        stop_loop(&mut commands, &playing);
-        *was_active = false;
+        sources.source = None;
+        sources.was_active = false;
         return;
     };
     let want = remaining > 0 && parms.affect && alive && !died;
     if want {
-        ensure_loop(
-            &mut commands,
-            &playing,
-            bank.as_deref(),
-            clips.as_deref_mut(),
-            &mut looping_assets,
-            &mut gaps,
-            epoch.0,
-            &parms.loop_alias,
-            local.0.0,
-        );
-        *was_active = true;
+        let same = sources
+            .source
+            .as_ref()
+            .is_some_and(|source| source.cue.alias == parms.loop_alias);
+        if !same {
+            sources.source = None;
+            if let Some(bank) = bank
+                && let Some(cue) = runtime.source_cue(SourceCueRequest {
+                    bank: bank.0.clone(),
+                    namespace: AssetNamespace::Iw4,
+                    alias: parms.loop_alias.clone(),
+                    emitter: Some(local.0.0),
+                    scope: crate::backend::AudioScope::Match,
+                    epoch: epoch.0,
+                    group: None,
+                })
+            {
+                sources.next_version = sources
+                    .next_version
+                    .checked_add(1)
+                    .expect("source version exhausted");
+                sources.source = Some(DesiredSource {
+                    key: SourceKey {
+                        scope: crate::backend::AudioScope::Match,
+                        epoch: epoch.0,
+                        object: u64::from(local.0.0),
+                        slot: 5,
+                    },
+                    version: sources.next_version,
+                    cue,
+                    origin_inches: None,
+                    start_frame: runtime.audio_frame(),
+                    gain: 1.0,
+                    rate: 1.0,
+                    audible: true,
+                });
+            }
+        }
+        sources.was_active = true;
         return;
     }
-    if *was_active {
-        stop_loop(&mut commands, &playing);
+    if sources.was_active {
+        sources.source = None;
         let alias = if died || !alive {
             &parms.abort_alias
         } else {
             &parms.end_alias
         };
         play.write(crate::AliasCommand::Play(PlayAlias {
+            event: None,
             namespace: AssetNamespace::Iw4,
             alias: alias.to_owned(),
             fallback: None,
@@ -98,73 +133,5 @@ pub(crate) fn update_shellshock_tinnitus(
             snd_ent: Some(SND_ENT_LOCAL),
         }));
     }
-    *was_active = false;
-}
-
-fn stop_loop(commands: &mut Commands, playing: &Query<(Entity, &ShellshockTinnitus)>) {
-    for (entity, _) in playing.iter() {
-        crate::backend::stop(commands, entity);
-    }
-}
-
-fn ensure_loop(
-    commands: &mut Commands,
-    playing: &Query<(Entity, &ShellshockTinnitus)>,
-    bank: Option<&SoundBank>,
-    clips: Option<&mut ClipStore>,
-    looping_assets: &mut Assets<LoopingPcmAudio>,
-    gaps: &mut MissingAliasGaps,
-    epoch: u64,
-    alias: &str,
-    snd_ent: u32,
-) {
-    if playing.iter().any(|(_, bed)| bed.alias == alias) {
-        return;
-    }
-    for (entity, _) in playing.iter() {
-        crate::backend::stop(commands, entity);
-    }
-    let Some(bank) = bank else {
-        return;
-    };
-    let Some(clips) = clips else {
-        return;
-    };
-    let Some(key) = clip_keys_for_alias(&bank.0, AssetNamespace::Iw4, alias)
-        .into_iter()
-        .next()
-    else {
-        gaps.record(alias);
-        return;
-    };
-    clips.request(key.clone());
-    let Some(pcm) = clips.ready(&key) else {
-        return;
-    };
-    let Ok(pcm) = pcm else {
-        gaps.record(alias);
-        return;
-    };
-    let channel = crate::clip_store::alias_for_clip(&bank.0, AssetNamespace::Iw4, alias, &key)
-        .and_then(|row| row.decoded_flags())
-        .map(|flags| flags.channel());
-    let handle = looping_assets.add(pcm.into_looping());
-    let entity = crate::backend::spawn_loop(
-        commands,
-        handle,
-        Volume::Linear(1.0),
-        epoch,
-        crate::backend::AudioScope::Match,
-    );
-    if let Some(channel) = channel {
-        commands
-            .entity(entity)
-            .insert(crate::backend::SoundChannel(channel));
-    }
-    commands.entity(entity).insert((
-        ShellshockTinnitus {
-            alias: alias.to_owned(),
-        },
-        crate::backend::SoundEntity(snd_ent),
-    ));
+    sources.was_active = false;
 }

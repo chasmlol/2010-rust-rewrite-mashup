@@ -1,5 +1,5 @@
 use crate::{PackedFrontendLists, RetainedDrawItem};
-use render_material::{MaterialGenerationId, TechType};
+use render_material::{MaterialDrawKey, MaterialGenerationId, MaterialRefusal, TechType};
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
@@ -179,6 +179,13 @@ pub struct SpotShadowFrameSlot {
 }
 
 #[derive(Clone, Debug)]
+pub struct FrameMaterialRefusal {
+    pub key: MaterialDrawKey,
+    pub tech_type: TechType,
+    pub cause: MaterialRefusal,
+}
+
+#[derive(Clone, Debug)]
 pub struct FrameProduct {
     pub kind: FrameProductKind,
     pub generation_id: MaterialGenerationId,
@@ -199,6 +206,8 @@ pub struct FrameProduct {
 
     pub code_sampler_mask: u64,
 
+    pub material_refusals: Vec<FrameMaterialRefusal>,
+
     pub has_codemesh: bool,
 }
 
@@ -213,6 +222,7 @@ impl FrameProduct {
         self.list_digest = 0;
         self.world_pretess_id = 0;
         self.code_sampler_mask = 0;
+        self.material_refusals.clear();
         self.has_codemesh = false;
     }
 
@@ -310,6 +320,7 @@ fn missing_products() -> Vec<FrameProduct> {
                 world_pretess_id: 0,
                 draw_tech: Vec::new(),
                 code_sampler_mask: 0,
+                material_refusals: Vec::new(),
                 has_codemesh: false,
             }
         })

@@ -252,3 +252,46 @@ impl RuntimeCodeSources {
 pub enum CodeSourceError {
     TextureIndexOverflow,
 }
+
+#[derive(Clone, Debug)]
+pub struct CompiledConstantOverlay {
+    generation: crate::MaterialGenerationId,
+    rows: Vec<(u16, [u32; 4])>,
+}
+
+pub fn compile_constant_overlay(
+    catalog: &crate::RuntimeMaterialCatalog,
+    rows: Vec<(u16, [u32; 4])>,
+) -> CompiledConstantOverlay {
+    CompiledConstantOverlay {
+        generation: catalog.generation_id(),
+        rows,
+    }
+}
+
+impl CompiledConstantOverlay {
+    pub fn validate_generation(
+        &self,
+        catalog: &crate::RuntimeMaterialCatalog,
+    ) -> Result<(), crate::MaterialRefusal> {
+        let generation = catalog.generation_id();
+        if self.generation != generation {
+            return Err(crate::MaterialRefusal::StaleMaterialGeneration {
+                retained: self.generation,
+                current: generation,
+            });
+        }
+        Ok(())
+    }
+    pub fn apply(
+        &self,
+        catalog: &crate::RuntimeMaterialCatalog,
+        sources: &mut RuntimeCodeSources,
+    ) -> Result<(), crate::MaterialRefusal> {
+        self.validate_generation(catalog)?;
+        for &(index, row) in &self.rows {
+            sources.set_constant_rows(index, &[row]);
+        }
+        Ok(())
+    }
+}

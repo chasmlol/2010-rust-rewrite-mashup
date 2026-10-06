@@ -77,7 +77,9 @@ pub fn is_arms_model(name: &str) -> bool {
 }
 
 pub fn is_body_model(name: &str) -> bool {
-    name.starts_with("mp_body_") || name.contains("_mp_body_")
+    name.starts_with("mp_body_")
+        || name.contains("_mp_body_")
+        || (name.starts_with("c_") && name.contains("_mp_") && name.ends_with("_fb"))
 }
 
 pub fn body_has_tp_attach_bones(bone_names: &[String]) -> bool {

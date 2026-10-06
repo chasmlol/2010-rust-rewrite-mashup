@@ -1,6 +1,9 @@
-use entity_iw4::adjust_position_for_mover;
+use entity_iw4::{EntityEventAction, adjust_position_for_mover, entity_event_action};
 use playerstate_iw4::{PlayerState, UserCmd, buttons, eflags, other_flags, pm_flags};
-use sim::{AdoptReport, ClientId, SimWorld, Snapshot, Tick, TickInput};
+use sim::{
+    AdoptReport, ClientId, EntityEventRecord, EventAudience, EventSequence, SimWorld, Snapshot,
+    Tick, TickInput,
+};
 use std::collections::VecDeque;
 
 use crate::ServerTime;
@@ -226,6 +229,9 @@ pub struct ClientPrediction {
     had_local_last_snap: bool,
 
     tick_input: TickInput,
+
+    owner_events: Vec<(EntityEventRecord, std::time::Instant)>,
+    next_owner_event: EventSequence,
 }
 
 impl ClientPrediction {
@@ -251,6 +257,8 @@ impl ClientPrediction {
             last_predict_msec: None,
             had_local_last_snap: false,
             tick_input: TickInput::default(),
+            owner_events: Vec::new(),
+            next_owner_event: EventSequence(1),
         };
         pred.world.suppress_snapshot_publish();
         pred
@@ -309,8 +317,27 @@ impl ClientPrediction {
         self.had_local_last_snap
     }
 
+    pub fn local_life(&self) -> Option<sim::LifeSequence> {
+        self.world
+            .client_meta(self.local)
+            .map(|meta| meta.life_sequence)
+    }
+
+    pub fn take_owner_events(&mut self) -> Vec<EntityEventRecord> {
+        let now = std::time::Instant::now();
+        std::mem::take(&mut self.owner_events)
+            .into_iter()
+            .filter(|(_, at)| now.duration_since(*at) < std::time::Duration::from_secs(5))
+            .map(|(event, _)| event)
+            .collect()
+    }
+
     pub fn arm_from_content(&mut self, authority: &SimWorld) {
         self.world.initialize_prediction_from(authority);
+        self.world
+            .persistent_data_mut()
+            .install_schemas(authority.persistent_data().schemas().clone())
+            .expect("validated match schemas must install into prediction");
         self.armed = true;
     }
 
@@ -345,8 +372,12 @@ impl ClientPrediction {
         self.next_tick = self.next_tick.wrapping_add(1);
 
         let output = if msec > 0 {
-            self.step_predicted(tick, cmd, msec, sim::StepReason::PredictNew)
-                .unwrap_or(input)
+            let events_from = self.world.next_entity_event_sequence();
+            let output = self
+                .step_predicted(tick, seq, cmd, msec, sim::StepReason::PredictNew)
+                .unwrap_or(input);
+            self.collect_owner_events(events_from);
+            output
         } else {
             input
         };
@@ -542,6 +573,7 @@ impl ClientPrediction {
 
         for index in 0..pending {
             let cmd = self.history.moves[index].cmd;
+            let sequence = self.history.moves[index].seq;
 
             let input = self
                 .world
@@ -555,7 +587,7 @@ impl ClientPrediction {
 
             let msec = cmd.server_time.wrapping_sub(input.command_time);
             let output = self
-                .step_predicted(Tick(tick), cmd, msec, sim::StepReason::Replay)
+                .step_predicted(Tick(tick), sequence, cmd, msec, sim::StepReason::Replay)
                 .unwrap_or(input);
 
             let record = &mut self.history.moves[index];
@@ -569,6 +601,44 @@ impl ClientPrediction {
 
         self.next_tick = tick;
         pending
+    }
+
+    fn collect_owner_events(&mut self, events_from: EventSequence) {
+        let local = i32::try_from(self.local.0).unwrap_or(-1);
+        let mut owner_events = std::mem::take(&mut self.owner_events);
+        let mut next = self.next_owner_event;
+        for record in self.world.entity_events() {
+            if (record.sequence == events_from || record.sequence.is_newer_than(events_from))
+                && record.payload.number == local
+                && matches!(
+                    entity_event_action(record.event),
+                    Ok(EntityEventAction::WeaponFire | EntityEventAction::EjectBrass)
+                )
+            {
+                owner_events.push((
+                    EntityEventRecord {
+                        sequence: next,
+                        audience: EventAudience::Client(self.local),
+                        ..record.clone()
+                    },
+                    std::time::Instant::now(),
+                ));
+                next = next.next();
+            }
+        }
+        self.next_owner_event = next;
+        let life = self.local_life();
+        let now = std::time::Instant::now();
+        owner_events.retain(|(event, at)| {
+            now.duration_since(*at) < std::time::Duration::from_secs(5)
+                && event
+                    .payload
+                    .fire_cause
+                    .is_none_or(|cause| Some(cause.life) == life)
+        });
+        let excess = owner_events.len().saturating_sub(DEFAULT_HISTORY_CAP * 2);
+        owner_events.drain(..excess);
+        self.owner_events = owner_events;
     }
 
     fn local_state(&self) -> Option<PlayerState> {
@@ -603,6 +673,7 @@ impl ClientPrediction {
     fn step_predicted(
         &mut self,
         tick: Tick,
+        sequence: CmdSeq,
         cmd: UserCmd,
         msec: i32,
         reason: sim::StepReason,
@@ -611,7 +682,11 @@ impl ClientPrediction {
         let mut input = std::mem::take(&mut self.tick_input);
         input.cmds.clear();
         input.actions.clear();
-        input.cmds.push((local, cmd));
+        input.cmds.push(sim::PlayerCommand::sequenced(
+            local,
+            cmd,
+            sim::CommandSequence(sequence.0),
+        ));
         let _ = sim::try_step(&mut self.world, tick, &input, msec, reason);
         self.tick_input = input;
         self.world.player(local).copied()

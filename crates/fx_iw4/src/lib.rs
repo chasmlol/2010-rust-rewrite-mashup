@@ -245,14 +245,14 @@ pub use pool::{
     FX_BUFFERS_OFF_EFFECTS, FX_BUFFERS_OFF_ELEMS, FX_BUFFERS_OFF_SPARK_CLOUD,
     FX_BUFFERS_POOL_STRIDE, FX_EFFECT_HANDLE_RING_MASK, FX_EFFECT_HANDLE_RING_SIZE,
     FX_EFFECT_POOL_BYTES, FX_EFFECT_POOL_CAPACITY, FX_EFFECT_SLOT_SIZE, FX_ELEM_POOL_CAPACITY,
-    FX_ELEM_RUNTIME_STRIDE, FX_ENTITYNUM_WORLD, FX_PLAY_BOLT_NONE, FX_RAND_TABLE_MOD,
-    FX_SPAWN_BOLT_NONE, FX_SPOT_LIGHT_LIMIT, FX_STATUS_UNIQUE_DONE, FX_STATUS_UNIQUE_MASK,
-    FX_SYSTEM_STRIDE, FX_TRAIL_ELEM_POOL_CAPACITY, FX_TRAIL_ELEM_RUNTIME_STRIDE,
-    FX_TRAIL_POOL_CAPACITY, FX_TRAIL_RUNTIME_STRIDE, FX_WARN_EFFECT_LIMIT, FX_WARN_ELEM_LIMIT,
-    FX_WARN_SPARK_CLOUD_LIMIT, FX_WARN_TOO_MANY_SPOTLIGHTS, effect_addr,
-    effect_byte_offset_from_handle, effect_handle_for_slot, effect_handle_from_byte_offset,
-    elem_addr, elem_handle_from_ptr_delta, trail_addr, trail_elem_addr, trail_elem_handle_for_slot,
-    trail_handle_for_slot, trail_handle_from_byte_offset,
+    FX_ELEM_RUNTIME_STRIDE, FX_ENTITYNUM_WORLD, FX_PLAY_BOLT_NONE, FX_SPAWN_BOLT_NONE,
+    FX_SPOT_LIGHT_LIMIT, FX_STATUS_UNIQUE_DONE, FX_STATUS_UNIQUE_MASK, FX_SYSTEM_STRIDE,
+    FX_TRAIL_ELEM_POOL_CAPACITY, FX_TRAIL_ELEM_RUNTIME_STRIDE, FX_TRAIL_POOL_CAPACITY,
+    FX_TRAIL_RUNTIME_STRIDE, FX_WARN_EFFECT_LIMIT, FX_WARN_ELEM_LIMIT, FX_WARN_SPARK_CLOUD_LIMIT,
+    FX_WARN_TOO_MANY_SPOTLIGHTS, effect_addr, effect_byte_offset_from_handle,
+    effect_handle_for_slot, effect_handle_from_byte_offset, elem_addr, elem_handle_from_ptr_delta,
+    trail_addr, trail_elem_addr, trail_elem_handle_for_slot, trail_handle_for_slot,
+    trail_handle_from_byte_offset,
 };
 pub use post_light::{
     FX_POST_LIGHT_ADD_CAP, FX_POST_LIGHT_ANGLE_STEP, FX_POST_LIGHT_ARG_COUNT,
@@ -262,15 +262,8 @@ pub use post_light::{
 };
 pub use quat::{axis_to_quat, quat_nlerp, quat_normalize};
 pub use random::{
-    FX_RAND_CH_ANG_VEL_PITCH, FX_RAND_CH_ANG_VEL_ROLL, FX_RAND_CH_ANG_VEL_YAW, FX_RAND_CH_ATLAS,
-    FX_RAND_CH_COLOR, FX_RAND_CH_DELAY, FX_RAND_CH_EMIT_DIST, FX_RAND_CH_GRAVITY,
-    FX_RAND_CH_INITIAL_ROTATION, FX_RAND_CH_LIFE, FX_RAND_CH_ONESHOT_COUNT, FX_RAND_CH_REFLECTION,
-    FX_RAND_CH_ROTATION_DELTA, FX_RAND_CH_SCALE, FX_RAND_CH_SIZE0, FX_RAND_CH_SPAWN_ANGLES_PITCH,
-    FX_RAND_CH_SPAWN_ANGLES_ROLL, FX_RAND_CH_SPAWN_ANGLES_YAW, FX_RAND_CH_SPAWN_OFFSET_HEIGHT,
-    FX_RAND_CH_SPAWN_OFFSET_RADIUS, FX_RAND_CH_SPAWN_OFFSET_YAW, FX_RAND_CH_SPAWN_ORIGIN_X,
-    FX_RAND_CH_SPAWN_ORIGIN_Y, FX_RAND_CH_SPAWN_ORIGIN_Z, FX_RAND_CH_VISUAL,
-    FX_RANDOM_TABLE_FLOATS, effect_random_seed_from_msec, effect_random_seed_from_rand,
-    elem_random_seed, elem_visual_index, random_table_f32, random_table_u16, trail_random_seed,
+    FX_RANDOM_VERSION, FxRandomChannel, effect_random_key, elem_random_seed, elem_visual_index,
+    sample_at, sample_f32, sample_u16, trail_random_seed,
 };
 pub use rotate_axis::{
     FX_DEG_TO_RAD, FX_RAD_TO_DEG, FX_RAND_ROT_DEGREES, impact_mark_axis, randomly_rotate_axis,

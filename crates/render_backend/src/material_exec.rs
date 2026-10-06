@@ -135,6 +135,7 @@ impl ShellInternKey {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum ExecutionShareExtra {
     Identity,
+    ReflectionProbe(u8),
     ViewmodelCodeMesh,
     LightingHandle(u32),
 
@@ -151,7 +152,7 @@ struct OverlayKeepKey {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum OverlayKeepExtra {
-    World,
+    World(Option<u8>),
     ViewmodelCodeMesh,
     Lighting {
         handle: u32,
@@ -175,10 +176,56 @@ fn xmodel_depth_hack(key: u64) -> bool {
     host_viewmodel_render_fx_flags(dpvs_iw4::GfxDrawSurf { packed: key }.object_id()) != 0
 }
 
-fn execution_share_extra(draw: &RetainedDrawItem) -> ExecutionShareExtra {
+fn per_surface_reflection_sh(
+    frame: &MaterialExecFrame,
+    draw: &RetainedDrawItem,
+) -> Option<(u8, [[f32; 4]; 3])> {
+    let probe = draw.surface_samplers.reflection_probe?.0;
+    let sh = (*frame.reflection_probe_sh.get(usize::from(probe))?)?;
+    Some((probe, sh))
+}
+
+fn overlay_reflection_sh(
+    frame: &MaterialExecFrame,
+    draw: &RetainedDrawItem,
+    scratch: &mut RuntimeCodeSources,
+) {
+    if let Some((_, sh)) = per_surface_reflection_sh(frame, draw) {
+        for (index, row) in render_material::CODE_T6_REFLECTION_SH.into_iter().zip(sh) {
+            scratch.set_constant_rows(index, &[row.map(f32::to_bits)]);
+        }
+    }
+}
+
+fn overlay_smodel_lighting_sh(
+    frame: &MaterialExecFrame,
+    draw: &RetainedDrawItem,
+    scratch: &mut RuntimeCodeSources,
+) {
+    let RetainedDrawKind::Smodel { placement, .. } = draw.kind else {
+        return;
+    };
+    let sh = frame
+        .smodel_lighting_sh
+        .get(placement as usize)
+        .copied()
+        .flatten()
+        .unwrap_or([[1.0, 1.0, 1.0, 0.0], [0.0, 0.0, 0.0, 1.0], [0.0; 4]]);
+    for (index, row) in render_material::CODE_T6_GRID_SH.into_iter().zip(sh) {
+        scratch.set_constant_rows(index, &[row.map(f32::to_bits)]);
+    }
+}
+
+fn execution_share_extra(
+    frame: &MaterialExecFrame,
+    draw: &RetainedDrawItem,
+) -> ExecutionShareExtra {
     match draw.kind {
         RetainedDrawKind::MarkMesh { .. } => ExecutionShareExtra::MarkMesh,
-        RetainedDrawKind::World { .. } => ExecutionShareExtra::Identity,
+        RetainedDrawKind::World { .. } => match per_surface_reflection_sh(frame, draw) {
+            Some((probe, _)) => ExecutionShareExtra::ReflectionProbe(probe),
+            None => ExecutionShareExtra::Identity,
+        },
         RetainedDrawKind::Glass {
             lighting_handle, ..
         } => ExecutionShareExtra::LightingHandle(lighting_handle),
@@ -198,6 +245,7 @@ fn execution_share_extra(draw: &RetainedDrawItem) -> ExecutionShareExtra {
 }
 
 fn execution_share_key(
+    frame: &MaterialExecFrame,
     draw: &RetainedDrawItem,
     tech: TechType,
     vertex_type: u8,
@@ -214,7 +262,7 @@ fn execution_share_key(
         material_id: draw.material_id,
         tech: tech.0,
         vertex_type,
-        extra: execution_share_extra(draw),
+        extra: execution_share_extra(frame, draw),
     }
 }
 
@@ -246,15 +294,16 @@ fn smodel_code_world_from_local(kind: &RetainedDrawKind) -> Mat4 {
     }
 }
 
-fn overlay_keep_key(draw: &RetainedDrawItem) -> OverlayKeepKey {
+fn overlay_keep_key(frame: &MaterialExecFrame, draw: &RetainedDrawItem) -> OverlayKeepKey {
     let scene_light = dpvs_iw4::GfxDrawSurf { packed: draw.key }.scene_light_index();
     let extra = match draw.kind {
         RetainedDrawKind::CodeMesh {
             viewmodel: true, ..
         } => OverlayKeepExtra::ViewmodelCodeMesh,
-        RetainedDrawKind::World { .. } | RetainedDrawKind::CodeMesh { .. } => {
-            OverlayKeepExtra::World
+        RetainedDrawKind::World { .. } => {
+            OverlayKeepExtra::World(per_surface_reflection_sh(frame, draw).map(|(probe, _)| probe))
         }
+        RetainedDrawKind::CodeMesh { .. } => OverlayKeepExtra::World(None),
         RetainedDrawKind::MarkMesh {
             lighting_handle, ..
         } => OverlayKeepExtra::Lighting {
@@ -297,19 +346,21 @@ fn overlay_draw_material(
     draw: &RetainedDrawItem,
     scratch: &mut RuntimeCodeSources,
     need: OverlayCodeNeed,
-) {
+) -> Result<(), MaterialRefusal> {
     let inv_image_height = runtime.frame.inv_image_height;
     scratch.begin_overlay();
+    overlay_reflection_sh(runtime.frame, draw, scratch);
+    overlay_smodel_lighting_sh(runtime.frame, draw, scratch);
     apply_shadowable_light(
         scratch,
         draw.key,
         &runtime.frame.primary_lights,
         &runtime.frame.attenuation,
-        &runtime.frame.t5_falloff,
+        &runtime.frame.local_light_bindings,
+        runtime.catalog,
         runtime.frame.view_origin,
-        runtime.frame.float_time,
         &runtime.frame.spot_receivers,
-    );
+    )?;
     match draw.kind {
         RetainedDrawKind::Smodel {
             lighting_handle,
@@ -420,6 +471,7 @@ fn overlay_draw_material(
         }
         _ => {}
     }
+    Ok(())
 }
 
 fn overlay_draw_obj_only(
@@ -429,6 +481,8 @@ fn overlay_draw_obj_only(
     need: OverlayCodeNeed,
 ) {
     let inv_image_height = runtime.frame.inv_image_height;
+    overlay_reflection_sh(runtime.frame, draw, scratch);
+    overlay_smodel_lighting_sh(runtime.frame, draw, scratch);
     match draw.kind {
         RetainedDrawKind::Smodel {
             lighting_handle,
@@ -514,11 +568,12 @@ fn overlay_draw_execution(
     scratch: &mut RuntimeCodeSources,
     overlay: OverlayMode,
     need: OverlayCodeNeed,
-) {
+) -> Result<(), MaterialRefusal> {
     match overlay {
-        OverlayMode::Full => overlay_draw_material(runtime, draw, scratch, need),
+        OverlayMode::Full => overlay_draw_material(runtime, draw, scratch, need)?,
         OverlayMode::ObjOnly => overlay_draw_obj_only(runtime, draw, scratch, need),
     }
+    Ok(())
 }
 
 fn overlay_need_from_execution(exec: &MaterialExecution) -> OverlayCodeNeed {
@@ -651,6 +706,9 @@ impl MaterialRunExecutor {
     fn retain_shells_for(&mut self, generation: MaterialGenerationId) {
         if self.shell_generation != Some(generation) {
             self.shells.clear();
+            self.run = None;
+            self.last_overlay = None;
+            self.scratch.reset_overlay();
             self.shell_generation = Some(generation);
         }
     }
@@ -680,10 +738,30 @@ impl MaterialRunExecutor {
         patch_instance_code: bool,
     ) -> Result<(), MaterialRefusal> {
         self.census.draws = self.census.draws.saturating_add(1);
+        self.retain_shells_for(view.catalog.generation_id());
+        let scene_light = dpvs_iw4::GfxDrawSurf { packed: draw.key }.scene_light_index();
+        if scene_light != 0
+            && view
+                .frame
+                .primary_lights
+                .get(usize::from(scene_light))
+                .is_some()
+        {
+            let validation = view
+                .frame
+                .local_light_bindings
+                .get(usize::from(scene_light))
+                .ok_or(MaterialRefusal::MissingLightBindings { scene_light })
+                .and_then(|bindings| bindings.validate_generation(view.catalog));
+            if let Err(cause) = validation {
+                self.census.refused = self.census.refused.saturating_add(1);
+                return Err(cause);
+            }
+        }
         self.place_rows.clear();
         self.place_lanes.clear();
-        let share = execution_share_key(draw, tech_type, vertex_type);
-        let overlay_key = overlay_keep_key(draw);
+        let share = execution_share_key(view.frame, draw, tech_type, vertex_type);
+        let overlay_key = overlay_keep_key(view.frame, draw);
         if self.run.as_ref().is_some_and(|run| run.share == share) {
             let Self {
                 run,
@@ -741,12 +819,15 @@ impl MaterialRunExecutor {
         // still a chance not to compute the rest. `retain_shells_for` comes
         // first because a shell from a previous material generation answers
         // for a material that is gone.
-        self.retain_shells_for(view.catalog.generation_id);
         let shell_key = ShellInternKey::from_share(share);
         let known_need = self.shells.get(&shell_key).map(|entry| entry.need);
         let need = known_need.unwrap_or(OverlayCodeNeed::ALL);
         let writes_before = self.scratch.const_writes();
-        overlay_draw_execution(view, draw, &mut self.scratch, overlay, need);
+        if let Err(cause) = overlay_draw_execution(view, draw, &mut self.scratch, overlay, need) {
+            self.last_overlay = None;
+            self.census.refused = self.census.refused.saturating_add(1);
+            return Err(cause);
+        }
         self.census.overlay_const_writes = self.census.overlay_const_writes.saturating_add(
             u32::try_from(self.scratch.const_writes() - writes_before).unwrap_or(u32::MAX),
         );
@@ -767,7 +848,7 @@ impl MaterialRunExecutor {
             if let Some(entry) = shells.get(&shell_key) {
                 census.shell_hits = census.shell_hits.saturating_add(1);
                 let mut execution = recycled.unwrap_or_else(MaterialExecution::vacant);
-                match execution.rebind_into(&entry.shell, &sources) {
+                match execution.rebind_into(&entry.shell, view.catalog, &sources) {
                     Ok(()) => Ok(execution),
                     Err(cause) => Err(cause),
                 }

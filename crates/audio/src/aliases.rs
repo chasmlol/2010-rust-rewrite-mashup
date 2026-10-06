@@ -338,3 +338,10 @@ pub fn select_cg_fire_alias<'a>(
     }
     current
 }
+
+pub(crate) fn namespace_alias(alias: &str) -> (asset_core::AssetNamespace, &str) {
+    alias
+        .split_once(':')
+        .and_then(|(ns, name)| asset_core::AssetNamespace::parse(ns).map(|ns| (ns, name)))
+        .unwrap_or((asset_core::AssetNamespace::Iw4, alias))
+}

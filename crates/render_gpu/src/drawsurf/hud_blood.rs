@@ -46,7 +46,7 @@ impl BloodPortGpu {
         cache: &PipelineCache,
     ) -> Result<Self, BloodGpuRefusal> {
         let port = &blood.film.port;
-        let state = super::state::GfxPassState::from_bits(blood.film.shell.passes[0].state);
+        let state = super::state::GfxPassState::from_prepared(blood.film.shell.passes()[0].state());
         if let Some(fields) = state.unsupported_host_fields() {
             return Err(BloodGpuRefusal::UnsupportedState { fields });
         }
@@ -143,8 +143,9 @@ impl BloodPortGpu {
     ) -> Result<(), BloodGpuRefusal> {
         let port = &self.blood.film.port;
         let sources = hud_2d_sources(surface_w, surface_h).ok_or(BloodGpuRefusal::Projection)?;
-        let execution = rebind_stable_material(&self.blood.film.shell, &sources)
-            .map_err(BloodGpuRefusal::Execute)?;
+        let execution =
+            rebind_stable_material(&self.blood.film.shell, &self.blood.film.catalog, &sources)
+                .map_err(BloodGpuRefusal::Execute)?;
         let Some(pass) = execution.pass(0).filter(|_| execution.pass_count() == 1) else {
             return Err(BloodGpuRefusal::PassCount);
         };

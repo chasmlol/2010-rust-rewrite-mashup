@@ -351,48 +351,65 @@ pub fn parse_set_vol_fog(source: &str) -> Option<ExpFog> {
     let stripped = strip_gsc_comments(source);
     let assigns = parse_gsc_scalar_assigns(&stripped);
     let args = first_call_args(&stripped, "setVolFog")?;
-    let scalar = |i: usize| args.get(i).and_then(|s| resolve_scalar(s, &assigns));
-    if !matches!(args.len(), 8 | 18) {
-        return None;
+    let scalars: Vec<f32> = args
+        .iter()
+        .map(|s| resolve_scalar(s, &assigns))
+        .collect::<Option<_>>()?;
+    if let Ok(scalars) = <[f32; 18]>::try_from(scalars.as_slice()) {
+        return Some(vol_fog(scalars));
     }
-    let old = args.len() == 8;
-    let mut color_rgb = [scalar(4)?, scalar(5)?, scalar(6)?];
-    let color_scale = if old {
-        let scale = color_rgb[0].max(color_rgb[1]).max(color_rgb[2]);
-        color_rgb = color_rgb.map(|c| c / scale);
-        scale
-    } else {
-        scalar(7)?
-    };
+    let [
+        start_dist,
+        halfway_dist,
+        halfway_height,
+        base_height,
+        r,
+        g,
+        b,
+        transition_time,
+    ] = <[f32; 8]>::try_from(scalars.as_slice()).ok()?;
+    let color_scale = r.max(g).max(b);
     Some(ExpFog {
-        start_dist: scalar(0)?,
-        halfway_dist: scalar(1)?,
-        color_rgb,
-        max_opacity: if old { 1.0 } else { scalar(17)? },
-        transition_time: scalar(if old { 7 } else { 16 })?,
-        sun: Some(if old {
-            SunFog {
-                color_rgb: [0.5; 3],
-                sun_dir: [1.0, 0.0, 0.0],
-                begin_angle_deg: 0.0,
-                end_angle_deg: 0.0,
-                scale: 1.0,
-            }
-        } else {
-            SunFog {
-                color_rgb: [scalar(8)?, scalar(9)?, scalar(10)?],
-                sun_dir: [scalar(11)?, scalar(12)?, scalar(13)?],
-                begin_angle_deg: scalar(14)?,
-                end_angle_deg: scalar(15)?,
-                scale: 1.0,
-            }
+        start_dist,
+        halfway_dist,
+        color_rgb: [r, g, b].map(|c| c / color_scale),
+        max_opacity: 1.0,
+        transition_time,
+        sun: Some(SunFog {
+            color_rgb: [0.5; 3],
+            sun_dir: [1.0, 0.0, 0.0],
+            begin_angle_deg: 0.0,
+            end_angle_deg: 0.0,
+            scale: 1.0,
         }),
         volumetric: Some(VolFog {
-            halfway_height: scalar(2)?,
-            base_height: scalar(3)?,
+            halfway_height,
+            base_height,
             color_scale,
         }),
     })
+}
+
+pub fn vol_fog(v: [f32; 18]) -> ExpFog {
+    ExpFog {
+        start_dist: v[0],
+        halfway_dist: v[1],
+        color_rgb: [v[4], v[5], v[6]],
+        max_opacity: v[17],
+        transition_time: v[16],
+        sun: Some(SunFog {
+            color_rgb: [v[8], v[9], v[10]],
+            sun_dir: [v[11], v[12], v[13]],
+            begin_angle_deg: v[14],
+            end_angle_deg: v[15],
+            scale: 1.0,
+        }),
+        volumetric: Some(VolFog {
+            halfway_height: v[2],
+            base_height: v[3],
+            color_scale: v[7],
+        }),
+    }
 }
 
 fn field_f32(source: &str, field: &str) -> Option<f32> {
@@ -472,4 +489,72 @@ pub fn is_createart_fog_file(name: &str) -> bool {
     let n = name.replace('\\', "/").to_ascii_lowercase();
     let base = n.rsplit('/').next().unwrap_or(&n);
     base.contains("_fog")
+}
+
+const VOL_FOG_LOCALS: [&str; 18] = [
+    "start_dist",
+    "half_dist",
+    "half_height",
+    "base_height",
+    "fog_r",
+    "fog_g",
+    "fog_b",
+    "fog_scale",
+    "sun_col_r",
+    "sun_col_g",
+    "sun_col_b",
+    "sun_dir_x",
+    "sun_dir_y",
+    "sun_dir_z",
+    "sun_start_ang",
+    "sun_stop_ang",
+    "time",
+    "max_fog_opacity",
+];
+
+pub fn t6_set_vol_fog(bytes: &[u8]) -> Option<ExpFog> {
+    if bytes.get(..8)? != b"\x80GSC\r\n\0\x06" {
+        return None;
+    }
+    let word = |at| Some(u32::from_le_bytes(bytes.get(at..at + 4)?.try_into().ok()?));
+    let half = |at| Some(u16::from_le_bytes(bytes.get(at..at + 2)?.try_into().ok()?));
+    let mut locals = HashMap::new();
+    let mut at = word(24)? as usize;
+    for _ in 0..half(50)? {
+        let offset = half(at)? as usize;
+        let count = usize::from(*bytes.get(at + 2)?);
+        let kind = *bytes.get(at + 3)?;
+        let tail = bytes.get(offset..)?;
+        let name = std::str::from_utf8(tail.get(..tail.iter().position(|&b| b == 0)?)?).ok()?;
+        if kind == 1 && count == 1 {
+            locals.insert(name, word(at + 4)? as usize);
+        }
+        at += 4 + 4 * count;
+    }
+    let table = *locals.get(VOL_FOG_LOCALS[0])?;
+    let local_count = usize::from(*bytes.get(table - 1)?);
+    let code = table + 2 * local_count;
+    let mut values = [0.0; 18];
+    for (value, name) in values.iter_mut().zip(VOL_FOG_LOCALS) {
+        let position = (*locals.get(name)?).checked_sub(table)? / 2;
+        let index = u8::try_from(local_count.checked_sub(position + 1)?).ok()?;
+        let set = code
+            + bytes
+                .get(code..)?
+                .windows(3)
+                .position(|w| w == [0x27, index, 0x28])?;
+        let float = (set % 4 == 0)
+            .then(|| {
+                (set.checked_sub(7)?..set - 4)
+                    .find(|&p| bytes[p] == 0x09 && (p + 4) & !3 == set - 4)
+            })
+            .flatten();
+        *value = match (float, bytes.get(set.checked_sub(2)?..set)?) {
+            (Some(_), _) => f32::from_le_bytes(bytes[set - 4..set].try_into().ok()?),
+            (None, [_, 0x03]) => 0.0,
+            (None, [0x04, byte]) => f32::from(*byte),
+            _ => return None,
+        };
+    }
+    Some(vol_fog(values))
 }

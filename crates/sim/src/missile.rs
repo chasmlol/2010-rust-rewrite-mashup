@@ -64,6 +64,7 @@ pub(crate) fn magic_bullet(
         .life_sequence;
     let shot = AcceptedShot {
         shot_id: crate::ShotId(0),
+        fire_cause: None,
         attacker: owner,
         attacker_life,
         hand: 0,
@@ -166,12 +167,12 @@ fn fire_missile(
     let velocity = truncated_tr_delta([
         dir[0] * speed + gun_vel[0],
         dir[1] * speed + gun_vel[1],
-        dir[2] * speed + facts.projectile_speed_up as f32 + gun_vel[2],
+        dir[2] * speed + gun_vel[2],
     ]);
     let raw_speed = vec3_length([
         dir[0] * speed + gun_vel[0],
         dir[1] * speed + gun_vel[1],
-        dir[2] * speed + facts.projectile_speed_up as f32 + gun_vel[2],
+        dir[2] * speed + gun_vel[2],
     ]);
     let pos = Trajectory {
         tr_time: time_ms,

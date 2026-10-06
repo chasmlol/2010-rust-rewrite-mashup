@@ -1,38 +1,34 @@
 use crate::origin::sample_float_range;
-use crate::random::{
-    FX_RAND_CH_ANG_VEL_PITCH, FX_RAND_CH_ANG_VEL_ROLL, FX_RAND_CH_ANG_VEL_YAW,
-    FX_RAND_CH_SPAWN_ANGLES_PITCH, FX_RAND_CH_SPAWN_ANGLES_ROLL, FX_RAND_CH_SPAWN_ANGLES_YAW,
-    random_table_f32,
-};
+use crate::random::{FxRandomChannel, sample_f32};
 
 #[inline]
 pub fn sample_elem_angles(
     spawn_angles: [[f32; 2]; 3],
     angular_velocity: [[f32; 2]; 3],
-    seed: u32,
+    seed: u64,
     age_msec: f32,
 ) -> [f32; 3] {
     let ch_spawn = [
-        FX_RAND_CH_SPAWN_ANGLES_PITCH,
-        FX_RAND_CH_SPAWN_ANGLES_YAW,
-        FX_RAND_CH_SPAWN_ANGLES_ROLL,
+        FxRandomChannel::SpawnPitch,
+        FxRandomChannel::SpawnAngleYaw,
+        FxRandomChannel::SpawnRoll,
     ];
     let ch_vel = [
-        FX_RAND_CH_ANG_VEL_PITCH,
-        FX_RAND_CH_ANG_VEL_YAW,
-        FX_RAND_CH_ANG_VEL_ROLL,
+        FxRandomChannel::AngularPitch,
+        FxRandomChannel::AngularYaw,
+        FxRandomChannel::AngularRoll,
     ];
     let mut out = [0.0f32; 3];
     for i in 0..3 {
         let spawn = sample_float_range(
             spawn_angles[i][0],
             spawn_angles[i][1],
-            random_table_f32(seed, ch_spawn[i]),
+            sample_f32(seed, ch_spawn[i]),
         );
         let vel = sample_float_range(
             angular_velocity[i][0],
             angular_velocity[i][1],
-            random_table_f32(seed, ch_vel[i]),
+            sample_f32(seed, ch_vel[i]),
         );
         out[i] = spawn + age_msec * vel;
     }
@@ -72,7 +68,7 @@ pub fn mat3_mul(a: [[f32; 3]; 3], b: [[f32; 3]; 3]) -> [[f32; 3]; 3] {
 pub fn get_elem_angles_axis(
     spawn_angles: [[f32; 2]; 3],
     angular_velocity: [[f32; 2]; 3],
-    seed: u32,
+    seed: u64,
     age_msec: f32,
     effect_axis: [[f32; 3]; 3],
 ) -> [[f32; 3]; 3] {

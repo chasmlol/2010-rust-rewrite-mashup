@@ -94,8 +94,9 @@ pub use expr::{
 };
 pub use flashbang::{
     SCREEN_BLEND_BLURRED, SCREEN_BLEND_FLASHED, SCREEN_BLEND_NONE, ShellshockLookParms,
-    ShellshockLookState, ShellshockSoundParms, ShockParams, is_flashbanged, shellshock_flash_blend,
-    shellshock_flash_fade_sin_cos, shellshock_remaining_ms, update_shellshock_look_control,
+    ShellshockLookState, ShellshockSoundParms, ShockParams, is_flashbanged, shellshock_blend_time,
+    shellshock_flash_blend, shellshock_flash_fade_sin_cos, shellshock_remaining_ms,
+    shellshock_screen_alpha, update_shellshock_look_control,
 };
 pub use font::{
     G_COLOR_TABLE, HUDELEM_FONT_DEFAULT_BASE_SCALE, HUDELEM_FONT_HALF_BASE_SCALE,
@@ -113,8 +114,9 @@ pub use fov::{
 pub use gamemsg::{
     CON_CHANNEL_GAMENOTIFY, CON_CHANNEL_OBITUARY, EMBED_HUD_ICON_SIZE_BIAS,
     EMBED_HUD_ICON_SIZE_CLAMP_MAX, EMBED_HUD_ICON_SIZE_CLAMP_MIN, EMBED_HUD_ICON_SIZE_SCALE,
-    EXE_LEFTGAME, GAME_MSG_CHAR_EM, GAME_MSG_WIN0_HORZ_ALIGN, GAME_MSG_WIN0_LINE_COUNT,
-    GAME_MSG_WIN0_MODE, GAME_MSG_WIN0_MSG_TIME_MS, GAME_MSG_WIN0_TEXT_SCALE,
+    EXE_LEFTGAME, GAME_MSG_CHAR_EM, GAME_MSG_WIN0_FADE_IN_TIME_MS, GAME_MSG_WIN0_FADE_OUT_TIME_MS,
+    GAME_MSG_WIN0_HORZ_ALIGN, GAME_MSG_WIN0_LINE_COUNT, GAME_MSG_WIN0_MODE,
+    GAME_MSG_WIN0_MSG_TIME_MS, GAME_MSG_WIN0_SCROLL_TIME_MS, GAME_MSG_WIN0_TEXT_SCALE,
     GAME_MSG_WIN0_TEXT_STYLE, GAME_MSG_WIN0_VERT_ALIGN, GAME_MSG_WIN0_X, GAME_MSG_WIN0_Y,
     GAME_MSG_WINDOW_COUNT, HITLOC_HEAD, HITLOC_HELMET, HITLOC_NONE, ITEM_TYPE_GAME_MESSAGE_WINDOW,
     KILLICON_BASE_SIZE, KILLICON_CRUSH, KILLICON_DIED, KILLICON_FALLING, KILLICON_HEADSHOT,

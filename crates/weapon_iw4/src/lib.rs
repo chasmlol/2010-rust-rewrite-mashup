@@ -1,6 +1,9 @@
 #![no_std]
 #![forbid(unsafe_code)]
 
+mod equipment;
+pub use equipment::{EquipmentRuntimeFacts, WEAPCLASS_THROWINGKNIFE};
+
 mod ads_allow;
 mod ads_overlay;
 mod ammo;
@@ -14,6 +17,7 @@ mod penetration;
 mod placement;
 mod player_anim_type;
 mod reload;
+mod response;
 mod spread;
 mod sprint;
 mod sway;
@@ -38,7 +42,7 @@ pub use ammo::{
     get_clip_index, get_total_ammo_in_clips, get_weapon_dual_wield_byte,
     has_akimbo_viewmodel_anims, latch_weapon_dual_wield, num_hands, num_hands_for_held,
     player_weapons_find_slot, set_ammo_not_in_clip, set_clip_for_hand, set_weapon_dual_wield_byte,
-    spend_clip_for_hand,
+    set_weapon_model_for_held, spend_clip_for_hand, weapon_model_for_held,
 };
 pub use event_sound::{
     EV_RELOAD, EV_RELOAD_END, EV_RELOAD_FROM_EMPTY, EV_RELOAD_START, begin_reload_event,
@@ -53,15 +57,10 @@ pub use fire_weapon::{
     fire_weapon_kind, location_damage_is_valid, location_damage_scale,
 };
 pub use kick::{
-    DOUBLEBARREL_PITCH_SCALE, FireRecoilImpulse, FireRecoilPsScales, GUN_KICK_OFS_EPS,
-    GUN_KICK_SPEED_EPS, GunKickRange, GunKickSpring, GunRecoilPlacementState,
-    KICK_AVEL_ROLL_FROM_YAW, KICK_STEP_MS, MS_TO_SEC, RECOIL_SCALE_DIVISOR,
-    REDUCED_KICK_PERCENT_SCALE, VIEW_KICK_ADS_FRAC, VIEW_KICK_CLAMP_DEG,
-    VIEW_KICK_NO_WEAPON_CENTER_SPEED, VIEW_KICK_RETURN_SCALE, ViewKickRange,
-    calculate_weapon_position_gun_recoil, fire_recoil_amplitude_scale, fire_recoil_gun_range,
-    fire_recoil_pitch_extra_scale, fire_recoil_reduce_scale, fire_recoil_view_range,
-    gun_recoil_angle_contribution, gun_recoil_single_angle, kick_angles, kick_angles_center_speed,
-    kick_angles_step_axis, lerp_gun_kick_spring, start_firing_restrict_kick_time,
+    CAMERA_LIMIT_DEGREES, CAMERA_PEAK_SECONDS, FireRecoilImpulse, FireRecoilPsScales, GunKickRange,
+    GunRecoilPlacementState, GunRecoilResponse, MODEL_PEAK_SECONDS, ViewKickRange,
+    calculate_weapon_position_gun_recoil, fire_recoil_gun_range, fire_recoil_view_range,
+    gun_recoil_angle_contribution, recoil_ads_weight, start_firing_restrict_kick_time,
     weapon_fire_recoil,
 };
 pub use melee::{
@@ -111,6 +110,7 @@ pub use reload::{
     weapon_allow_reload, weapon_arm_reload_add_delay, weapon_process_input_wants_reload,
     weapon_reload_delayed_action,
 };
+pub use response::{LookSway, RecoilAxis, SwayConfig};
 pub use spread::{
     AIM_SPREAD_AIR_DECAY, AIM_SPREAD_AIR_VIEWCHANGE, AIM_SPREAD_MOVE_SPEED_THRESHOLD_DEFAULT,
     AIM_SPREAD_SCALE_MAX, AIM_SPREAD_TURN_SCALE, AimSpreadMotion, AimSpreadState,
@@ -122,16 +122,15 @@ pub use spread::{
 };
 pub use sprint::{weapon_advance_sprint, weapon_check_for_sprint};
 pub use sway::{
-    SWAY_FRAME_HZ, SWAY_SHELLSHOCK_SMOOTH_PEAK, SwayContribution, SwaySpringState, TRACK_SNAP_EPS,
-    WeaponSwayParams, angle_delta, angle_normalize_180, calculate_weapon_movement_sway, clamp_abs,
-    lerp_sway_params, sway_contribution, sway_shellshock_landing_scale, track, track_a,
+    SwayContribution, SwaySpringState, WeaponSwayParams, lerp_sway_params, sway_config,
+    sway_contribution, sway_from_drive, sway_shellshock_landing_scale,
 };
 pub use tick::{
     AimAssistRanges, BURST_COOLDOWN_DEFAULT_MS, BUTTON_ATTACK, BUTTON_RELOAD, BUTTON_THROW,
     CHECK_FIRING_AMMO_DRY_FIRE_MS, CapturedCombatInput, MissingCombatFacts, PERK_FASTRELOAD,
     PERK_WEAP_RELOAD_MULTIPLIER_DEFAULT, WeaponCmd, WeaponCombatFacts, WeaponHandState,
-    WeaponTickEvent, get_weapon_fire_button, perk_fastreload_eligible, spawn_clip_stock,
-    spawn_weapon_hand, weapon_hands, weapon_ordinary, weapon_time_adjust,
+    WeaponHostRules, WeaponTickEvent, get_weapon_fire_button, perk_fastreload_eligible,
+    spawn_clip_stock, spawn_weapon_hand, weapon_hands, weapon_ordinary, weapon_time_adjust,
 };
 pub use view_bob::{
     BG_VIEW_KICK_MAX, BG_VIEW_KICK_MIN, BG_VIEW_KICK_SCALE, EFLAGS_TURRET_VEHICLE, LAND_DEFLECT_MS,
@@ -169,3 +168,15 @@ pub use weapondef::WeaponDef;
 pub use weaponstate::{
     FireType, WeaponDecodeError, WeaponState, viewmodel_rocket_should_be_attached,
 };
+
+pub const IW4_CAMOS: [&str; 9] = [
+    "none",
+    "woodland",
+    "desert",
+    "arctic",
+    "digital",
+    "red_urban",
+    "red_tiger",
+    "blue_tiger",
+    "orange_fall",
+];

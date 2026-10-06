@@ -98,6 +98,9 @@ pub(crate) fn update(
         let weapons = weapons
             .as_ref()
             .ok_or_else(|| "weapon catalog missing".to_owned())?;
+        let bound = weapons
+            .snapshot_weapon(presented.weapon_epoch(), weapon)
+            .map_err(|refusal| format!("weapon binding refused: {refusal:?}"))?;
         let strings = strings
             .as_ref()
             .ok_or_else(|| "localized strings missing".to_owned())?;
@@ -107,15 +110,13 @@ pub(crate) fn update(
             .filter(|&&w| {
                 w > 0
                     && weapons
-                        .0
-                        .facts_of(w as u32)
-                        .is_some_and(|f| f.inventory_type == 0)
+                        .snapshot_weapon(presented.weapon_epoch(), w as u32)
+                        .ok()
+                        .and_then(|weapon| weapon.hud_facts())
+                        .is_some_and(|f| f.is_primary())
             })
             .count();
-        let offhand = weapons
-            .0
-            .facts_of(weapon)
-            .is_some_and(|f| f.offhand_class != 0);
+        let offhand = bound.hud_facts().is_some_and(|f| f.offhand_class != 0);
         let key = if offhand || primary_count < 2 {
             "PLATFORM_PICKUPNEWWEAPON"
         } else {
@@ -126,21 +127,25 @@ pub(crate) fn update(
             .text(key)
             .ok_or_else(|| format!("missing {key}"))?;
         let name_key = weapons
-            .0
+            .registry()
             .display_name_key_of(weapon)
             .ok_or_else(|| format!("weapon {weapon}: display name missing"))?;
-        let name = strings
-            .0
-            .text(name_key)
+        let name = weapons
+            .registry()
+            .identity_namespace_of(weapon)
+            .map_or_else(
+                || strings.0.text(name_key),
+                |ns| strings.0.text_in(ns, name_key),
+            )
             .ok_or_else(|| format!("missing {name_key}"))?;
         let text = format!("{} {}", template.replace("&&1", bind), name);
         let (image, ratio) = weapons
-            .0
+            .registry()
             .pickup_icon_of(weapon)
             .ok_or_else(|| format!("weapon {weapon}: pickup/hud icon unresolved"))?;
         let namespace = weapons
-            .0
-            .namespace_of(weapon)
+            .registry()
+            .hud_icon_namespace_of(weapon)
             .ok_or_else(|| format!("weapon {weapon}: namespace missing"))?;
         Ok::<_, String>(Some((
             text,

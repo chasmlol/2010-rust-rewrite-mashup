@@ -61,7 +61,10 @@ pub fn update_ads_frac(ps: &mut PlayerState, msec: i32, context: AdsFracContext)
     {
         ads_requested = true;
     }
-    let dt = msec.max(0) as f32;
+    let mut dt = msec.max(0) as f32;
+    if ps.perks[0] & playerstate_iw4::PERK_QUICKDRAW != 0 {
+        dt *= playerstate_iw4::PERK_QUICKDRAW_SPEED_SCALE;
+    }
 
     if ads_requested {
         if ps.f_weapon_pos_frac >= 1.0 {

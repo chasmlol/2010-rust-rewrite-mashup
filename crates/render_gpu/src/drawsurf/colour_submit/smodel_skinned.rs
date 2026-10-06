@@ -11,10 +11,12 @@ use crate::drawsurf::gpu_resources::padded_upload_len;
 #[derive(Default)]
 pub(super) struct SmodelSkinnedTess {
     verts: Vec<[u8; asset_iw4::size::GFX_PACKED_VERTEX]>,
+    vertex_lighting: Vec<[u8; 4]>,
     indices: Vec<u32>,
     spans: HashMap<(u32, u32), SkinnedSpan>,
     geometry: Option<Arc<super::ExtractedStaticGeometry>>,
     vertex: Option<Buffer>,
+    vertex_lighting_buffer: Option<Buffer>,
     index: Option<Buffer>,
     vertex_cap: usize,
     index_cap: usize,
@@ -32,6 +34,7 @@ impl SmodelSkinnedTess {
 
     fn forget(&mut self) {
         self.verts.clear();
+        self.vertex_lighting.clear();
         self.indices.clear();
         self.spans.clear();
         self.uploaded_verts = 0;
@@ -104,6 +107,15 @@ impl SmodelSkinnedTess {
             self.verts.truncate(dest_base);
             return Err(GpuSubmitRefusal::SmodelSkinnedDestMissing { placement });
         }
+        match geom
+            .smodel_vertex_lighting
+            .get(packed_off_us..packed_off_us.saturating_add(packed_n_us))
+        {
+            Some(lighting) => self.vertex_lighting.extend_from_slice(lighting),
+            None => self
+                .vertex_lighting
+                .resize(self.verts.len(), super::NEUTRAL_VERTEX_LIGHTING),
+        }
         let dest_index_start = self.indices.len() as u32;
         let dest_base = dest_base as u32;
         self.indices.extend(
@@ -138,6 +150,12 @@ impl SmodelSkinnedTess {
                 usage: BufferUsages::VERTEX | BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             }));
+            self.vertex_lighting_buffer = Some(device.create_buffer(&BufferDescriptor {
+                label: Some("iw4_smodel_skinned_unique_vertex_lighting_vb"),
+                size: (self.vertex_cap / asset_iw4::size::GFX_PACKED_VERTEX * 4) as u64,
+                usage: BufferUsages::VERTEX | BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            }));
             self.uploaded_verts = 0;
         }
         if self.index.is_none() || self.index_cap < ineed {
@@ -156,6 +174,11 @@ impl SmodelSkinnedTess {
         {
             let from = self.uploaded_verts * VERTEX_BYTES;
             queue.write_buffer(buffer, from as u64, &vbytes[from..]);
+            if let Some(lighting) = self.vertex_lighting_buffer.as_ref() {
+                let lighting_bytes: &[u8] = bytemuck::cast_slice(self.vertex_lighting.as_slice());
+                let from = self.uploaded_verts * 4;
+                queue.write_buffer(lighting, from as u64, &lighting_bytes[from..]);
+            }
             self.uploaded_verts = self.verts.len();
         }
         if let Some(buffer) = self.index.as_ref()
@@ -169,6 +192,10 @@ impl SmodelSkinnedTess {
 
     pub(super) fn vertex_buffer(&self) -> Option<&Buffer> {
         self.vertex.as_ref()
+    }
+
+    pub(super) fn vertex_lighting_buffer(&self) -> Option<&Buffer> {
+        self.vertex_lighting_buffer.as_ref()
     }
 
     pub(super) fn index_buffer(&self) -> Option<&Buffer> {

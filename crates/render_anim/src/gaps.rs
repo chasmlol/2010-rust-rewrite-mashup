@@ -18,6 +18,8 @@ pub enum RenderGap {
     RemoteBodyWorldGun,
 
     FpvViewmodel,
+
+    ThermalBodyMaterial,
 }
 
 impl ledger::Gap for RenderGap {
@@ -25,6 +27,7 @@ impl ledger::Gap for RenderGap {
         RenderGap::RemoteBodyAnimation,
         RenderGap::RemoteBodyWorldGun,
         RenderGap::FpvViewmodel,
+        RenderGap::ThermalBodyMaterial,
     ];
 
     fn name(self) -> &'static str {
@@ -32,6 +35,7 @@ impl ledger::Gap for RenderGap {
             RenderGap::RemoteBodyAnimation => "remote-body-animation",
             RenderGap::RemoteBodyWorldGun => "remote-body-world-gun",
             RenderGap::FpvViewmodel => "fpv-viewmodel",
+            RenderGap::ThermalBodyMaterial => "thermal-body-material",
         }
     }
 
@@ -77,6 +81,10 @@ pub enum RenderGapCause {
     RemoteBodyLightingAllocFailed,
 
     RemoteBodyMaterialMissing {
+        name: String,
+    },
+
+    ThermalBodyMaterialMissing {
         name: String,
     },
 
@@ -127,6 +135,7 @@ impl ledger::GapCause for RenderGapCause {
             | RenderGapCause::RemoteBodySubmitMissing
             | RenderGapCause::RemoteBodyLightingAllocFailed
             | RenderGapCause::RemoteBodyMaterialMissing { .. } => RenderGap::RemoteBodyAnimation,
+            RenderGapCause::ThermalBodyMaterialMissing { .. } => RenderGap::ThermalBodyMaterial,
             RenderGapCause::RemoteBodyWorldGunMissing { .. } => RenderGap::RemoteBodyWorldGun,
             RenderGapCause::FpvCatalogMissing
             | RenderGapCause::FpvGunXModelUnresolved { .. }
@@ -158,6 +167,7 @@ impl RenderGapCause {
             RenderGapCause::RemoteBodySubmitMissing => "remote body submit missing",
             RenderGapCause::RemoteBodyLightingAllocFailed => "remote body lighting alloc failed",
             RenderGapCause::RemoteBodyMaterialMissing { .. } => "remote body material missing",
+            RenderGapCause::ThermalBodyMaterialMissing { .. } => "thermal body material missing",
             RenderGapCause::RemoteBodyWorldGunMissing { .. } => "remote body world gun missing",
             RenderGapCause::FpvCatalogMissing => "FPV catalog missing",
             RenderGapCause::FpvGunXModelUnresolved { .. } => "gunXModel[0] unresolved",
@@ -188,7 +198,8 @@ impl fmt::Display for RenderGapCause {
             RenderGapCause::RemoteBodyMaterialMissing { name } if name.is_empty() => {
                 write!(f, "{}: authored name not retained at capture", self.label())
             }
-            RenderGapCause::RemoteBodyMaterialMissing { name } => {
+            RenderGapCause::ThermalBodyMaterialMissing { name }
+            | RenderGapCause::RemoteBodyMaterialMissing { name } => {
                 write!(f, "{}: `{name}` not in global catalog", self.label())
             }
             RenderGapCause::RemoteBodyWorldGunMissing {

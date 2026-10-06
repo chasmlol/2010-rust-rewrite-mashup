@@ -86,6 +86,7 @@ pub struct SmodelGpuPlan {
 
     pub material_state_flags: std::collections::HashMap<assets::MaterialIndex, u8>,
     pub placements: Vec<SmodelPlacement>,
+    pub lighting_sh: Arc<Vec<Option<[[f32; 4]; 3]>>>,
 
     pub authored_placement_indices: Vec<Option<usize>>,
 
@@ -101,6 +102,7 @@ pub struct SmodelGpuPlan {
     pub vert_range_share: Option<Arc<Vec<(u32, u32)>>>,
     pub cached_share: Option<Arc<Vec<[u8; asset_iw4::size::GFX_PACKED_VERTEX]>>>,
     pub decoded_share: Option<Arc<Vec<SmodelVertex>>>,
+    pub vertex_lighting_share: Option<Arc<Vec<[u8; 4]>>>,
 }
 
 impl SmodelGpuPlan {
@@ -271,12 +273,21 @@ fn append_mesh_surface(
     Some(range_idx)
 }
 
+pub const UNIT_VERTEX_LIGHTING: [u8; 4] = [45, 45, 45, 255];
+
+pub struct SmodelVertexLitCopy<'a> {
+    pub mesh: usize,
+    pub lighting: &'a [Vec<[u8; 4]>; 4],
+}
+
 pub fn pack_smodel_meshes(
     meshes: &[WorldStaticModelMesh],
+    copies: &[SmodelVertexLitCopy<'_>],
 ) -> (
     SmodelGpuPlan,
     Vec<Vec<Option<assets::MaterialIndex>>>,
     Vec<Vec<asset_world::XSurfaceCollisionPayload>>,
+    Vec<Option<usize>>,
 ) {
     let mut plan = SmodelGpuPlan::default();
     let mut vertices = Vec::new();
@@ -294,8 +305,23 @@ pub fn pack_smodel_meshes(
     let mut mark_collision_missing = 0u32;
     let mut mark_collision_unavailable = 0u32;
     let mut skip_first: Option<String> = None;
+    let mut vertex_lighting = Vec::new();
+    let mut copy_meshes = Vec::with_capacity(copies.len());
 
-    for model in meshes {
+    let jobs = meshes.iter().map(|model| (model, None)).chain(
+        copies
+            .iter()
+            .filter_map(|copy| Some((meshes.get(copy.mesh)?, Some(copy.lighting)))),
+    );
+    for (model, lighting) in jobs {
+        let rollback = (
+            vertices.len(),
+            indices.len(),
+            surface_ranges.len(),
+            packed.len(),
+            match_surfaces,
+            skip_surfaces,
+        );
         let mut packed_row = SmodelMeshSurfaces::default();
         packed_row.vert_start = packed.len() as u32;
         packed_row.lod_smc = model.lod_smc.map(|rows| rows[0]);
@@ -378,6 +404,27 @@ pub fn pack_smodel_meshes(
                 (packed.len() as u32).saturating_sub(lod_packed_start);
         }
         packed_row.vert_count = (packed.len() as u32).saturating_sub(packed_row.vert_start);
+        match lighting {
+            None => vertex_lighting.resize(packed.len(), UNIT_VERTEX_LIGHTING),
+            Some(lighting)
+                if (0..4).all(|lod| {
+                    lighting[lod].len() == packed_row.vert_count_by_lod[lod] as usize
+                }) =>
+            {
+                vertex_lighting.extend(lighting.iter().flatten().copied());
+                copy_meshes.push(Some(plan.meshes.len()));
+            }
+            Some(_) => {
+                vertices.truncate(rollback.0);
+                indices.truncate(rollback.1);
+                surface_ranges.truncate(rollback.2);
+                packed.truncate(rollback.3);
+                match_surfaces = rollback.4;
+                skip_surfaces = rollback.5;
+                copy_meshes.push(None);
+                continue;
+            }
+        }
         plan.meshes.push(packed_row);
         mesh_authored.push(authored_row);
         mesh_collision.push(collision_row);
@@ -429,7 +476,8 @@ pub fn pack_smodel_meshes(
         }
     }
     plan.vert_range_share = Some(Arc::new(vert_ranges));
-    (plan, mesh_authored, mesh_collision)
+    plan.vertex_lighting_share = Some(Arc::new(vertex_lighting));
+    (plan, mesh_authored, mesh_collision, copy_meshes)
 }
 
 pub fn expand_smodel_cached_vertices(
@@ -473,8 +521,41 @@ pub(crate) fn build_smodel_gpu_plan(
         return;
     }
     let meshes = std::mem::take(&mut scene.static_model_meshes);
-    let (mut plan, mesh_authored, mesh_collision) = pack_smodel_meshes(&meshes);
+    let mut slot_vertex_lighting = vec![None; slot_count];
+    for sample in &scene.smodel_lighting_samples {
+        if let Some(slot) = slot_vertex_lighting.get_mut(sample.authored_slot) {
+            slot.clone_from(&sample.vertex_lighting);
+        }
+    }
+    let copy_slots: Vec<usize> = (0..slot_count)
+        .filter(|&slot| {
+            slot_vertex_lighting[slot].is_some()
+                && scene.static_model_instances[slot]
+                    .is_some_and(|instance| instance.mesh < meshes.len())
+        })
+        .collect();
+    let copies: Vec<SmodelVertexLitCopy> = copy_slots
+        .iter()
+        .filter_map(|&slot| {
+            Some(SmodelVertexLitCopy {
+                mesh: scene.static_model_instances[slot]?.mesh,
+                lighting: slot_vertex_lighting[slot].as_deref()?,
+            })
+        })
+        .collect();
+    let (mut plan, mesh_authored, mesh_collision, copy_meshes) =
+        pack_smodel_meshes(&meshes, &copies);
     drop(meshes);
+    let mut slot_mesh = vec![None; slot_count];
+    for (&slot, mesh) in copy_slots.iter().zip(&copy_meshes) {
+        slot_mesh[slot] = *mesh;
+    }
+    diag::info!(
+        World,
+        "static model vertex lighting: {} placements, {} mesh copies",
+        copy_slots.len(),
+        copy_meshes.iter().flatten().count(),
+    );
 
     for material in plan
         .meshes
@@ -490,15 +571,17 @@ pub(crate) fn build_smodel_gpu_plan(
 
     plan.authored_placement_indices.resize(slot_count, None);
     let (exact, _, probes) = job.tess_image_handles();
-    let sorted_ordinals: Vec<Option<u32>> = (0..scene.runtime_material_catalog.materials.len())
-        .map(|id| {
-            scene
-                .runtime_material_catalog
-                .sorted_materials
-                .ordinal_for_asset_id(id)
-                .map(crate::assemble::drawsurf::SortedMaterialOrdinal::get)
-        })
-        .collect();
+    let sorted_ordinals: Vec<Option<u32>> =
+        (0..scene.runtime_material_catalog.parts().materials.len())
+            .map(|id| {
+                scene
+                    .runtime_material_catalog
+                    .parts()
+                    .sorted_materials
+                    .ordinal_for_asset_id(id)
+                    .map(crate::assemble::drawsurf::SortedMaterialOrdinal::get)
+            })
+            .collect();
     let sorted_ordinal = |asset_id: Option<assets::MaterialIndex>| {
         asset_id.and_then(|id| sorted_ordinals.get(id.order()).copied().flatten())
     };
@@ -510,11 +593,21 @@ pub(crate) fn build_smodel_gpu_plan(
         )
     });
     let atlas_image = scene.model_lighting_image.clone();
+    let mut slot_lighting_sh = vec![None; slot_count];
+    for sample in &scene.smodel_lighting_samples {
+        if let Some(slot) = slot_lighting_sh.get_mut(sample.authored_slot) {
+            *slot = sample.lighting_sh;
+        }
+    }
+    let mut placement_lighting_sh = Vec::new();
 
     for (index, instance) in scene.static_model_instances.iter().enumerate() {
-        let Some(instance) = *instance else {
+        let Some(mut instance) = *instance else {
             continue;
         };
+        if let Some(mesh) = slot_mesh[index] {
+            instance.mesh = mesh;
+        }
         let Some(parent) = scene
             .cull
             .as_ref()
@@ -632,6 +725,7 @@ pub(crate) fn build_smodel_gpu_plan(
         }
 
         let placement_i = plan.placements.len();
+        placement_lighting_sh.push(slot_lighting_sh[index]);
         plan.placements.push(SmodelPlacement {
             mesh: instance.mesh,
             lit,
@@ -649,6 +743,7 @@ pub(crate) fn build_smodel_gpu_plan(
         plan.authored_placement_indices[index] = Some(placement_i);
     }
 
+    plan.lighting_sh = Arc::new(placement_lighting_sh);
     let cull_dists = scene
         .cull
         .as_ref()

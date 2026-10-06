@@ -3,6 +3,19 @@ use crate::weaponstate::{FireType, WeaponDecodeError, WeaponState};
 
 pub const BURST_COOLDOWN_DEFAULT_MS: i32 = 200;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct WeaponHostRules {
+    pub burst_cooldown_ms: i32,
+}
+
+impl Default for WeaponHostRules {
+    fn default() -> Self {
+        Self {
+            burst_cooldown_ms: BURST_COOLDOWN_DEFAULT_MS,
+        }
+    }
+}
+
 pub const PERK_FASTRELOAD: u32 = 4;
 
 pub const PERK_WEAP_RELOAD_MULTIPLIER_DEFAULT: f32 = 0.5;
@@ -27,6 +40,7 @@ pub enum MissingCombatFacts {
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct CapturedCombatInput {
     pub dual_wield: bool,
+    pub fire_melees: bool,
     pub fire_time_ms: i32,
     pub fire_delay_ms: i32,
     pub raise_time_ms: i32,
@@ -34,6 +48,7 @@ pub struct CapturedCombatInput {
     pub alternate_weapon: u32,
     pub alternate_raise_time_ms: i32,
     pub alternate_drop_time_ms: i32,
+    pub first_raise_time_ms: i32,
     pub reload_time_ms: i32,
     pub reload_empty_time_ms: i32,
     pub clip_size: i32,
@@ -162,6 +177,7 @@ impl AimAssistRanges {
 pub struct WeaponCombatFacts {
     pub aim_assist: AimAssistRanges,
     pub dual_wield: bool,
+    pub fire_melees: bool,
     pub fire_time_ms: i32,
     pub fire_delay_ms: i32,
     pub raise_time_ms: i32,
@@ -169,6 +185,7 @@ pub struct WeaponCombatFacts {
     pub alternate_weapon: u32,
     pub alternate_raise_time_ms: i32,
     pub alternate_drop_time_ms: i32,
+    pub first_raise_time_ms: i32,
     pub reload_time_ms: i32,
     pub reload_empty_time_ms: i32,
     pub clip_size: i32,
@@ -301,6 +318,7 @@ impl WeaponCombatFacts {
         Self {
             aim_assist: AimAssistRanges::NONE,
             dual_wield: false,
+            fire_melees: false,
             fire_time_ms: 0,
             fire_delay_ms: 0,
             raise_time_ms: 0,
@@ -308,6 +326,7 @@ impl WeaponCombatFacts {
             alternate_weapon: 0,
             alternate_raise_time_ms: 0,
             alternate_drop_time_ms: 0,
+            first_raise_time_ms: 0,
             reload_time_ms: 0,
             reload_empty_time_ms: 0,
             clip_size: 0,
@@ -414,6 +433,7 @@ impl WeaponCombatFacts {
         Ok(Self {
             aim_assist: AimAssistRanges::NONE,
             dual_wield: input.dual_wield,
+            fire_melees: input.fire_melees,
             fire_time_ms: input.fire_time_ms,
             fire_delay_ms: input.fire_delay_ms,
             raise_time_ms: input.raise_time_ms,
@@ -421,6 +441,7 @@ impl WeaponCombatFacts {
             alternate_weapon: input.alternate_weapon,
             alternate_raise_time_ms: input.alternate_raise_time_ms,
             alternate_drop_time_ms: input.alternate_drop_time_ms,
+            first_raise_time_ms: input.first_raise_time_ms,
             reload_time_ms: input.reload_time_ms,
             reload_empty_time_ms: input.reload_empty_time_ms,
             clip_size: input.clip_size,
@@ -671,6 +692,7 @@ pub struct WeaponCmd {
     pub alternate_switch: bool,
 
     pub switch_quick_raise_time_ms: i32,
+    pub switch_first_raise_time_ms: i32,
 
     pub offhand: crate::offhand::OffhandCmd,
 
@@ -708,6 +730,7 @@ impl Default for WeaponCmd {
             switch_alternate_raise_time_ms: 0,
             alternate_switch: false,
             switch_quick_raise_time_ms: 0,
+            switch_first_raise_time_ms: 0,
             offhand: crate::offhand::OffhandCmd::default(),
             perks0: 0,
             perk_weap_reload_multiplier: PERK_WEAP_RELOAD_MULTIPLIER_DEFAULT,
@@ -928,7 +951,9 @@ fn prepare_weapon_tick(
         );
         return PreparedWeaponTick::Complete(None);
     }
-    let fire_mask = if detonator.is_some() {
+    let fire_mask = if fire_ty == FireType::DoubleBarrel && cmd.last_weapon_hand != 1 {
+        BUTTON_ATTACK | BUTTON_THROW
+    } else if detonator.is_some() {
         playerstate_iw4::buttons::THROW
     } else {
         get_weapon_fire_button(cmd.last_weapon_hand, i32::from(hand.hand_index))
@@ -945,7 +970,7 @@ fn prepare_weapon_tick(
         hand.weapon_time = (hand.weapon_time - decay_ms).max(0);
     }
 
-    if time_before != 0 && hand.weapon_time < 1 {
+    if time_before != 0 && hand.weapon_time < 1 && hand.weapon_delay == 0 {
         weapon_decay_hold_interrupt(hand, fire_ty, cmd, attack);
     }
     if hand.weapon_delay > 0 {
@@ -1008,10 +1033,6 @@ fn finish_weapon_tick(
         && begin_weapon_reload(hand, facts)
     {
         return Some(WeaponTickEvent::ReloadStarted);
-    }
-
-    if event.is_none() {
-        event = weapon_check_for_rechamber(hand, facts, cmd, delayed_action);
     }
 
     match WeaponState::from_i32(hand.weaponstate) {
@@ -1138,6 +1159,10 @@ fn finish_weapon_tick(
         Err(_) => return None,
     }
 
+    if event.is_none() {
+        event = weapon_check_for_rechamber(hand, facts, cmd, delayed_action);
+    }
+
     if event.is_some() {
         return event;
     }
@@ -1153,13 +1178,15 @@ fn finish_weapon_tick(
     if ready_idle || mid_burst_continue || delayed_fire {
         let trigger = match fire_ty {
             FireType::FullAuto => attack || delayed_fire,
-            FireType::SingleShot => (attack && hand.shot_count == 0) || delayed_fire,
+            FireType::SingleShot | FireType::DoubleBarrel => {
+                (attack && hand.shot_count == 0) || delayed_fire
+            }
             FireType::BurstFire2 | FireType::BurstFire3 | FireType::BurstFire4 => {
                 attack || pending || delayed_fire
             }
         };
 
-        if trigger {
+        if trigger && !facts.fire_melees {
             if hand.clip <= 0 {
                 hand.shot_count = 0;
                 if hand.stock > 0 && begin_weapon_reload(hand, facts) {
@@ -1180,37 +1207,48 @@ fn finish_weapon_tick(
                 return None;
             }
 
-            if ready_idle {
-                hand.weapon_restrict_kick_time = crate::start_firing_restrict_kick_time(
-                    cmd.f_weapon_pos_frac,
-                    facts.ads_gun_kick_reduced_kick_bullets,
-                    facts.hip_gun_kick_reduced_kick_bullets,
-                    facts.fire_time_ms,
-                    facts.fire_delay_ms,
-                );
-            }
-            hand.weaponstate = WeaponState::Firing as i32;
-            hand.weapon_time = facts.fire_time_ms.max(1);
-            if facts.ads_fire_only {
-                hand.weapon_delay =
-                    ads_fire_only_delay_ms(cmd.f_weapon_pos_frac, facts.ads_in_rate);
-            } else if facts.fire_delay_ms > 0 {
-                hand.weapon_delay = facts.fire_delay_ms;
-            }
-
-            if !fire_ty.is_full_auto() {
-                if fire_ty.is_burst() && hand.shot_count == 0 {
-                    hand.burst_latch = false;
+            if !delayed_fire {
+                if ready_idle {
+                    hand.weapon_restrict_kick_time = crate::start_firing_restrict_kick_time(
+                        cmd.f_weapon_pos_frac,
+                        facts.ads_gun_kick_reduced_kick_bullets,
+                        facts.hip_gun_kick_reduced_kick_bullets,
+                        facts.fire_time_ms,
+                        facts.fire_delay_ms,
+                    );
                 }
-                hand.shot_count = hand.shot_count.saturating_add(1).min(4);
-            }
-            if hand.weapon_delay != 0 {
-                return None;
+                hand.weaponstate = WeaponState::Firing as i32;
+                hand.weapon_time = facts.fire_time_ms.max(1);
+                if facts.ads_fire_only {
+                    let ads_in_rate = if cmd.perks0 & playerstate_iw4::PERK_QUICKDRAW != 0 {
+                        facts.ads_in_rate * playerstate_iw4::PERK_QUICKDRAW_SPEED_SCALE
+                    } else {
+                        facts.ads_in_rate
+                    };
+                    hand.weapon_delay = ads_fire_only_delay_ms(cmd.f_weapon_pos_frac, ads_in_rate);
+                } else if facts.fire_delay_ms > 0 {
+                    hand.weapon_delay = facts.fire_delay_ms;
+                }
+
+                if !fire_ty.is_full_auto() {
+                    if fire_ty.is_burst() && hand.shot_count == 0 {
+                        hand.burst_latch = false;
+                    }
+                    hand.shot_count = hand.shot_count.saturating_add(1).min(4);
+                }
+                if hand.weapon_delay != 0 {
+                    return None;
+                }
             }
             if fire_weapon_kind(facts.weap_type, facts.weap_class).is_none() {
                 return Some(WeaponTickEvent::EmptyClick);
             }
-            let used = facts.ammo_per_shot().min(hand.clip);
+            let double = fire_ty == FireType::DoubleBarrel
+                && cmd.last_weapon_hand != 1
+                && cmd.buttons & (BUTTON_ATTACK | BUTTON_THROW) == (BUTTON_ATTACK | BUTTON_THROW)
+                && hand.clip > 1;
+            cmd.weap_flags = (cmd.weap_flags & !0x200) | if double { 0x200 } else { 0 };
+            let used = if double { 2 } else { facts.ammo_per_shot() }.min(hand.clip);
             hand.clip -= used;
             if facts.bolt_action {
                 hand.rechamber_pending = true;
@@ -1416,11 +1454,18 @@ pub fn weapon_hands(
     cmd.melee_charge.pm_flags = cmd.pm_flags;
     cmd.melee_charge.pm_type = cmd.pm_type;
     cmd.melee_charge.e_flags = cmd.e_flags;
+    let melee_buttons = |buttons: u32| {
+        if facts.fire_melees && buttons & BUTTON_ATTACK != 0 {
+            buttons | crate::BUTTON_MELEE
+        } else {
+            buttons
+        }
+    };
     cmd.melee_started = crate::melee::weapon_try_melee(
         hands,
         &facts.melee_facts(),
-        cmd.buttons,
-        cmd.old_buttons,
+        melee_buttons(cmd.buttons),
+        melee_buttons(cmd.old_buttons),
         cmd.f_weapon_pos_frac,
         cmd.last_weapon_hand,
         &mut cmd.melee_charge,
@@ -1524,7 +1569,7 @@ pub fn spawn_clip_stock(facts: &WeaponCombatFacts, last_hand: i32) -> (i32, i32,
     (clip0, clip1, stock)
 }
 
-pub fn spawn_weapon_hand(weapon: u32, facts: &WeaponCombatFacts) -> WeaponHandState {
+pub fn spawn_weapon_hand(weapon: u32, facts: &WeaponCombatFacts, first: bool) -> WeaponHandState {
     let total = facts.start_ammo.max(0);
     let clip = if facts.clip_size > 0 {
         total.min(facts.clip_size)
@@ -1532,16 +1577,21 @@ pub fn spawn_weapon_hand(weapon: u32, facts: &WeaponCombatFacts) -> WeaponHandSt
         0
     };
     let stock = (total - clip).max(0);
-    let raise = if facts.raise_time_ms > 0 {
-        facts.raise_time_ms
+    let first = first && facts.first_raise_time_ms > 0;
+    let raise = if first {
+        facts.first_raise_time_ms
     } else {
-        0
+        facts.raise_time_ms.max(0)
     };
     let mut weap_anim = 0;
     if raise > 0 {
         crate::weap_anim::start_weapon_anim(
             &mut weap_anim,
-            crate::weap_anim::weap_anim_event::RAISE,
+            if first {
+                crate::weap_anim::weap_anim_event::FIRST_RAISE
+            } else {
+                crate::weap_anim::weap_anim_event::RAISE
+            },
         );
     }
     WeaponHandState {

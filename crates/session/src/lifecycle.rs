@@ -187,6 +187,8 @@ pub fn run_teardown(
     mut screen: ResMut<AppScreen>,
     mut has_world: ResMut<HasWorld>,
     mut world_generation: ResMut<WorldGeneration>,
+    mut readiness: ResMut<crate::SessionReadinessPolicy>,
+    mut armed: ResMut<frame::LocalSpawnArmed>,
     mut handoff: ResMut<ClassSelectHandoff>,
     mut identity: Option<ResMut<LaunchIdentity>>,
     mut load_hold: Option<ResMut<AuthorityLoadHold>>,
@@ -224,6 +226,8 @@ pub fn run_teardown(
     *screen = AppScreen::MainMenu;
     *has_world = HasWorld(false);
     *world_generation = WorldGeneration(None);
+    *readiness = crate::SessionReadinessPolicy::default();
+    *armed = frame::LocalSpawnArmed::default();
     *handoff = ClassSelectHandoff::default();
 
     if let Some(hold) = load_hold.as_mut() {
@@ -390,13 +394,55 @@ fn run_session_swap(
     mut approved: MessageWriter<MapLoadApproved>,
     mut torn: MessageReader<MatchTornDown>,
     mut failed: MessageReader<MapLoadFailed>,
+    mut dvars: ResMut<frame::UiMenuDvars>,
     mut installed: MessageReader<MatchInstalled>,
     mut menu: MessageWriter<ReturnedToMenu>,
     mut leave: Option<ResMut<net::PendingMasterMenuAction>>,
     bridge: Option<Res<net::MasterBridge>>,
 ) {
+    let failure = failed
+        .read()
+        .find(|fact| transition.accepts_install(fact.request_id));
     let mut finish: Option<SessionSwapCompletion> = None;
-    if let Some(pending) = transition.pending.as_mut() {
+    if let Some(fact) = failure {
+        let had_world = transition
+            .pending
+            .as_ref()
+            .is_some_and(|pending| pending.tore_down_world);
+        stamp_runtime_role(&mut role, &mut identity, RuntimeRole::Listen);
+        if let Some(identity) = identity.as_mut() {
+            identity.zone.clear();
+        }
+        let error = fact.error.chars().take(420).collect::<String>();
+        let details = if fact.error.chars().count() > 420 {
+            format!("{error}…\nSee the log for details.")
+        } else {
+            error
+        };
+        dvars.set(
+            "ui_map_error_reason",
+            format!("Could not load map '{}'.\n\n{details}", fact.zone),
+        );
+        dvars.set("ui_map_error", "1");
+        menu.write(ReturnedToMenu {
+            swap_id: fact.request_id,
+            had_world,
+        });
+        diag::warn!(
+            Sim,
+            "session: map `{}` failed (swap #{}): {} — returned to menu",
+            fact.zone,
+            fact.request_id,
+            fact.error
+        );
+        finish = Some(SessionSwapCompletion {
+            id: fact.request_id,
+            result: SessionSwapResult::Failed {
+                zone: fact.zone.clone(),
+                error: fact.error.clone(),
+            },
+        });
+    } else if let Some(pending) = transition.pending.as_mut() {
         if pending.abort_install {
             commands.insert_resource(assets::MatchLoadAbort(pending.id));
             pending.abort_install = false;
@@ -438,32 +484,6 @@ fn run_session_swap(
                     &mut leave,
                     bridge.as_deref(),
                 );
-            }
-            SessionSwapPhase::WaitingForInstall
-                if let Some(fact) = failed.read().find(|fact| fact.request_id == pending.id) =>
-            {
-                stamp_runtime_role(&mut role, &mut identity, RuntimeRole::Listen);
-                if let Some(identity) = identity.as_mut() {
-                    identity.zone.clear();
-                }
-                menu.write(ReturnedToMenu {
-                    swap_id: pending.id,
-                    had_world: pending.tore_down_world,
-                });
-                diag::warn!(
-                    Sim,
-                    "session: map `{}` failed (swap #{}): {} — returned to menu",
-                    fact.zone,
-                    pending.id,
-                    fact.error
-                );
-                finish = Some(SessionSwapCompletion {
-                    id: pending.id,
-                    result: SessionSwapResult::Failed {
-                        zone: fact.zone.clone(),
-                        error: fact.error.clone(),
-                    },
-                });
             }
             SessionSwapPhase::WaitingForInstall
                 if let Some(fact) = installed.read().find(|fact| fact.request_id == pending.id) =>

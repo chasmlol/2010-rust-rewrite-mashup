@@ -21,6 +21,7 @@ pub(crate) mod scene_depth;
 mod script_grade;
 mod shadowmap_spot_gpu;
 mod shadowmap_sun_gpu;
+mod shellshock_screen;
 mod sm3_wgsl;
 mod smodel_cache_gpu;
 mod smodel_cached;

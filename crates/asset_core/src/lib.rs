@@ -1,3 +1,5 @@
+pub mod family;
+pub use family::{Family, FamilyId, Iw4, Iw5, T5, T6};
 pub mod asset_key;
 pub mod ident;
 pub mod zone_game;

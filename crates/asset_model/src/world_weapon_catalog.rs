@@ -41,14 +41,14 @@ pub struct WorldWeaponEntry {
 impl WorldWeaponEntry {
     fn from_skel(
         namespace: AssetNamespace,
-        skel: ModelSkel,
+        skel: std::sync::Arc<ModelSkel>,
         materials: Option<&MaterialCatalog>,
     ) -> Self {
         let (material_keys, material_edges) =
             capture_xmodel_material_slots(&skel.surface_materials, materials.map(|c| &**c));
         Self {
             namespace,
-            skel: std::sync::Arc::new(skel),
+            skel,
             material_keys,
             material_edges,
         }
@@ -93,7 +93,7 @@ pub struct WorldWeaponCatalog {
 pub struct WorldWeaponBuild {
     catalog: WorldWeaponCatalog,
     capture_zone: crate::ZoneOwner,
-    capture_ns: AssetNamespace,
+    capture_ns: Option<AssetNamespace>,
     strings: ScriptStrings,
 }
 
@@ -127,7 +127,7 @@ impl WorldWeaponBuild {
     }
 
     pub fn set_capture_ns(&mut self, ns: AssetNamespace) {
-        self.capture_ns = ns;
+        self.capture_ns = Some(ns);
     }
 
     pub fn capture(&mut self, stream: &ZoneStream<'_>, materials: &MaterialCatalog) {
@@ -139,7 +139,12 @@ impl WorldWeaponBuild {
         else {
             return;
         };
-        self.insert_in(self.capture_ns, skel, Some(materials));
+        self.insert_in(
+            self.capture_ns
+                .expect("asset capture requires an explicit family"),
+            skel,
+            Some(materials),
+        );
     }
 
     pub fn capture_t5(
@@ -183,17 +188,40 @@ impl WorldWeaponBuild {
     }
 
     pub fn insert_captured(&mut self, skel: ModelSkel, materials: Option<&MaterialCatalog>) {
-        self.insert_in(self.capture_ns, skel, materials);
+        self.insert_in(
+            self.capture_ns
+                .expect("asset capture requires an explicit family"),
+            skel,
+            materials,
+        );
+    }
+
+    pub fn capture_shared(
+        &mut self,
+        ns: Option<AssetNamespace>,
+        skel: &std::sync::Arc<ModelSkel>,
+        materials: &MaterialCatalog,
+    ) {
+        if crate::model_kind(&skel.name) == Some(crate::ModelKind::WorldWeapon) {
+            self.insert_in(
+                ns.unwrap_or(
+                    self.capture_ns
+                        .expect("asset capture requires an explicit family"),
+                ),
+                skel.clone(),
+                Some(materials),
+            );
+        }
     }
 
     pub fn insert_in(
         &mut self,
         ns: AssetNamespace,
-        skel: ModelSkel,
+        skel: impl Into<std::sync::Arc<ModelSkel>>,
         materials: Option<&MaterialCatalog>,
     ) {
         self.catalog.identity = 0;
-        let entry = WorldWeaponEntry::from_skel(ns, skel, materials);
+        let entry = WorldWeaponEntry::from_skel(ns, skel.into(), materials);
         let key = entry.key();
         self.retain(key, entry);
     }
@@ -306,6 +334,7 @@ impl WorldWeaponCatalog {
                 AssetNamespace::Iw4 => 1,
                 AssetNamespace::T5 => 2,
                 AssetNamespace::Iw5 => 4,
+                AssetNamespace::T6 => 8,
             };
         }
         seen.values().filter(|bits| bits.count_ones() >= 2).count()

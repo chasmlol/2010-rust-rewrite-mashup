@@ -30,7 +30,7 @@ pub struct FxOrientSpawnParams {
     pub spawn_origin: [[f32; 2]; 3],
     pub spawn_offset_radius: [f32; 2],
     pub spawn_offset_height: [f32; 2],
-    pub seed: u32,
+    pub seed: u64,
 }
 
 #[inline]

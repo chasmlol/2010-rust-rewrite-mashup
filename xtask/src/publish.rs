@@ -220,18 +220,14 @@ pub fn publish(root: &Path, env: &Env, channel: Channel) -> Res<()> {
 
     // The client and the master inside one release have to agree, or the
     // handshake ALPN would reject every player the moment the manifest flips.
-    let manifest_path = dir.join("client/manifest.json");
-    let manifest = read_json(&manifest_path)?;
-    if u64_field(&manifest, "protocol", &manifest_path)? != protocol {
+    let manifest_path = dir.join("server/updates/manifest.toml");
+    let manifest =
+        updater::Manifest::parse(&std::fs::read(&manifest_path).map_err(|e| e.to_string())?)?;
+    if u64::from(manifest.protocol) != protocol {
         return Err("client/master protocol mismatch inside the release".to_string());
     }
-    if str_field(&manifest, "git", &manifest_path)?
-        != str_field(&descriptor, "git", &descriptor_path)?
-    {
-        return Err("deployment.json git does not match client manifest".to_string());
-    }
 
-    let master_local = dir.join("master/iw4l-master");
+    let master_local = dir.join("server/iw4l-master");
     let master_sha = file_sha256(&master_local)?;
     let bin_link = format!("{deploy_root}/bin/iw4l-master-{channel}");
     let new_master = format!("{deploy_root}/masters/{master_sha}/iw4l-master");
@@ -362,7 +358,7 @@ pub fn publish(root: &Path, env: &Env, channel: Channel) -> Res<()> {
 
     local_reachability(&ssh, channel, &master_local, &ca_pem)?;
     println!(
-        "[deploy] {channel} healthy: master udp/{port}, releases https://{host}:8443/{channel}/",
+        "[deploy] {channel} healthy: master udp/{port}, releases https://{host}:{port}/updates/",
         port = channel.port(),
         host = ssh.host(),
     );
@@ -503,10 +499,10 @@ fn activate_manifest(
     remote_releases: &str,
     release_id: &str,
 ) -> Res<()> {
-    let local = dir.join("client/manifest.json");
+    let local = dir.join("server/updates/manifest.toml");
     let local_sha = file_sha256(&local)?;
-    let live = format!("{remote_releases}/manifest.json");
-    let archived = format!("{remote_releases}/manifests/{release_id}.json");
+    let live = format!("{remote_releases}/manifest.toml");
+    let archived = format!("{remote_releases}/manifests/{release_id}.toml");
     let remote_live = ssh
         .capture(&format!(
             "if [ -f '{live}' ]; then sha256sum '{live}' | cut -d' ' -f1; fi"
@@ -520,8 +516,8 @@ fn activate_manifest(
     // The manifest may have been skipped above — its archived copy can already
     // match while the live one does not, which is exactly a rollback. Put it in
     // staging unconditionally; it is one small file.
-    let staged = format!("{staging}/client/manifest.json");
-    ssh.run(&format!("install -d -m 0755 '{staging}/client'"))?;
+    let staged = format!("{staging}/server/updates/manifest.toml");
+    ssh.run(&format!("install -d -m 0755 '{staging}/server/updates'"))?;
     ssh.rsync(&["--chmod=F644"], &local, &staged)?;
     ssh.run(&format!(
         "set -eu
@@ -536,15 +532,13 @@ fn activate_manifest(
     Ok(())
 }
 
-/// Read the manifest back the way a player's launcher will: over HTTPS, with
-/// the shipped CA as the only trust anchor.
 fn verify_published_manifest(
     ssh: &Ssh,
     channel: Channel,
     ca_pem: &Path,
     local_manifest: &Path,
 ) -> Res<()> {
-    let got = std::env::temp_dir().join(format!("iw4l-manifest-{}.json", std::process::id()));
+    let got = std::env::temp_dir().join(format!("iw4l-manifest-{}.toml", std::process::id()));
     run(Command::new("curl")
         .args([
             "--fail",
@@ -557,11 +551,20 @@ fn verify_published_manifest(
             "--cacert",
         ])
         .arg(ca_pem)
+        .args(["--noproxy", "*", "--connect-to"])
+        .arg(format!(
+            "{}:{}:{}:{}",
+            channel.server_name(),
+            channel.port(),
+            ssh.host(),
+            channel.port()
+        ))
         .arg("-o")
         .arg(&got)
         .arg(format!(
-            "https://{host}:8443/{channel}/manifest.json",
-            host = ssh.host()
+            "https://{name}:{port}/updates/manifest.toml",
+            name = channel.server_name(),
+            port = channel.port()
         )))?;
     let matches = file_sha256(&got)? == file_sha256(local_manifest)?;
     let _ = std::fs::remove_file(&got);

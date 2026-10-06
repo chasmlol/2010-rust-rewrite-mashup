@@ -19,6 +19,8 @@ pub const ITEM_TYPE_BUTTON: i32 = 1;
 
 pub const ITEM_TYPE_TEXT: i32 = 0;
 
+pub const ITEM_TYPE_SLIDER: i32 = 10;
+
 #[derive(Clone, Copy, Debug, Default, serde::Deserialize, serde::Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct MenuRect {
@@ -133,6 +135,7 @@ pub struct MenuItem {
     pub text_align_x: f32,
     pub text_align_y: f32,
     pub text_style: i32,
+    pub game_msg_window_index: i32,
     pub background: String,
     pub focus_sound: String,
     pub dvar: String,
@@ -169,6 +172,7 @@ pub struct MenuDef {
     pub window_background: String,
     pub expr_dvars: String,
     pub fullscreen: i32,
+    pub static_flags: i32,
     pub focus_color: Option<[f32; 4]>,
 
     pub rect: MenuRect,
@@ -526,6 +530,8 @@ pub const HUD_CHROME_MENUS: &[&str] = &[
     "dpad_hd",
     "javelin_overlay_hd",
     "missilecam_hud_hd",
+    "remote_chopper_overlay_hd",
+    "ac130_hud_hd",
     "dpad_sd",
     "splash",
     "challenge",
@@ -1221,6 +1227,7 @@ impl AssetLinkSink for MenuSink {
         def.window_background = rec.window_background.to_owned();
         def.set_expr_dvars(rec.expr_dvars.to_owned());
         def.fullscreen = rec.fullscreen;
+        def.static_flags = rec.static_flags;
         def.focus_color = Some(rec.focus_color);
         def.rect = MenuRect::from(rec.rect);
         Ok(())
@@ -1289,6 +1296,7 @@ impl AssetLinkSink for MenuSink {
             item.text_align_x = rec.text_align_x;
             item.text_align_y = rec.text_align_y;
             item.text_style = rec.text_style;
+            item.game_msg_window_index = rec.game_msg_window_index;
             item.background = rec.background.to_owned();
             item.focus_sound = rec.focus_sound.to_owned();
             item.dvar = rec.dvar.to_owned();

@@ -8,15 +8,15 @@ must be deleted before the final squash/push unless specifically approved. A
 useful test is not automatically an approved test.
 
 A new permanent scenario is added here only after the owner has approved that
-scenario by name. The same holds for a unit test inside this crate: being
-useful does not make it approved. `make publish-check` refuses `#[test]`,
-`#[cfg(test)]`, `mod tests` and `tests/` directories anywhere else in the
-workspace.
+scenario by name, as a scenario the runner drives, never as a `cargo test`.
+`make publish-check` refuses `#[test]`, `#[cfg(test)]`, `mod tests` and `tests/`
+directories everywhere in the workspace, this crate included.
 
 ## Approved scenarios
 
 | name | what it does |
 | --- | --- |
+| `master_duo_chaos` | two real clients join one dev master lobby, load `mp_boneyard` once, move for 4 seconds and run 16 seconds of RPG chaos with seven bots |
 | `heavy_gameplay_lifecycle` | cold load `mp_overgrown` with 16 players, three input scenes, production disconnect, a watched menu, a second map with three scenes, production quit |
 
 The scenario's steps are in `src/scenarios/heavy_gameplay_lifecycle.rs` and
@@ -39,8 +39,9 @@ make approved ARGS='--cache shared'            # reuse the repo cache (not cold)
 ```
 
 The runner builds nothing; `make approved` builds `target/play/iw4l` first.
-Each run owns one directory, `iw4l-artifacts/approved-tests/<run-id>/`. The
-game is started with that directory as its working directory, so everything
+Each run owns one directory, `iw4l-artifacts/approved-tests/<run-id>/`.
+`heavy_gameplay_lifecycle` starts the game with that directory as its working
+directory, so everything
 IW4L writes (`iw4l-artifacts/cache`, logs, perf run, dumps, screenshots) lands
 under it. On Windows the launcher enters the folder holding its executable, so
 the runner hard-links (or copies) the binary into the run directory and starts
@@ -90,3 +91,47 @@ applied, alive, no path: collision or a frozen player) or `input_not_applied`
 (the break the scenario exists to catch). There
 is no frame-time assertion. A run the controller had to kill is a failure,
 never a quit.
+
+## Two clients through the dev master
+
+```sh
+cargo xtask master install user@vps --channel dev --ca ~/.iw4l/dev-vpn-ca
+cp ~/.iw4l/dev-vpn-ca/community-dev.iw4l-server context/simulated-iw4l-folder/
+make approved SCENARIO=master_duo_chaos
+```
+
+`master_duo_chaos` stages the Linux game binary directly in
+`context/simulated-iw4l-folder`. Both processes run from that directory and
+select `IW4L_COMMUNITY` when set, otherwise its `community-dev.iw4l-server`.
+The runner refuses descriptors outside
+the dev channel (port 4434 and a TLS name matching the descriptor host or `iw4l-dev`). Networking uses the descriptor's address,
+TLS name and embedded CA. Linux development binaries select the descriptor without fetching
+Windows updates.
+
+The host creates a lobby, the second client joins its ID, and the host waits
+for exactly two members before starting. There is one map installation per
+process. The host simulates seven bots in addition to the two human seats.
+Four seconds of movement exercise the remote command path before the truck
+and RPG scene. Eight samples cover another sixteen seconds, then both games
+exit through `finish_run`.
+
+Each run keeps separate host/client logs, account and settings files, dumps,
+screenshots and native Perfetto traces under its approved-tests directory.
+`IW4L_ARTIFACTS_DIR` redirects output without changing the game working directory.
+`run.json` stores the descriptor, room, build, sample ticks and tick gaps,
+assertions and failures; `commands.txt` stores every console script sent to each
+process. Assertions check distinct human seats, replicated player count,
+advancing simulation, remote movement applied by the authority, exactly one
+map installation, script health and successful process exit. Client marks record both the latest adopted snapshot tick and the presented
+tick, plus clock debt. Timing samples
+and Perfetto `feel`/`remote` events expose stalls and presentation lag without
+applying localhost latency thresholds to a VPS connection.
+
+Dev master installs use `/usr/local/lib/iw4l-dev` and `/etc/iw4l-dev`, with the
+`iw4l-master-dev.service` unit. Installing or updating dev does not overwrite
+the prod executable or certificates.
+
+Dev descriptors use the VPS host as the TLS identity. For an IP address,
+the independently issued dev certificate includes that IP in its SAN. This
+allows IP verification without sending a synthetic DNS label as SNI, preserving
+the intended destination through proxies that inspect QUIC server names.

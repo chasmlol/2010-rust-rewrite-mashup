@@ -418,6 +418,9 @@ fn profile_item(world: &mut World, client: u32, class: &str, slot: &str) -> i32 
         let Some(rest) = weapon_slot(prefix) else {
             continue;
         };
+        if rest == "camo" {
+            return i32::from(def.camos[index]);
+        }
         if rest == "grenade" {
             break;
         }
@@ -472,11 +475,15 @@ fn profile_item(world: &mut World, client: u32, class: &str, slot: &str) -> i32 
         "body" => stats_number(world, "standard_mp"),
         "head" => stats_number(world, "head_standard_mp"),
         "primarygrenade" if def.lethal != 0 => {
-            let reference = name(world, def.lethal);
+            let weapon =
+                super::super::players::stand_in_for(world, 2, def.lethal).unwrap_or(def.lethal);
+            let reference = name(world, weapon);
             stats_number(world, &reference)
         }
         "specialgrenade" if def.tactical != 0 => {
-            let reference = name(world, def.tactical);
+            let weapon =
+                super::super::players::stand_in_for(world, 3, def.tactical).unwrap_or(def.tactical);
+            let reference = name(world, weapon);
             stats_number(world, &reference)
         }
         "specialty1" | "specialty2" | "specialty3" => {
@@ -1129,7 +1136,7 @@ fn register_player(registry: &mut NativeRegistry) {
             .map(|slot| {
                 slot.perks
                     .iter()
-                    .map(|p| Value::String(p.clone()))
+                    .map(|p| Value::String(p.clone().into()))
                     .collect()
             })
             .unwrap_or_default();
@@ -1234,8 +1241,16 @@ fn register_player(registry: &mut NativeRegistry) {
         Ok(Value::Int(pattern << 26))
     });
     registry.register(Method, "calcweaponoptions", |world, receiver, args| {
-        player_id(world, receiver)?;
-        Ok(Value::Int(int(args, 0)?))
+        let client = player_id(world, receiver)?;
+        let camo = if args.len() == 2 {
+            let class = crate::ClassId(int(args, 0)? as u32);
+            let slot = usize::from(int(args, 1)? != 0);
+            super::super::players::personal_class(world, client, class)
+                .map_or(0, |class| i32::from(class.camos[slot]))
+        } else {
+            int(args, 0)?
+        };
+        Ok(Value::Int(camo & 63))
     });
 }
 

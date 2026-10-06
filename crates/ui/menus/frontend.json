@@ -12,10 +12,13 @@
       {"name": "create_game", "item_type": 1, "style": 1, "text_key": "CREATE GAME", "rect": {"x": -64, "y": 28, "w": 336, "h": 20, "horz_align": 1, "vert_align": 1}, "background": "menu_button_selection_bar", "fore_color": [1, 1, 1, 1], "back_color": [0, 0, 0, 0], "font_enum": 3, "text_scale": 0.375, "text_align_mode": 8, "text_align_x": 68, "text_align_y": 0, "handlers": {"action": [{"Script": "play mouse_click; exec \"ui_create_lobby\";"}], "focus": [{"Script": "play mouse_over; setItemColor self backcolor 0 0 0 1;"}], "leave_focus": [{"Script": "setItemColor self backcolor 0 0 0 0;"}]}},
       {"name": "find_lobbies", "item_type": 1, "style": 1, "text_key": "FIND LOBBIES", "rect": {"x": -64, "y": 48, "w": 336, "h": 20, "horz_align": 1, "vert_align": 1}, "background": "menu_button_selection_bar", "fore_color": [1, 1, 1, 1], "back_color": [0, 0, 0, 0], "font_enum": 3, "text_scale": 0.375, "text_align_mode": 8, "text_align_x": 68, "text_align_y": 0, "handlers": {"action": [{"Script": "play mouse_click; open find_lobbies;"}], "focus": [{"Script": "play mouse_over; setItemColor self backcolor 0 0 0 1;"}], "leave_focus": [{"Script": "setItemColor self backcolor 0 0 0 0;"}]}},
       {"name": "classes", "item_type": 1, "style": 1, "text_key": "CLASSES", "rect": {"x": -64, "y": 84, "w": 336, "h": 20, "horz_align": 1, "vert_align": 1}, "background": "menu_button_selection_bar", "fore_color": [1, 1, 1, 1], "back_color": [0, 0, 0, 0], "font_enum": 3, "text_scale": 0.375, "text_align_mode": 8, "text_align_x": 68, "text_align_y": 0, "handlers": {"action": [{"Script": "play mouse_click; open class_setup;"}], "focus": [{"Script": "play mouse_over; setItemColor self backcolor 0 0 0 1;"}], "leave_focus": [{"Script": "setItemColor self backcolor 0 0 0 0;"}]}},
-      {"name": "options", "item_type": 1, "style": 1, "text_key": "OPTIONS", "rect": {"x": -64, "y": 104, "w": 336, "h": 20, "horz_align": 1, "vert_align": 1}, "background": "menu_button_selection_bar", "fore_color": [1, 1, 1, 1], "back_color": [0, 0, 0, 0], "font_enum": 3, "text_scale": 0.375, "text_align_mode": 8, "text_align_x": 68, "text_align_y": 0, "handlers": {"action": [{"Script": "play mouse_click; open pc_options_video;"}], "focus": [{"Script": "play mouse_over; setItemColor self backcolor 0 0 0 1;"}], "leave_focus": [{"Script": "setItemColor self backcolor 0 0 0 0;"}]}},
-      {"name": "quit", "item_type": 1, "style": 1, "text_key": "QUIT", "rect": {"x": -64, "y": 140, "w": 336, "h": 20, "horz_align": 1, "vert_align": 1}, "background": "menu_button_selection_bar", "fore_color": [1, 1, 1, 1], "back_color": [0, 0, 0, 0], "font_enum": 3, "text_scale": 0.375, "text_align_mode": 8, "text_align_x": 68, "text_align_y": 0, "handlers": {"action": [{"Script": "play mouse_click; open quit_popmenu;"}], "focus": [{"Script": "play mouse_over; setItemColor self backcolor 0 0 0 1;"}], "leave_focus": [{"Script": "setItemColor self backcolor 0 0 0 0;"}]}},
+      {"name": "callsign", "item_type": 1, "style": 1, "text_key": "CALLSIGN", "rect": {"x": -64, "y": 104, "w": 336, "h": 20, "horz_align": 1, "vert_align": 1}, "background": "menu_button_selection_bar", "fore_color": [1, 1, 1, 1], "back_color": [0, 0, 0, 0], "font_enum": 3, "text_scale": 0.375, "text_align_mode": 8, "text_align_x": 68, "text_align_y": 0, "handlers": {"action": [{"Script": "play mouse_click; open callsign_setup;"}], "focus": [{"Script": "play mouse_over; setItemColor self backcolor 0 0 0 1;"}], "leave_focus": [{"Script": "setItemColor self backcolor 0 0 0 0;"}]}},
+      {"name": "killstreaks", "item_type": 1, "style": 1, "text_key": "KILLSTREAKS", "rect": {"x": -64, "y": 124, "w": 336, "h": 20, "horz_align": 1, "vert_align": 1}, "background": "menu_button_selection_bar", "fore_color": [1, 1, 1, 1], "back_color": [0, 0, 0, 0], "font_enum": 3, "text_scale": 0.375, "text_align_mode": 8, "text_align_x": 68, "text_align_y": 0, "handlers": {"action": [{"Script": "play mouse_click; open killstreak_setup;"}], "focus": [{"Script": "play mouse_over; setItemColor self backcolor 0 0 0 1;"}], "leave_focus": [{"Script": "setItemColor self backcolor 0 0 0 0;"}]}},
+      {"name": "options", "item_type": 1, "style": 1, "text_key": "OPTIONS", "rect": {"x": -64, "y": 144, "w": 336, "h": 20, "horz_align": 1, "vert_align": 1}, "background": "menu_button_selection_bar", "fore_color": [1, 1, 1, 1], "back_color": [0, 0, 0, 0], "font_enum": 3, "text_scale": 0.375, "text_align_mode": 8, "text_align_x": 68, "text_align_y": 0, "handlers": {"action": [{"Script": "play mouse_click; open pc_options_video;"}], "focus": [{"Script": "play mouse_over; setItemColor self backcolor 0 0 0 1;"}], "leave_focus": [{"Script": "setItemColor self backcolor 0 0 0 0;"}]}},
+      {"name": "quit", "item_type": 1, "style": 1, "text_key": "QUIT", "rect": {"x": -64, "y": 180, "w": 336, "h": 20, "horz_align": 1, "vert_align": 1}, "background": "menu_button_selection_bar", "fore_color": [1, 1, 1, 1], "back_color": [0, 0, 0, 0], "font_enum": 3, "text_scale": 0.375, "text_align_mode": 8, "text_align_x": 68, "text_align_y": 0, "handlers": {"action": [{"Script": "play mouse_click; open quit_popmenu;"}], "focus": [{"Script": "play mouse_over; setItemColor self backcolor 0 0 0 1;"}], "leave_focus": [{"Script": "setItemColor self backcolor 0 0 0 0;"}]}},
       {"name": "play_separator", "background": "white", "rect": {"x": 4, "y": 75, "w": 248, "h": 0.5, "horz_align": 1, "vert_align": 1}, "fore_color": [1, 1, 1, 0.25], "static_flags": 1048576},
-      {"name": "exit_separator", "background": "white", "rect": {"x": 4, "y": 131, "w": 248, "h": 0.5, "horz_align": 1, "vert_align": 1}, "fore_color": [1, 1, 1, 0.25], "static_flags": 1048576}
+      {"name": "exit_separator", "background": "white", "rect": {"x": 4, "y": 171, "w": 248, "h": 0.5, "horz_align": 1, "vert_align": 1}, "fore_color": [1, 1, 1, 0.25], "static_flags": 1048576},
+      {"name": "master_status", "text_key": "", "rect": {"x": 8, "y": -24, "w": 624, "h": 20, "horz_align": 1, "vert_align": 3}, "fore_color": [1, 1, 1, 0.8], "font_enum": 3, "text_scale": 0.3, "text_align_mode": 8, "text_align_x": 0, "static_flags": 1048576, "text_literal": true, "text_exp": "op 38 s:75695f6d61737465725f737461747573 op 1"}
     ]
   },
   {
@@ -519,11 +522,11 @@
       "float_exp": [
         [
           1,
-          "38"
+          "24"
         ],
         [
           3,
-          "148"
+          "176"
         ]
       ],
       "handlers": {
@@ -542,6 +545,15 @@
       }
     },
     "item_overrides": [
+      {"index": 2, "fields": {"rect": {"h": 176}, "float_exp": []}},
+      {"index": 5, "fields": {"rect": {"h": 176}, "float_exp": []}},
+      {"index": 8, "fields": {"rect": {"h": 176}, "float_exp": []}},
+      {"index": 12, "fields": {"rect": {"h": 176}, "float_exp": []}},
+      {"index": 13, "fields": {"rect": {"y": 176}, "float_exp": []}},
+      {"index": 14, "fields": {"rect": {"y": 176}, "float_exp": []}},
+      {"index": 15, "fields": {"rect": {"y": 176}, "float_exp": []}},
+      {"index": 16, "fields": {"rect": {"h": 176}, "float_exp": []}},
+      {"index": 17, "fields": {"rect": {"h": 176}, "float_exp": []}},
       {
         "index": 19,
         "fields": {
@@ -594,7 +606,7 @@
         "index": 23,
         "fields": {
           "rect": {
-            "y": 128
+            "y": 148
           },
           "text_key": "@PLATFORM_BACK_CAPS",
           "vis_exp": "1",
@@ -623,6 +635,30 @@
             "action": [
               {
                 "Script": "exec \"ui_password_open\"; open lobby_password_setup;"
+              }
+            ]
+          },
+          "vis_exp": "1",
+          "disabled_exp": "0",
+          "float_exp": [],
+          "dvar_flags": 0,
+          "dvar_test": "",
+          "enable_dvar": ""
+        }
+      },
+      {
+        "index": 22,
+        "fields": {
+          "name": "cheats",
+          "text_key": "",
+          "text_exp": "op 38 s:75695f6c6f6262795f636865617473 op 1",
+          "rect": {
+            "y": 124
+          },
+          "handlers": {
+            "action": [
+              {
+                "Script": "play mouse_click; exec \"ui_lobby_cheats\";"
               }
             ]
           },

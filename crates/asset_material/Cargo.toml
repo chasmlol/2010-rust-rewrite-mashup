@@ -6,6 +6,7 @@ license.workspace = true
 description = "Authored materials, techniques, images, and cross-game remaps."
 
 [dependencies]
+d3d9_state.workspace = true
 asset_core.workspace = true
 asset_transport.workspace = true
 asset_iw4.workspace = true
@@ -18,6 +19,7 @@ render_material.workspace = true
 diag.workspace = true
 bevy.workspace = true
 bcdec_rs.workspace = true
+dxbc_sm5.workspace = true
 
 [lints]
 workspace = true

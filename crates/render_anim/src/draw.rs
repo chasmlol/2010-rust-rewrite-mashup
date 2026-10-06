@@ -282,6 +282,8 @@ pub struct FpvDrawPlan {
     /// once; a frame that still answers this generation publishes vertices.
     pub rig_generation: u64,
 
+    pub camo: u8,
+
     pub(crate) packed_vertices: asset_world::PackedVertexPayload,
 }
 

@@ -1,5 +1,5 @@
 use bevy::prelude::Resource;
-use sim::{ClientId, Snapshot, TickInput};
+use sim::{ClientId, Snapshot};
 
 use crate::client::predict::CmdSeq;
 use crate::transport::delta::{SnapshotDecoder, SnapshotEncoder};
@@ -34,7 +34,6 @@ impl ListenLoopback {
     #[allow(clippy::too_many_arguments)]
     pub fn send_tick(
         &mut self,
-        input: &TickInput,
         snapshot: &Snapshot,
         acks: Vec<(ClientId, CmdSeq)>,
         svc_sounds: Vec<crate::SvcSound>,
@@ -45,7 +44,7 @@ impl ListenLoopback {
         svc_game_notifies: Vec<crate::SvcGameNotify>,
         reliable: crate::ReliablePayload,
     ) -> Result<(), TransportError> {
-        let mut frame = frame_from_acked_tick(&mut self.encoder, input, snapshot, acks);
+        let mut frame = frame_from_acked_tick(&mut self.encoder, snapshot, acks);
         frame.svc_sounds = svc_sounds;
         frame.svc_scores = svc_scores;
         frame.svc_card_slots = svc_card_slots;

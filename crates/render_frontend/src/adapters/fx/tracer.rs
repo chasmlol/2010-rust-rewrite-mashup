@@ -55,22 +55,11 @@ pub(crate) fn present_tracer_beams(
             combat.beam_miss_material = combat.beam_miss_material.saturating_add(1);
             continue;
         };
-        if color_images.colors.is_empty() && color_images.colors_by_asset.is_empty() {
-            combat.last_tracer_has_color = Some(0);
-            combat.beam_miss_unprepared = combat.beam_miss_unprepared.saturating_add(1);
-            continue;
-        }
         let has_color = color_images.colors_by_asset.contains_key(&asset_id);
         combat.last_tracer_has_color = Some(i64::from(has_color));
         match bind(asset_id, color_images, runtime) {
-            FxCodeMeshBind::Skip(FxPresentSkip::NoColorMap) => {
-                combat.beam_miss_color = combat.beam_miss_color.saturating_add(1);
-            }
             FxCodeMeshBind::Skip(FxPresentSkip::NoOrdinal) => {
                 combat.beam_miss_ordinal = combat.beam_miss_ordinal.saturating_add(1);
-            }
-            FxCodeMeshBind::Skip(FxPresentSkip::NotEmissive) => {
-                combat.beam_miss_emissive = combat.beam_miss_emissive.saturating_add(1);
             }
             FxCodeMeshBind::Ready {
                 color,

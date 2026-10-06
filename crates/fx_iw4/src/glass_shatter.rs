@@ -1,5 +1,4 @@
-use crate::pool::FX_RAND_TABLE_MOD;
-use crate::random::random_table_f32;
+use crate::random::{FxRandomChannel, sample_at};
 
 pub const FX_GLASS_SHATTER_BRANCH_SCALE: f32 = -3.0;
 
@@ -90,11 +89,9 @@ const FX_GLASS_MASS_AREA_MAX: f32 = 2048.0;
 const FX_GLASS_MASS_RSQRT_SCALE: f32 = 11.313_709_259_033_203;
 
 pub fn glass_shatter_rand(cursor: &mut u32) -> f32 {
-    *cursor = cursor.saturating_add(1);
-    if *cursor == FX_RAND_TABLE_MOD {
-        *cursor = 0;
-    }
-    random_table_f32(*cursor, 0)
+    let value = sample_at(0, FxRandomChannel::GlassShatter, u64::from(*cursor));
+    *cursor = cursor.wrapping_add(1);
+    value
 }
 
 pub fn glass_interior_branch_count(rand01: f32) -> u32 {

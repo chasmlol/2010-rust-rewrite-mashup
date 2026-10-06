@@ -7,7 +7,7 @@ publish.workspace = true
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true
-blake3 = "=1.8.7"
+blake3 = "=1.8.5"
 half = "=2.7.1"
 socket2 = "0.6"
 

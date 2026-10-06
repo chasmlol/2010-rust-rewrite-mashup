@@ -1,4 +1,6 @@
+pub mod barracks;
 pub mod classes;
+mod community_servers;
 pub mod frontend;
 mod gap_hud;
 mod launch_report;
@@ -15,10 +17,7 @@ pub use classes::equip_txn::{
     EquipTxnWatch, apply_pending_class_equip, resolve_class_equip_transaction,
     sync_class_change_allowed,
 };
-pub use classes::icons::{
-    ClassSelectIconCache, UiAssetRoot, cac_attachment_image, cac_material_iwd_stem,
-    cac_weapon_image, pretty_weapon_name,
-};
+pub use classes::icons::{ClassSelectIconCache, UiAssetRoot};
 pub use classes::select::{
     ClassChangeAllowed, ClassChangeBlockReason, ClassEquipRefusal, ClassEquipRequest,
     ClassSelectHighlight, ClassSelectOverlayOpen, ClassSelectPhase, ClassSelectStatus,
@@ -27,6 +26,7 @@ pub use classes::select::{
 };
 pub use classes::setup::{ClassEditRow, ClassLoadoutCatalog, ClassPickerFolder, ClassSlotState};
 pub use classes::store::SessionClassStore;
+pub use community_servers::CommunityServers;
 pub use frame::{AppScreen, LaunchIdentity, LaunchReport};
 pub use frame::{ClassPreset, showcase_classes};
 pub use gap_hud::GapHud;

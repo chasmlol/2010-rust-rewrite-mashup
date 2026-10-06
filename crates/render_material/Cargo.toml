@@ -10,6 +10,7 @@ asset_core.workspace = true
 asset_iw4.workspace = true
 d3d9_sm3.workspace = true
 d3d9_state.workspace = true
+dxbc_sm5.workspace = true
 dpvs_iw4.workspace = true
 fastfile_t5.workspace = true
 lighting_iw4.workspace = true

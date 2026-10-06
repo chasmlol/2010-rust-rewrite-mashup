@@ -53,8 +53,27 @@ struct Row {
 pub struct Claim {
     pub id: &'static str,
     pub title: &'static str,
-    pub passed: bool,
+    outcome: Option<Outcome>,
     pub evidence: Vec<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Outcome {
+    Pass,
+    Fail,
+    NotExercised,
+    HarnessError,
+}
+
+impl Outcome {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Pass => "PASS",
+            Self::Fail => "FAIL",
+            Self::NotExercised => "NOT_EXERCISED",
+            Self::HarnessError => "HARNESS_ERROR",
+        }
+    }
 }
 
 impl Claim {
@@ -62,13 +81,17 @@ impl Claim {
         Self {
             id,
             title,
-            passed: true,
+            outcome: None,
             evidence: Vec::new(),
         }
     }
 
     pub(crate) fn check(&mut self, ok: bool, line: impl Into<String>) {
-        self.passed &= ok;
+        if !ok && self.outcome != Some(Outcome::HarnessError) {
+            self.outcome = Some(Outcome::Fail);
+        } else if self.outcome.is_none() {
+            self.outcome = Some(Outcome::Pass);
+        }
         self.evidence.push(format!(
             "{} {}",
             if ok { "ok  " } else { "FAIL" },
@@ -76,9 +99,50 @@ impl Claim {
         ));
     }
 
+    pub(crate) fn require(&mut self, present: bool, reason: impl Into<String>) -> bool {
+        if !present {
+            if self.outcome != Some(Outcome::HarnessError) {
+                self.outcome = Some(Outcome::NotExercised);
+            }
+            self.evidence
+                .push(format!("NOT_EXERCISED {}", reason.into()));
+        }
+        present
+    }
+
+    pub(crate) fn harness_error(&mut self, reason: impl Into<String>) {
+        self.outcome = Some(Outcome::HarnessError);
+        self.evidence
+            .push(format!("HARNESS_ERROR {}", reason.into()));
+    }
+
+    pub(crate) fn report(&self) -> bool {
+        let outcome = self.outcome.unwrap_or(Outcome::NotExercised);
+        println!("\n[{}] {} — {}", self.id, self.title, outcome.label());
+        for line in &self.evidence {
+            println!("  {line}");
+        }
+        println!(
+            "gate: {}",
+            serde_json::json!({
+                "id": self.id,
+                "title": self.title,
+                "outcome": outcome.label(),
+                "evidence": self.evidence,
+            })
+        );
+        outcome == Outcome::Pass
+    }
+
     fn note(&mut self, line: impl Into<String>) {
         self.evidence.push(format!("--   {}", line.into()));
     }
+}
+
+pub(crate) fn harness_failure(reason: &str) -> bool {
+    let mut claim = Claim::new("TRACE", "trace collection and decoding");
+    claim.harness_error(reason);
+    claim.report()
 }
 
 fn check(rows: &[Row]) -> Vec<Claim> {
@@ -501,32 +565,21 @@ pub fn scenario_gate(root: &Path, trace_arg: Option<PathBuf>) -> bool {
     let path = match crate::perfetto_query::resolve_trace(root, trace_arg.as_deref()) {
         Ok(path) => path,
         Err(error) => {
-            println!("{error}");
             println!("  make scenario");
-            return false;
+            return crate::scenario::harness_failure(&error);
         }
     };
     let rows = match load(root, &path) {
         Ok(loaded) => loaded,
         Err(error) => {
-            println!("{error}");
-            return false;
+            return crate::scenario::harness_failure(&error);
         }
     };
     println!("player_tick rows: {}", rows.len());
     let claims = check(&rows);
     let mut ok = true;
     for claim in &claims {
-        println!(
-            "\n[{}] {} — {}",
-            claim.id,
-            claim.title,
-            if claim.passed { "green" } else { "RED" }
-        );
-        for line in &claim.evidence {
-            println!("  {line}");
-        }
-        ok &= claim.passed;
+        ok &= claim.report();
     }
     ok
 }

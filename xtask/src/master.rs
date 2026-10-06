@@ -1,10 +1,3 @@
-//! `cargo xtask master …` — a relay of your own on a VPS you rent, installed
-//! over ssh from the machine holding the clone. `docs/MASTER.md` is the prose.
-//!
-//! Nothing here is our release pipeline: no Caddy, no update URL, no channels
-//! to publish between. One binary, one certificate, one unit — and the CA
-//! private key never leaves this machine.
-
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -18,8 +11,19 @@ use crate::windows;
 
 /// Where the binary and its certificates land on the VPS. `/usr/local/lib`
 /// rather than `/usr/local/bin`: nobody runs this by hand, systemd does.
-const REMOTE_LIB: &str = "/usr/local/lib/iw4l";
-const REMOTE_ETC: &str = "/etc/iw4l";
+fn remote_lib(channel: Channel) -> &'static str {
+    match channel {
+        Channel::Prod => "/usr/local/lib/iw4l",
+        Channel::Dev => "/usr/local/lib/iw4l-dev",
+    }
+}
+
+fn remote_etc(channel: Channel) -> &'static str {
+    match channel {
+        Channel::Prod => "/etc/iw4l",
+        Channel::Dev => "/etc/iw4l-dev",
+    }
+}
 
 const DEFAULT_SINCE: &str = "2h";
 
@@ -107,9 +111,10 @@ pub fn unit_text(
     exec: &str,
     cert: &str,
     key: &str,
-    user: &str,
-    group: &str,
+    updates: &str,
+    owner: (&str, &str),
 ) -> Res<String> {
+    let (user, group) = owner;
     capture(
         Command::new("cargo")
             .current_dir(root)
@@ -118,47 +123,50 @@ pub fn unit_text(
             .args(["--exec", exec])
             .args(["--cert", cert])
             .args(["--key", key])
+            .args(["--updates", updates])
             .args(["--user", user])
             .args(["--group", group]),
     )
 }
 
-fn remote_bin() -> String {
-    format!("{REMOTE_LIB}/iw4l-master")
+fn remote_bin(channel: Channel) -> String {
+    format!("{}/iw4l-master", remote_lib(channel))
 }
 
-fn remote_ca() -> String {
-    format!("{REMOTE_ETC}/iw4l-ca.pem")
+fn remote_ca(channel: Channel) -> String {
+    format!("{}/iw4l-ca.pem", remote_etc(channel))
 }
 
 /// Build the static binary and put it on the VPS. `crt-static` is why the
 /// glibc version over there does not have to match this machine's.
-fn upload_binary(root: &Path, env: &Env, ssh: &Ssh) -> Res<()> {
+fn upload_binary(root: &Path, env: &Env, ssh: &Ssh, channel: Channel) -> Res<()> {
+    let remote_lib = remote_lib(channel);
     let profile = windows::profile(env)?;
     let bin = build_master(root, &profile)?;
     let step = Step::start("master.upload", ssh.target());
-    ssh.run(&format!("install -d -m 0755 '{REMOTE_LIB}'"))?;
-    ssh.rsync(&["--chmod=F755"], &bin, &remote_bin())?;
+    ssh.run(&format!("install -d -m 0755 '{remote_lib}'"))?;
+    ssh.rsync(&["--chmod=F755"], &bin, &remote_bin(channel))?;
     step.done("");
     Ok(())
 }
 
-fn upload_certs(ca: &Ca, ssh: &Ssh) -> Res<()> {
-    ssh.run(&format!("install -d -m 0755 '{REMOTE_ETC}'"))?;
-    ssh.rsync(&["--chmod=F644"], &ca.ca_cert(), &remote_ca())?;
+fn upload_certs(ca: &Ca, ssh: &Ssh, channel: Channel) -> Res<()> {
+    let remote_etc = remote_etc(channel);
+    ssh.run(&format!("install -d -m 0755 '{remote_etc}'"))?;
+    ssh.rsync(&["--chmod=F644"], &ca.ca_cert(), &remote_ca(channel))?;
     ssh.rsync(
         &["--chmod=F644"],
         &ca.server_cert(),
-        &format!("{REMOTE_ETC}/server-cert.pem"),
+        &format!("{remote_etc}/server-cert.pem"),
     )?;
     ssh.rsync(
         &["--chmod=F640"],
         &ca.server_key(),
-        &format!("{REMOTE_ETC}/server-key.pem"),
+        &format!("{remote_etc}/server-key.pem"),
     )?;
     // Readable by the service account and by nobody else on the box.
     ssh.run(&format!(
-        "chown root:iw4l '{REMOTE_ETC}/server-key.pem' && chmod 0640 '{REMOTE_ETC}/server-key.pem'"
+        "chown root:iw4l '{remote_etc}/server-key.pem' && chmod 0640 '{remote_etc}/server-key.pem'"
     ))
 }
 
@@ -166,10 +174,13 @@ pub fn install(root: &Path, env: &Env, args: &[String]) -> Res<()> {
     let Args {
         ssh, channel, ca, ..
     } = parse(env, args)?;
+    let remote_lib = remote_lib(channel);
+    let remote_etc = remote_etc(channel);
     require_tools(&["cargo", "rsync", "ssh"])?;
-    // No host in the SAN: the client checks the fixed label, so this one
-    // certificate follows you to a new IP or a new VPS.
-    ca.ensure(&San::Labels)?;
+    ca.ensure(&match channel {
+        Channel::Prod => San::Labels,
+        Channel::Dev => San::WithHost(ssh.host().to_owned()),
+    })?;
 
     let step = Step::start(
         "master.install",
@@ -180,17 +191,17 @@ pub fn install(root: &Path, env: &Env, args: &[String]) -> Res<()> {
         getent group iw4l >/dev/null || groupadd --system iw4l
         id iw4l >/dev/null 2>&1 || useradd --system --gid iw4l --home-dir /nonexistent --shell /usr/sbin/nologin iw4l",
     )?;
-    upload_binary(root, env, &ssh)?;
-    upload_certs(&ca, &ssh)?;
+    upload_binary(root, env, &ssh, channel)?;
+    upload_certs(&ca, &ssh, channel)?;
 
     let unit = unit_text(
         root,
         channel,
-        &remote_bin(),
-        &format!("{REMOTE_ETC}/server-cert.pem"),
-        &format!("{REMOTE_ETC}/server-key.pem"),
-        "iw4l",
-        "iw4l",
+        &remote_bin(channel),
+        &format!("{remote_etc}/server-cert.pem"),
+        &format!("{remote_etc}/server-key.pem"),
+        &format!("{remote_lib}/updates/{channel}"),
+        ("iw4l", "iw4l"),
     )?;
     ssh.feed(
         &format!("cat >'/etc/systemd/system/{}'", channel.unit()),
@@ -200,15 +211,17 @@ pub fn install(root: &Path, env: &Env, args: &[String]) -> Res<()> {
         "set -eu
         if command -v ufw >/dev/null && ufw status | grep -q '^Status: active'; then
           ufw allow {port}/udp
+          ufw allow {port}/tcp
         fi
         systemctl daemon-reload
-        systemctl enable --now '{unit}'",
+        systemctl enable '{unit}'
+        systemctl restart '{unit}'",
         port = channel.port(),
         unit = channel.unit(),
     ))?;
     step.done("");
     report(&ssh, channel)?;
-    hand_out(&ssh, channel, &ca);
+    hand_out(&ssh, channel, &ca)?;
     Ok(())
 }
 
@@ -216,7 +229,7 @@ pub fn install(root: &Path, env: &Env, args: &[String]) -> Res<()> {
 pub fn update(root: &Path, env: &Env, args: &[String]) -> Res<()> {
     let Args { ssh, channel, .. } = parse(env, args)?;
     require_tools(&["cargo", "rsync", "ssh"])?;
-    upload_binary(root, env, &ssh)?;
+    upload_binary(root, env, &ssh, channel)?;
     ssh.run(&format!("systemctl restart '{}'", channel.unit()))?;
     report(&ssh, channel)
 }
@@ -241,18 +254,20 @@ pub fn logs(env: &Env, args: &[String]) -> Res<()> {
 /// already pinned.
 pub fn uninstall(env: &Env, args: &[String]) -> Res<()> {
     let Args { ssh, channel, .. } = parse(env, args)?;
+    let remote_lib = remote_lib(channel);
+    let remote_etc = remote_etc(channel);
     ssh.run(&format!(
         "set -eu
         systemctl disable --now '{unit}' 2>/dev/null || true
         rm -f '/etc/systemd/system/{unit}'
         systemctl daemon-reload
         rm -f '{bin}'
-        rmdir '{REMOTE_LIB}' 2>/dev/null || true",
+        rmdir '{remote_lib}' 2>/dev/null || true",
         unit = channel.unit(),
-        bin = remote_bin(),
+        bin = remote_bin(channel),
     ))?;
     println!(
-        "master: {} removed from {}. Certificates under {REMOTE_ETC} and the local CA were kept.",
+        "master: {} removed from {}. Certificates under {remote_etc} and the local CA were kept.",
         channel.unit(),
         ssh.target()
     );
@@ -273,29 +288,45 @@ fn report(ssh: &Ssh, channel: Channel) -> Res<()> {
     ))?;
     ssh.run(&format!(
         "'{bin}' status --connect 127.0.0.1:{port} --server-name '{name}' --ca-cert '{ca}'",
-        bin = remote_bin(),
+        bin = remote_bin(channel),
         port = channel.port(),
         name = channel.server_name(),
-        ca = remote_ca(),
+        ca = remote_ca(channel),
     ))
 }
 
-/// The three lines a player needs, plus the file they have to be given by
-/// hand. The label is the same for everyone, so `ca.pem` is the whole of the
-/// trust: hand it over a channel the players already trust.
-fn hand_out(ssh: &Ssh, channel: Channel, ca: &Ca) {
-    println!();
+fn hand_out(ssh: &Ssh, channel: Channel, ca: &Ca) -> Res<()> {
+    let remote_lib = remote_lib(channel);
+    let descriptor = updater::Community {
+        schema: 1,
+        name: format!("IW4L {channel}"),
+        master: updater::Master {
+            address: format!("{}:{}", ssh.host(), channel.port()),
+            server_name: match channel {
+                Channel::Prod => channel.server_name().into(),
+                Channel::Dev => ssh.host().into(),
+            },
+        },
+        updates: updater::Updates {
+            url: format!(
+                "https://{}:{}/updates/manifest.toml",
+                ssh.host(),
+                channel.port()
+            ),
+            ca_pem: std::fs::read_to_string(ca.ca_cert()).map_err(|e| e.to_string())?,
+        },
+    };
+    let path = ca.dir().join(format!("community-{channel}.iw4l-server"));
+    std::fs::write(
+        &path,
+        toml::to_string_pretty(&descriptor).map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| e.to_string())?;
     println!(
-        "Give this .env block and {} to your players:",
-        ca.ca_cert().display()
+        "Upload client updates to {remote_lib}/updates/{channel}, then give {} and iw4l.exe to players over a trusted channel.",
+        path.display()
     );
-    println!();
-    println!("  IW4L_MASTER_ADDR={}:{}", ssh.host(), channel.port());
-    println!("  IW4L_MASTER_SERVER_NAME={}", channel.server_name());
-    println!("  IW4L_MASTER_CA_CERT=/path/to/iw4l-ca.pem");
-    println!();
-    println!("  host a match:  IW4L_MASTER_HOST_NAME='name' make map mp_boneyard");
-    println!("  join:          make menu");
+    Ok(())
 }
 
 pub fn run_cli(root: &Path, env: &Env, args: &[String]) -> Res<()> {

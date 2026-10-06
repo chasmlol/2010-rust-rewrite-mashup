@@ -1,6 +1,6 @@
 use glam::{Mat4, Vec3};
 
-use crate::{LightAttenuationBind, T5LightFalloffPack};
+use crate::LightAttenuationBind;
 use render_material::{RuntimeCodeSources, RuntimeImageId};
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -24,7 +24,9 @@ pub struct MaterialExecFrame {
     pub inv_image_height: Option<f32>,
     pub primary_lights: Vec<lighting_iw4::GfxLightPack>,
     pub attenuation: Vec<LightAttenuationBind>,
-    pub t5_falloff: Vec<T5LightFalloffPack>,
+    pub local_light_bindings: Vec<render_material::CompiledConstantOverlay>,
+    pub reflection_probe_sh: Vec<Option<[[f32; 4]; 3]>>,
+    pub smodel_lighting_sh: std::sync::Arc<Vec<Option<[[f32; 4]; 3]>>>,
 
     pub spot_receivers: Vec<Option<SpotShadowReceiver>>,
 }

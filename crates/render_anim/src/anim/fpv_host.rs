@@ -19,6 +19,8 @@ pub struct PendingFpvSpawn(pub Option<PendingFpvSpawnRequest>);
 
 #[derive(Clone, Debug)]
 pub struct PendingFpvSpawnRequest {
+    pub weapon_handle: asset_game::WeaponHandle,
+    pub parent_handle: Option<asset_game::WeaponHandle>,
     pub gun_index: FpvMeshIndex,
     pub catalog_id: u64,
     pub weapon_id: u32,
@@ -27,8 +29,7 @@ pub struct PendingFpvSpawnRequest {
 
 #[derive(Resource, Default)]
 pub struct PendingFpvNotetracks {
-    pub weapon: u32,
-    pub names: Vec<String>,
+    pub batch: Option<audio::ViewmodelNotetracks>,
 }
 
 #[derive(Resource, Default)]
@@ -98,13 +99,13 @@ pub struct FpvPosedFrame {
     pub poses: [Option<FpvHandPose>; 2],
     pub lens: Mat4,
     pub idle_sampled: bool,
-    pub notetracks: Vec<String>,
 }
 
 #[derive(Resource, Default)]
 pub struct FpvPoseProduct {
     pub drawgun: Option<i32>,
     pub kind: FpvPoseKind,
+    pub camo: u8,
 }
 
 pub struct FpvGenerateArgs<'a> {
@@ -115,13 +116,17 @@ pub struct FpvGenerateArgs<'a> {
     pub cursor: &'a mut FpvPresentState,
     pub rocket: bool,
     pub melee: bool,
+    pub ads: bool,
+    pub jammed: bool,
     pub sample: Option<FpvAuthoritySample>,
     pub predicted_fire: bool,
     pub dual: bool,
     pub dual_offset: Option<f32>,
 }
 
-pub fn generate_fpv_pose(args: FpvGenerateArgs<'_>) -> FpvPoseKind {
+pub fn generate_fpv_pose(
+    args: FpvGenerateArgs<'_>,
+) -> (FpvPoseKind, crate::anim::fpv::FpvNotetracks) {
     let FpvGenerateArgs {
         dt,
         equipped,
@@ -130,6 +135,8 @@ pub fn generate_fpv_pose(args: FpvGenerateArgs<'_>) -> FpvPoseKind {
         cursor,
         rocket,
         melee,
+        ads,
+        jammed,
         sample,
         predicted_fire,
         dual,
@@ -138,6 +145,31 @@ pub fn generate_fpv_pose(args: FpvGenerateArgs<'_>) -> FpvPoseKind {
     let (_pose, notifies) =
         tick_equipped_fpv_with_predicted_fire(equipped, cursor, sample, predicted_fire, dt);
 
+    let kind = pose_equipped_fpv(
+        equipped,
+        rigs,
+        active,
+        rocket,
+        melee,
+        ads,
+        jammed,
+        dual,
+        dual_offset,
+    );
+    (kind, notifies)
+}
+
+fn pose_equipped_fpv(
+    equipped: &EquippedFpv,
+    rigs: &FpvRigSet,
+    active: &mut Option<Arc<PreparedFpvRig>>,
+    rocket: bool,
+    melee: bool,
+    ads: bool,
+    jammed: bool,
+    dual: bool,
+    dual_offset: Option<f32>,
+) -> FpvPoseKind {
     let right: Vec<PosedClip<'_>> = equipped
         .controller
         .active_anims()
@@ -165,7 +197,7 @@ pub fn generate_fpv_pose(args: FpvGenerateArgs<'_>) -> FpvPoseKind {
     };
     let dual_drawn = !left.is_empty();
 
-    let Some(prepared) = rigs.pick(rocket, dual_drawn, melee) else {
+    let Some(prepared) = rigs.pick(rocket, dual_drawn, melee, ads, jammed) else {
         *active = None;
         return FpvPoseKind::Refuse(FpvPoseRefuse::EyePoseFailed {
             gun_xmodel: equipped.gun_xmodel.clone(),
@@ -201,8 +233,6 @@ pub fn generate_fpv_pose(args: FpvGenerateArgs<'_>) -> FpvPoseKind {
                 ))
             })
             .unwrap_or(Vec3::ZERO);
-        // The rig laid out a left hand, so a left hand that cannot be posed is
-        // a plan with a hole in it. Refusing the frame is the honest answer.
         let Some(pose) = prepared.pose_hand(1, &left, offset) else {
             return FpvPoseKind::Refuse(FpvPoseRefuse::EyePoseFailed {
                 gun_xmodel: equipped.gun_xmodel.clone(),
@@ -220,6 +250,5 @@ pub fn generate_fpv_pose(args: FpvGenerateArgs<'_>) -> FpvPoseKind {
         secondary_bolt,
         lens,
         idle_sampled: true,
-        notetracks: notifies,
     })
 }
