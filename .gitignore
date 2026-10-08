@@ -12,3 +12,11 @@ iw4l-artifacts
 # Agent working memory. None of it is the product: the artifacts, the externals,
 # the agent clones and the RE tooling and its bases all stay on this machine.
 /context/
+
+# Windows keyboard mapper builds and per-user state.
+/tools/keyboard/bin/
+/keyboard/
+mapping.ini
+mapping.ini.new
+skate-context.txt
+skate-context.new

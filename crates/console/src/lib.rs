@@ -27,6 +27,7 @@ mod gamepad;
 pub mod input;
 pub mod plugin;
 pub mod registry;
+mod skate_controls;
 mod startup;
 pub mod suggest;
 mod synthetic_input;

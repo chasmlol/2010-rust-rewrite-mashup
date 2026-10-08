@@ -68,6 +68,7 @@ pub(crate) fn consume_menu_binding(
     mut capture: ResMut<frame::UiBindingCapture>,
     mut binds: ResMut<KeyBinds>,
     mut view: ResMut<ui::BindingView>,
+    mut dvars: ResMut<frame::UiMenuDvars>,
 ) {
     capture.consumed_input = false;
     if capture.command.is_none() {
@@ -79,7 +80,16 @@ pub(crate) fn consume_menu_binding(
         .fold(None, |first, event| first.or_else(|| wheel_button(event.y)));
     let mut began = false;
     for intent in intents.read() {
-        if let Some(id) = input_iw4::command_id_lookup(&intent.command) {
+        if intent.command.starts_with("ui_skate_") {
+            capture.command = Some(intent.command.clone());
+            pending.id = None;
+            pending.armed = false;
+            began = true;
+            dvars.set(
+                "ui_skate_status",
+                "Press a numpad key. Esc cancels; Backspace clears.",
+            );
+        } else if let Some(id) = input_iw4::command_id_lookup(&intent.command) {
             capture.command = Some(intent.command.clone());
             pending.id = Some(id);
             view.listening = Some(id);
@@ -91,6 +101,18 @@ pub(crate) fn consume_menu_binding(
             pending.id = None;
             view.listening = None;
         }
+    }
+    if capture
+        .command
+        .as_deref()
+        .is_some_and(|command| command.starts_with("ui_skate_"))
+    {
+        if began || !pending.armed {
+            pending.armed = true;
+            return;
+        }
+        crate::skate_controls::capture_binding(&keys, &mut capture, &mut dvars);
+        return;
     }
     let Some(id) = pending.id else { return };
     if began || !pending.armed {

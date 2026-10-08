@@ -57,6 +57,7 @@ pub fn install_frontend_menus(catalog: &mut asset_game::MenuCatalog) -> Result<(
     catalog.load_definitions(include_str!("../menus/classes.json"))?;
     catalog.load_definitions(include_str!("../menus/settings.json"))?;
     catalog.load_definitions(include_str!("../menus/controller.json"))?;
+    catalog.load_definitions(include_str!("../menus/skate.json"))?;
     let has_controller_page = catalog.get("options_controller").is_some();
     for (name, menu) in &mut catalog.menus {
         if matches!(name.as_str(), "popup_endgame" | "popup_endgame_ranked") {
@@ -101,6 +102,14 @@ pub fn install_frontend_menus(catalog: &mut asset_game::MenuCatalog) -> Result<(
                 )];
                 menu.items.push(controller);
             }
+            let mut skate = menu.items.last().cloned().expect("settings link added");
+            skate.name = "skate_settings".into();
+            skate.text_key = "Skate Controls".into();
+            skate.rect.y = 128.0;
+            skate.handlers.action = vec![asset_game::MenuEvent::Script(
+                "play mouse_click; close self; open options_skate;".into(),
+            )];
+            menu.items.push(skate);
         }
 
         let removed_rows: Vec<_> = menu
@@ -121,6 +130,7 @@ pub fn install_frontend_menus(catalog: &mut asset_game::MenuCatalog) -> Result<(
                     && item.rect.y == y
                     && item.name != "multiplayer_settings"
                     && item.name != "controller_settings"
+                    && item.name != "skate_settings"
             })
         });
         if name == "pc_options_controls" {

@@ -79,7 +79,10 @@ pub struct ConsolePlugin;
 
 impl Plugin for ConsolePlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Update, crate::debug_move::update_skate_overlay.in_set(ClientSet::Ui));
+        app.add_systems(
+            Update,
+            crate::debug_move::update_skate_overlay.in_set(ClientSet::Ui),
+        );
         crate::startup::install_stdin(app);
         app.init_resource::<ConsoleSettings>()
             .init_resource::<ConsoleState>()
@@ -187,6 +190,7 @@ impl Plugin for ConsolePlugin {
                         crate::debug_fx_marks::route_fx_mark_commands,
                         (
                             crate::user_settings::native_menu_settings,
+                            crate::skate_controls::native_menu_skate_controls,
                             crate::user_settings::consume_menu_binding,
                         )
                             .chain(),
@@ -293,7 +297,10 @@ fn publish_client_action_input(
     binds: Res<KeyBinds>,
     mut scripted: ResMut<ConsoleInputState>,
     console: Res<ConsoleState>,
-    (script_menus, minecraft): (Option<Res<hud::ScriptMenus>>, Option<Res<frame::MinecraftUi>>),
+    (script_menus, minecraft): (
+        Option<Res<hud::ScriptMenus>>,
+        Option<Res<frame::MinecraftUi>>,
+    ),
     mut hud_input: ResMut<frame::HudInputView>,
     settings: Res<frame::GameSettings>,
     mut out: ResMut<ClientActionInput>,
@@ -349,16 +356,17 @@ fn publish_client_action_input(
     let script_menu = script_menus.is_some_and(|menus| menus.captures_input());
     let inventory_open = minecraft.is_some_and(|ui| ui.active && ui.inventory_open);
     skate.input_blocked = console.open || script_menu;
-    // J, or clicking both sticks in together, toggles skating.
+    // The configured keyboard toggle sends the same gesture as both stick clicks.
     let sticks_clicked = pad.is_some_and(|pad| {
         use bevy::input::gamepad::GamepadButton::{LeftThumb, RightThumb};
         pad.pressed(LeftThumb)
             && pad.pressed(RightThumb)
             && (pad.just_pressed(LeftThumb) || pad.just_pressed(RightThumb))
     });
-    if !skate.input_blocked && (keys.just_pressed(KeyCode::KeyJ) || sticks_clicked) {
+    if !skate.input_blocked && sticks_clicked {
         skate.toggle_requested = true;
     }
+    let skate_pad_captured = skate.active || skate.entering || sticks_clicked;
     let modal_captured = console.open
         || script_menu
         || inventory_open
@@ -380,11 +388,13 @@ fn publish_client_action_input(
         if key_num < current.len() {
             current[key_num] = id;
             let remapped = out.client.keys[key_num].binding != id;
-            if remapped || captured || (owner_changed && button.is_pad()) {
+            let pad_captured = skate_pad_captured && button.is_pad();
+            if remapped || captured || pad_captured || (owner_changed && button.is_pad()) {
                 if out.client.keys[key_num].down != 0 {
                     key_event(&mut out.client, key_num, false, now, frame);
                 }
-                if inputs.pressed(button) && (captured || remapped || !inputs.just_pressed(button))
+                if inputs.pressed(button)
+                    && (captured || pad_captured || remapped || !inputs.just_pressed(button))
                 {
                     physical.blocked.insert(button);
                 }
@@ -436,7 +446,7 @@ fn publish_client_action_input(
         out.pad_sensitivity = settings.pad_look_sensitivity();
         out.pad_ads_sensitivity = settings.pad_ads_sensitivity;
         out.pad_acceleration = settings.pad_acceleration;
-        if let Some(pad) = pad {
+        if let Some(pad) = pad.filter(|_| !skate_pad_captured) {
             let sticks = crate::gamepad::sticks(pad, &settings);
             physical.movement_ready |= sticks.movement == Vec2::ZERO;
             physical.look_ready |= sticks.look == Vec2::ZERO;
@@ -449,9 +459,19 @@ fn publish_client_action_input(
                 out.pad_deflection = sticks.look.length();
             }
         }
+        if skate_pad_captured {
+            physical.movement_ready = false;
+            physical.look_ready = false;
+            out.pad_turn_rate = [0.0; 2];
+            out.pad_was_ads = false;
+            devices.aiming_with_pad = false;
+        }
         for (button, _) in binds.iter() {
             let key_num = host_keynum(button);
-            if key_num >= input_iw4::KEY_COUNT || physical.blocked.contains(&button) {
+            if key_num >= input_iw4::KEY_COUNT
+                || physical.blocked.contains(&button)
+                || (skate_pad_captured && button.is_pad())
+            {
                 continue;
             }
             if inputs.just_pressed(button) {

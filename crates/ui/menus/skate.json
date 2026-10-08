@@ -1,0 +1,2258 @@
+[
+  {
+    "name": "options_skate",
+    "fields": {
+      "handlers": {
+        "close": [],
+        "esc": [
+          {
+            "Script": "close self;"
+          }
+        ],
+        "open": [
+          {
+            "Script": "setFocus skate_settings;"
+          }
+        ]
+      }
+    },
+    "item_overrides": [
+      {
+        "name": "video_resolution",
+        "fields": {
+          "vis_exp": "0"
+        }
+      },
+      {
+        "name": "video_resolution_label",
+        "fields": {
+          "vis_exp": "0"
+        }
+      },
+      {
+        "name": "video_brightness",
+        "fields": {
+          "vis_exp": "0"
+        }
+      },
+      {
+        "name": "video_brightness_label",
+        "fields": {
+          "vis_exp": "0"
+        }
+      },
+      {
+        "name": "video_display_mode",
+        "fields": {
+          "vis_exp": "0"
+        }
+      },
+      {
+        "name": "video_display_mode_label",
+        "fields": {
+          "vis_exp": "0"
+        }
+      },
+      {
+        "name": "video_advanced",
+        "fields": {
+          "vis_exp": "0"
+        }
+      },
+      {
+        "name": "video_fov",
+        "fields": {
+          "vis_exp": "0"
+        }
+      },
+      {
+        "name": "video_fov_label",
+        "fields": {
+          "vis_exp": "0"
+        }
+      },
+      {
+        "name": "video_title",
+        "fields": {
+          "text_key": "Skate Controls 1 / 2"
+        }
+      }
+    ],
+    "item_copies": [
+      {
+        "name": "video_display_mode",
+        "fields": {
+          "fore_color": [
+            1,
+            1,
+            1,
+            1
+          ],
+          "vis_exp": "1",
+          "background": "menu_button_selection_bar",
+          "static_flags": 0,
+          "dvar": "ui_skate_TOGGLE",
+          "back_color": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "choices": [],
+          "font_enum": 3,
+          "text_exp": "",
+          "text_align_mode": 10,
+          "item_type": 14,
+          "disabled_exp": "0",
+          "style": 1,
+          "text_align_x": -8,
+          "rect": {
+            "y": 28,
+            "x": 232,
+            "h": 19,
+            "w": 344
+          },
+          "text_key": "",
+          "name": "skate_key_TOGGLE",
+          "text_scale": 0.27,
+          "handlers": {
+            "action": [
+              {
+                "Script": "play mouse_click;"
+              }
+            ],
+            "focus": [
+              {
+                "Script": "play mouse_over; setItemColor self backcolor 0 0 0 1;"
+              }
+            ],
+            "leave_focus": [
+              {
+                "Script": "setItemColor self backcolor 0 0 0 0;"
+              }
+            ]
+          },
+          "text_align_y": 0
+        }
+      },
+      {
+        "name": "video_display_mode_label",
+        "fields": {
+          "name": "skate_label_TOGGLE",
+          "rect": {
+            "y": 28,
+            "x": 232,
+            "h": 19,
+            "w": 344
+          },
+          "vis_exp": "1",
+          "text_key": "Get on / off skateboard",
+          "text_scale": 0.28,
+          "disabled_exp": "0"
+        }
+      },
+      {
+        "name": "video_display_mode",
+        "fields": {
+          "fore_color": [
+            1,
+            1,
+            1,
+            1
+          ],
+          "vis_exp": "1",
+          "background": "menu_button_selection_bar",
+          "static_flags": 0,
+          "dvar": "ui_skate_OLLIE",
+          "back_color": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "choices": [],
+          "font_enum": 3,
+          "text_exp": "",
+          "text_align_mode": 10,
+          "item_type": 14,
+          "disabled_exp": "0",
+          "style": 1,
+          "text_align_x": -8,
+          "rect": {
+            "y": 47,
+            "x": 232,
+            "h": 19,
+            "w": 344
+          },
+          "text_key": "",
+          "name": "skate_key_OLLIE",
+          "text_scale": 0.27,
+          "handlers": {
+            "action": [
+              {
+                "Script": "play mouse_click;"
+              }
+            ],
+            "focus": [
+              {
+                "Script": "play mouse_over; setItemColor self backcolor 0 0 0 1;"
+              }
+            ],
+            "leave_focus": [
+              {
+                "Script": "setItemColor self backcolor 0 0 0 0;"
+              }
+            ]
+          },
+          "text_align_y": 0
+        }
+      },
+      {
+        "name": "video_display_mode_label",
+        "fields": {
+          "name": "skate_label_OLLIE",
+          "rect": {
+            "y": 47,
+            "x": 232,
+            "h": 19,
+            "w": 344
+          },
+          "vis_exp": "1",
+          "text_key": "Jump / Ollie - hold, release",
+          "text_scale": 0.28,
+          "disabled_exp": "0"
+        }
+      },
+      {
+        "name": "video_display_mode",
+        "fields": {
+          "fore_color": [
+            1,
+            1,
+            1,
+            1
+          ],
+          "vis_exp": "1",
+          "background": "menu_button_selection_bar",
+          "static_flags": 0,
+          "dvar": "ui_skate_A",
+          "back_color": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "choices": [],
+          "font_enum": 3,
+          "text_exp": "",
+          "text_align_mode": 10,
+          "item_type": 14,
+          "disabled_exp": "0",
+          "style": 1,
+          "text_align_x": -8,
+          "rect": {
+            "y": 66,
+            "x": 232,
+            "h": 19,
+            "w": 344
+          },
+          "text_key": "",
+          "name": "skate_key_A",
+          "text_scale": 0.27,
+          "handlers": {
+            "action": [
+              {
+                "Script": "play mouse_click;"
+              }
+            ],
+            "focus": [
+              {
+                "Script": "play mouse_over; setItemColor self backcolor 0 0 0 1;"
+              }
+            ],
+            "leave_focus": [
+              {
+                "Script": "setItemColor self backcolor 0 0 0 0;"
+              }
+            ]
+          },
+          "text_align_y": 0
+        }
+      },
+      {
+        "name": "video_display_mode_label",
+        "fields": {
+          "name": "skate_label_A",
+          "rect": {
+            "y": 66,
+            "x": 232,
+            "h": 19,
+            "w": 344
+          },
+          "vis_exp": "1",
+          "text_key": "Push (A)",
+          "text_scale": 0.28,
+          "disabled_exp": "0"
+        }
+      },
+      {
+        "name": "video_display_mode",
+        "fields": {
+          "fore_color": [
+            1,
+            1,
+            1,
+            1
+          ],
+          "vis_exp": "1",
+          "background": "menu_button_selection_bar",
+          "static_flags": 0,
+          "dvar": "ui_skate_X",
+          "back_color": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "choices": [],
+          "font_enum": 3,
+          "text_exp": "",
+          "text_align_mode": 10,
+          "item_type": 14,
+          "disabled_exp": "0",
+          "style": 1,
+          "text_align_x": -8,
+          "rect": {
+            "y": 85,
+            "x": 232,
+            "h": 19,
+            "w": 344
+          },
+          "text_key": "",
+          "name": "skate_key_X",
+          "text_scale": 0.27,
+          "handlers": {
+            "action": [
+              {
+                "Script": "play mouse_click;"
+              }
+            ],
+            "focus": [
+              {
+                "Script": "play mouse_over; setItemColor self backcolor 0 0 0 1;"
+              }
+            ],
+            "leave_focus": [
+              {
+                "Script": "setItemColor self backcolor 0 0 0 0;"
+              }
+            ]
+          },
+          "text_align_y": 0
+        }
+      },
+      {
+        "name": "video_display_mode_label",
+        "fields": {
+          "name": "skate_label_X",
+          "rect": {
+            "y": 85,
+            "x": 232,
+            "h": 19,
+            "w": 344
+          },
+          "vis_exp": "1",
+          "text_key": "Alternate push (X)",
+          "text_scale": 0.28,
+          "disabled_exp": "0"
+        }
+      },
+      {
+        "name": "video_display_mode",
+        "fields": {
+          "fore_color": [
+            1,
+            1,
+            1,
+            1
+          ],
+          "vis_exp": "1",
+          "background": "menu_button_selection_bar",
+          "static_flags": 0,
+          "dvar": "ui_skate_B",
+          "back_color": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "choices": [],
+          "font_enum": 3,
+          "text_exp": "",
+          "text_align_mode": 10,
+          "item_type": 14,
+          "disabled_exp": "0",
+          "style": 1,
+          "text_align_x": -8,
+          "rect": {
+            "y": 104,
+            "x": 232,
+            "h": 19,
+            "w": 344
+          },
+          "text_key": "",
+          "name": "skate_key_B",
+          "text_scale": 0.27,
+          "handlers": {
+            "action": [
+              {
+                "Script": "play mouse_click;"
+              }
+            ],
+            "focus": [
+              {
+                "Script": "play mouse_over; setItemColor self backcolor 0 0 0 1;"
+              }
+            ],
+            "leave_focus": [
+              {
+                "Script": "setItemColor self backcolor 0 0 0 0;"
+              }
+            ]
+          },
+          "text_align_y": 0
+        }
+      },
+      {
+        "name": "video_display_mode_label",
+        "fields": {
+          "name": "skate_label_B",
+          "rect": {
+            "y": 104,
+            "x": 232,
+            "h": 19,
+            "w": 344
+          },
+          "vis_exp": "1",
+          "text_key": "Brake (B)",
+          "text_scale": 0.28,
+          "disabled_exp": "0"
+        }
+      },
+      {
+        "name": "video_display_mode",
+        "fields": {
+          "fore_color": [
+            1,
+            1,
+            1,
+            1
+          ],
+          "vis_exp": "1",
+          "background": "menu_button_selection_bar",
+          "static_flags": 0,
+          "dvar": "ui_skate_LUP",
+          "back_color": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "choices": [],
+          "font_enum": 3,
+          "text_exp": "",
+          "text_align_mode": 10,
+          "item_type": 14,
+          "disabled_exp": "0",
+          "style": 1,
+          "text_align_x": -8,
+          "rect": {
+            "y": 123,
+            "x": 232,
+            "h": 19,
+            "w": 344
+          },
+          "text_key": "",
+          "name": "skate_key_LUP",
+          "text_scale": 0.27,
+          "handlers": {
+            "action": [
+              {
+                "Script": "play mouse_click;"
+              }
+            ],
+            "focus": [
+              {
+                "Script": "play mouse_over; setItemColor self backcolor 0 0 0 1;"
+              }
+            ],
+            "leave_focus": [
+              {
+                "Script": "setItemColor self backcolor 0 0 0 0;"
+              }
+            ]
+          },
+          "text_align_y": 0
+        }
+      },
+      {
+        "name": "video_display_mode_label",
+        "fields": {
+          "name": "skate_label_LUP",
+          "rect": {
+            "y": 123,
+            "x": 232,
+            "h": 19,
+            "w": 344
+          },
+          "vis_exp": "1",
+          "text_key": "Lean forward",
+          "text_scale": 0.28,
+          "disabled_exp": "0"
+        }
+      },
+      {
+        "name": "video_display_mode",
+        "fields": {
+          "fore_color": [
+            1,
+            1,
+            1,
+            1
+          ],
+          "vis_exp": "1",
+          "background": "menu_button_selection_bar",
+          "static_flags": 0,
+          "dvar": "ui_skate_LDOWN",
+          "back_color": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "choices": [],
+          "font_enum": 3,
+          "text_exp": "",
+          "text_align_mode": 10,
+          "item_type": 14,
+          "disabled_exp": "0",
+          "style": 1,
+          "text_align_x": -8,
+          "rect": {
+            "y": 142,
+            "x": 232,
+            "h": 19,
+            "w": 344
+          },
+          "text_key": "",
+          "name": "skate_key_LDOWN",
+          "text_scale": 0.27,
+          "handlers": {
+            "action": [
+              {
+                "Script": "play mouse_click;"
+              }
+            ],
+            "focus": [
+              {
+                "Script": "play mouse_over; setItemColor self backcolor 0 0 0 1;"
+              }
+            ],
+            "leave_focus": [
+              {
+                "Script": "setItemColor self backcolor 0 0 0 0;"
+              }
+            ]
+          },
+          "text_align_y": 0
+        }
+      },
+      {
+        "name": "video_display_mode_label",
+        "fields": {
+          "name": "skate_label_LDOWN",
+          "rect": {
+            "y": 142,
+            "x": 232,
+            "h": 19,
+            "w": 344
+          },
+          "vis_exp": "1",
+          "text_key": "Lean backward",
+          "text_scale": 0.28,
+          "disabled_exp": "0"
+        }
+      },
+      {
+        "name": "video_display_mode",
+        "fields": {
+          "fore_color": [
+            1,
+            1,
+            1,
+            1
+          ],
+          "vis_exp": "1",
+          "background": "menu_button_selection_bar",
+          "static_flags": 0,
+          "dvar": "ui_skate_LLEFT",
+          "back_color": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "choices": [],
+          "font_enum": 3,
+          "text_exp": "",
+          "text_align_mode": 10,
+          "item_type": 14,
+          "disabled_exp": "0",
+          "style": 1,
+          "text_align_x": -8,
+          "rect": {
+            "y": 161,
+            "x": 232,
+            "h": 19,
+            "w": 344
+          },
+          "text_key": "",
+          "name": "skate_key_LLEFT",
+          "text_scale": 0.27,
+          "handlers": {
+            "action": [
+              {
+                "Script": "play mouse_click;"
+              }
+            ],
+            "focus": [
+              {
+                "Script": "play mouse_over; setItemColor self backcolor 0 0 0 1;"
+              }
+            ],
+            "leave_focus": [
+              {
+                "Script": "setItemColor self backcolor 0 0 0 0;"
+              }
+            ]
+          },
+          "text_align_y": 0
+        }
+      },
+      {
+        "name": "video_display_mode_label",
+        "fields": {
+          "name": "skate_label_LLEFT",
+          "rect": {
+            "y": 161,
+            "x": 232,
+            "h": 19,
+            "w": 344
+          },
+          "vis_exp": "1",
+          "text_key": "Steer left",
+          "text_scale": 0.28,
+          "disabled_exp": "0"
+        }
+      },
+      {
+        "name": "video_display_mode",
+        "fields": {
+          "fore_color": [
+            1,
+            1,
+            1,
+            1
+          ],
+          "vis_exp": "1",
+          "background": "menu_button_selection_bar",
+          "static_flags": 0,
+          "dvar": "ui_skate_LRIGHT",
+          "back_color": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "choices": [],
+          "font_enum": 3,
+          "text_exp": "",
+          "text_align_mode": 10,
+          "item_type": 14,
+          "disabled_exp": "0",
+          "style": 1,
+          "text_align_x": -8,
+          "rect": {
+            "y": 180,
+            "x": 232,
+            "h": 19,
+            "w": 344
+          },
+          "text_key": "",
+          "name": "skate_key_LRIGHT",
+          "text_scale": 0.27,
+          "handlers": {
+            "action": [
+              {
+                "Script": "play mouse_click;"
+              }
+            ],
+            "focus": [
+              {
+                "Script": "play mouse_over; setItemColor self backcolor 0 0 0 1;"
+              }
+            ],
+            "leave_focus": [
+              {
+                "Script": "setItemColor self backcolor 0 0 0 0;"
+              }
+            ]
+          },
+          "text_align_y": 0
+        }
+      },
+      {
+        "name": "video_display_mode_label",
+        "fields": {
+          "name": "skate_label_LRIGHT",
+          "rect": {
+            "y": 180,
+            "x": 232,
+            "h": 19,
+            "w": 344
+          },
+          "vis_exp": "1",
+          "text_key": "Steer right",
+          "text_scale": 0.28,
+          "disabled_exp": "0"
+        }
+      },
+      {
+        "name": "video_display_mode",
+        "fields": {
+          "fore_color": [
+            1,
+            1,
+            1,
+            1
+          ],
+          "vis_exp": "1",
+          "background": "menu_button_selection_bar",
+          "static_flags": 0,
+          "dvar": "ui_skate_RDOWN",
+          "back_color": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "choices": [],
+          "font_enum": 3,
+          "text_exp": "",
+          "text_align_mode": 10,
+          "item_type": 14,
+          "disabled_exp": "0",
+          "style": 1,
+          "text_align_x": -8,
+          "rect": {
+            "y": 199,
+            "x": 232,
+            "h": 19,
+            "w": 344
+          },
+          "text_key": "",
+          "name": "skate_key_RDOWN",
+          "text_scale": 0.27,
+          "handlers": {
+            "action": [
+              {
+                "Script": "play mouse_click;"
+              }
+            ],
+            "focus": [
+              {
+                "Script": "play mouse_over; setItemColor self backcolor 0 0 0 1;"
+              }
+            ],
+            "leave_focus": [
+              {
+                "Script": "setItemColor self backcolor 0 0 0 0;"
+              }
+            ]
+          },
+          "text_align_y": 0
+        }
+      },
+      {
+        "name": "video_display_mode_label",
+        "fields": {
+          "name": "skate_label_RDOWN",
+          "rect": {
+            "y": 199,
+            "x": 232,
+            "h": 19,
+            "w": 344
+          },
+          "vis_exp": "1",
+          "text_key": "Trick stick down / crouch",
+          "text_scale": 0.28,
+          "disabled_exp": "0"
+        }
+      },
+      {
+        "name": "video_display_mode",
+        "fields": {
+          "fore_color": [
+            1,
+            1,
+            1,
+            1
+          ],
+          "vis_exp": "1",
+          "background": "menu_button_selection_bar",
+          "static_flags": 0,
+          "dvar": "ui_skate_RUP",
+          "back_color": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "choices": [],
+          "font_enum": 3,
+          "text_exp": "",
+          "text_align_mode": 10,
+          "item_type": 14,
+          "disabled_exp": "0",
+          "style": 1,
+          "text_align_x": -8,
+          "rect": {
+            "y": 218,
+            "x": 232,
+            "h": 19,
+            "w": 344
+          },
+          "text_key": "",
+          "name": "skate_key_RUP",
+          "text_scale": 0.27,
+          "handlers": {
+            "action": [
+              {
+                "Script": "play mouse_click;"
+              }
+            ],
+            "focus": [
+              {
+                "Script": "play mouse_over; setItemColor self backcolor 0 0 0 1;"
+              }
+            ],
+            "leave_focus": [
+              {
+                "Script": "setItemColor self backcolor 0 0 0 0;"
+              }
+            ]
+          },
+          "text_align_y": 0
+        }
+      },
+      {
+        "name": "video_display_mode_label",
+        "fields": {
+          "name": "skate_label_RUP",
+          "rect": {
+            "y": 218,
+            "x": 232,
+            "h": 19,
+            "w": 344
+          },
+          "vis_exp": "1",
+          "text_key": "Trick stick up / flick",
+          "text_scale": 0.28,
+          "disabled_exp": "0"
+        }
+      },
+      {
+        "name": "video_display_mode",
+        "fields": {
+          "fore_color": [
+            1,
+            1,
+            1,
+            1
+          ],
+          "vis_exp": "1",
+          "background": "menu_button_selection_bar",
+          "static_flags": 0,
+          "dvar": "ui_skate_RLEFT",
+          "back_color": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "choices": [],
+          "font_enum": 3,
+          "text_exp": "",
+          "text_align_mode": 10,
+          "item_type": 14,
+          "disabled_exp": "0",
+          "style": 1,
+          "text_align_x": -8,
+          "rect": {
+            "y": 237,
+            "x": 232,
+            "h": 19,
+            "w": 344
+          },
+          "text_key": "",
+          "name": "skate_key_RLEFT",
+          "text_scale": 0.27,
+          "handlers": {
+            "action": [
+              {
+                "Script": "play mouse_click;"
+              }
+            ],
+            "focus": [
+              {
+                "Script": "play mouse_over; setItemColor self backcolor 0 0 0 1;"
+              }
+            ],
+            "leave_focus": [
+              {
+                "Script": "setItemColor self backcolor 0 0 0 0;"
+              }
+            ]
+          },
+          "text_align_y": 0
+        }
+      },
+      {
+        "name": "video_display_mode_label",
+        "fields": {
+          "name": "skate_label_RLEFT",
+          "rect": {
+            "y": 237,
+            "x": 232,
+            "h": 19,
+            "w": 344
+          },
+          "vis_exp": "1",
+          "text_key": "Trick stick left",
+          "text_scale": 0.28,
+          "disabled_exp": "0"
+        }
+      },
+      {
+        "name": "video_display_mode",
+        "fields": {
+          "fore_color": [
+            1,
+            1,
+            1,
+            1
+          ],
+          "vis_exp": "1",
+          "background": "menu_button_selection_bar",
+          "static_flags": 0,
+          "dvar": "ui_skate_RRIGHT",
+          "back_color": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "choices": [],
+          "font_enum": 3,
+          "text_exp": "",
+          "text_align_mode": 10,
+          "item_type": 14,
+          "disabled_exp": "0",
+          "style": 1,
+          "text_align_x": -8,
+          "rect": {
+            "y": 256,
+            "x": 232,
+            "h": 19,
+            "w": 344
+          },
+          "text_key": "",
+          "name": "skate_key_RRIGHT",
+          "text_scale": 0.27,
+          "handlers": {
+            "action": [
+              {
+                "Script": "play mouse_click;"
+              }
+            ],
+            "focus": [
+              {
+                "Script": "play mouse_over; setItemColor self backcolor 0 0 0 1;"
+              }
+            ],
+            "leave_focus": [
+              {
+                "Script": "setItemColor self backcolor 0 0 0 0;"
+              }
+            ]
+          },
+          "text_align_y": 0
+        }
+      },
+      {
+        "name": "video_display_mode_label",
+        "fields": {
+          "name": "skate_label_RRIGHT",
+          "rect": {
+            "y": 256,
+            "x": 232,
+            "h": 19,
+            "w": 344
+          },
+          "vis_exp": "1",
+          "text_key": "Trick stick right",
+          "text_scale": 0.28,
+          "disabled_exp": "0"
+        }
+      },
+      {
+        "name": "video_display_mode",
+        "fields": {
+          "fore_color": [
+            1,
+            1,
+            1,
+            1
+          ],
+          "vis_exp": "1",
+          "background": "menu_button_selection_bar",
+          "static_flags": 0,
+          "dvar": "ui_skate_LT",
+          "back_color": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "choices": [],
+          "font_enum": 3,
+          "text_exp": "",
+          "text_align_mode": 10,
+          "item_type": 14,
+          "disabled_exp": "0",
+          "style": 1,
+          "text_align_x": -8,
+          "rect": {
+            "y": 275,
+            "x": 232,
+            "h": 19,
+            "w": 344
+          },
+          "text_key": "",
+          "name": "skate_key_LT",
+          "text_scale": 0.27,
+          "handlers": {
+            "action": [
+              {
+                "Script": "play mouse_click;"
+              }
+            ],
+            "focus": [
+              {
+                "Script": "play mouse_over; setItemColor self backcolor 0 0 0 1;"
+              }
+            ],
+            "leave_focus": [
+              {
+                "Script": "setItemColor self backcolor 0 0 0 0;"
+              }
+            ]
+          },
+          "text_align_y": 0
+        }
+      },
+      {
+        "name": "video_display_mode_label",
+        "fields": {
+          "name": "skate_label_LT",
+          "rect": {
+            "y": 275,
+            "x": 232,
+            "h": 19,
+            "w": 344
+          },
+          "vis_exp": "1",
+          "text_key": "Left grab (LT)",
+          "text_scale": 0.28,
+          "disabled_exp": "0"
+        }
+      },
+      {
+        "name": "video_display_mode",
+        "fields": {
+          "fore_color": [
+            1,
+            1,
+            1,
+            1
+          ],
+          "vis_exp": "1",
+          "background": "menu_button_selection_bar",
+          "static_flags": 0,
+          "dvar": "ui_skate_RT",
+          "back_color": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "choices": [],
+          "font_enum": 3,
+          "text_exp": "",
+          "text_align_mode": 10,
+          "item_type": 14,
+          "disabled_exp": "0",
+          "style": 1,
+          "text_align_x": -8,
+          "rect": {
+            "y": 294,
+            "x": 232,
+            "h": 19,
+            "w": 344
+          },
+          "text_key": "",
+          "name": "skate_key_RT",
+          "text_scale": 0.27,
+          "handlers": {
+            "action": [
+              {
+                "Script": "play mouse_click;"
+              }
+            ],
+            "focus": [
+              {
+                "Script": "play mouse_over; setItemColor self backcolor 0 0 0 1;"
+              }
+            ],
+            "leave_focus": [
+              {
+                "Script": "setItemColor self backcolor 0 0 0 0;"
+              }
+            ]
+          },
+          "text_align_y": 0
+        }
+      },
+      {
+        "name": "video_display_mode_label",
+        "fields": {
+          "name": "skate_label_RT",
+          "rect": {
+            "y": 294,
+            "x": 232,
+            "h": 19,
+            "w": 344
+          },
+          "vis_exp": "1",
+          "text_key": "Right grab (RT)",
+          "text_scale": 0.28,
+          "disabled_exp": "0"
+        }
+      },
+      {
+        "name": "video_display_mode",
+        "fields": {
+          "fore_color": [
+            1,
+            1,
+            1,
+            1
+          ],
+          "vis_exp": "1",
+          "background": "menu_button_selection_bar",
+          "static_flags": 0,
+          "dvar": "ui_skate_LB",
+          "back_color": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "choices": [],
+          "font_enum": 3,
+          "text_exp": "",
+          "text_align_mode": 10,
+          "item_type": 14,
+          "disabled_exp": "0",
+          "style": 1,
+          "text_align_x": -8,
+          "rect": {
+            "y": 313,
+            "x": 232,
+            "h": 19,
+            "w": 344
+          },
+          "text_key": "",
+          "name": "skate_key_LB",
+          "text_scale": 0.27,
+          "handlers": {
+            "action": [
+              {
+                "Script": "play mouse_click;"
+              }
+            ],
+            "focus": [
+              {
+                "Script": "play mouse_over; setItemColor self backcolor 0 0 0 1;"
+              }
+            ],
+            "leave_focus": [
+              {
+                "Script": "setItemColor self backcolor 0 0 0 0;"
+              }
+            ]
+          },
+          "text_align_y": 0
+        }
+      },
+      {
+        "name": "video_display_mode_label",
+        "fields": {
+          "name": "skate_label_LB",
+          "rect": {
+            "y": 313,
+            "x": 232,
+            "h": 19,
+            "w": 344
+          },
+          "vis_exp": "1",
+          "text_key": "Left shoulder (LB)",
+          "text_scale": 0.28,
+          "disabled_exp": "0"
+        }
+      },
+      {
+        "name": "video_display_mode",
+        "fields": {
+          "fore_color": [
+            1,
+            1,
+            1,
+            1
+          ],
+          "vis_exp": "1",
+          "background": "menu_button_selection_bar",
+          "static_flags": 0,
+          "dvar": "ui_skate_RB",
+          "back_color": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "choices": [],
+          "font_enum": 3,
+          "text_exp": "",
+          "text_align_mode": 10,
+          "item_type": 14,
+          "disabled_exp": "0",
+          "style": 1,
+          "text_align_x": -8,
+          "rect": {
+            "y": 332,
+            "x": 232,
+            "h": 19,
+            "w": 344
+          },
+          "text_key": "",
+          "name": "skate_key_RB",
+          "text_scale": 0.27,
+          "handlers": {
+            "action": [
+              {
+                "Script": "play mouse_click;"
+              }
+            ],
+            "focus": [
+              {
+                "Script": "play mouse_over; setItemColor self backcolor 0 0 0 1;"
+              }
+            ],
+            "leave_focus": [
+              {
+                "Script": "setItemColor self backcolor 0 0 0 0;"
+              }
+            ]
+          },
+          "text_align_y": 0
+        }
+      },
+      {
+        "name": "video_display_mode_label",
+        "fields": {
+          "name": "skate_label_RB",
+          "rect": {
+            "y": 332,
+            "x": 232,
+            "h": 19,
+            "w": 344
+          },
+          "vis_exp": "1",
+          "text_key": "Right shoulder (RB)",
+          "text_scale": 0.28,
+          "disabled_exp": "0"
+        }
+      },
+      {
+        "name": "video_display_mode_label",
+        "fields": {
+          "name": "skate_layer_hint",
+          "text_exp": "",
+          "text_scale": 0.21,
+          "vis_exp": "1",
+          "text_key": "Click a binding, then press a numpad key. Esc cancels; Backspace clears.",
+          "rect": {
+            "y": 363,
+            "x": 232,
+            "h": 20,
+            "w": 344
+          },
+          "disabled_exp": "0"
+        }
+      },
+      {
+        "name": "video_display_mode_label",
+        "fields": {
+          "name": "skate_mode_hint",
+          "text_exp": "",
+          "text_scale": 0.21,
+          "vis_exp": "1",
+          "text_key": "Hold keypad Enter to bind extra controls. The PC number row stays normal.",
+          "rect": {
+            "y": 378,
+            "x": 232,
+            "h": 20,
+            "w": 344
+          },
+          "disabled_exp": "0"
+        }
+      },
+      {
+        "name": "video_display_mode_label",
+        "fields": {
+          "name": "skate_status",
+          "text_exp": "op 38 s:75695f736b6174655f737461747573 op 1",
+          "text_scale": 0.22,
+          "vis_exp": "1",
+          "text_key": "",
+          "rect": {
+            "y": 394,
+            "x": 232,
+            "h": 20,
+            "w": 344
+          },
+          "disabled_exp": "0"
+        }
+      },
+      {
+        "name": "video_advanced",
+        "fields": {
+          "handlers": {
+            "action": [
+              {
+                "Script": "play mouse_click; close self; open options_skate_more;"
+              }
+            ],
+            "focus": [
+              {
+                "Script": "play mouse_over;"
+              }
+            ],
+            "leave_focus": []
+          },
+          "name": "skate_next_page",
+          "rect": {
+            "y": 414,
+            "x": 232,
+            "h": 20,
+            "w": 164
+          },
+          "vis_exp": "1",
+          "text_key": "More Controls >",
+          "text_scale": 0.28,
+          "disabled_exp": "0"
+        }
+      },
+      {
+        "name": "video_advanced",
+        "fields": {
+          "handlers": {
+            "action": [
+              {
+                "Script": "play mouse_click; setdvar ui_skate_reset 1;"
+              }
+            ],
+            "focus": [
+              {
+                "Script": "play mouse_over;"
+              }
+            ],
+            "leave_focus": []
+          },
+          "name": "skate_defaults",
+          "rect": {
+            "y": 414,
+            "x": 400,
+            "h": 20,
+            "w": 176
+          },
+          "vis_exp": "1",
+          "text_key": "Restore Skate Defaults",
+          "text_scale": 0.28,
+          "disabled_exp": "0"
+        }
+      }
+    ],
+    "base": "pc_options_video"
+  },
+  {
+    "name": "options_skate_more",
+    "fields": {
+      "handlers": {
+        "close": [],
+        "esc": [
+          {
+            "Script": "close self;"
+          }
+        ],
+        "open": [
+          {
+            "Script": "setFocus skate_settings;"
+          }
+        ]
+      }
+    },
+    "item_overrides": [
+      {
+        "name": "video_resolution",
+        "fields": {
+          "vis_exp": "0"
+        }
+      },
+      {
+        "name": "video_resolution_label",
+        "fields": {
+          "vis_exp": "0"
+        }
+      },
+      {
+        "name": "video_brightness",
+        "fields": {
+          "vis_exp": "0"
+        }
+      },
+      {
+        "name": "video_brightness_label",
+        "fields": {
+          "vis_exp": "0"
+        }
+      },
+      {
+        "name": "video_display_mode",
+        "fields": {
+          "vis_exp": "0"
+        }
+      },
+      {
+        "name": "video_display_mode_label",
+        "fields": {
+          "vis_exp": "0"
+        }
+      },
+      {
+        "name": "video_advanced",
+        "fields": {
+          "vis_exp": "0"
+        }
+      },
+      {
+        "name": "video_fov",
+        "fields": {
+          "vis_exp": "0"
+        }
+      },
+      {
+        "name": "video_fov_label",
+        "fields": {
+          "vis_exp": "0"
+        }
+      },
+      {
+        "name": "video_title",
+        "fields": {
+          "text_key": "Skate Controls 2 / 2"
+        }
+      }
+    ],
+    "item_copies": [
+      {
+        "name": "video_display_mode",
+        "fields": {
+          "fore_color": [
+            1,
+            1,
+            1,
+            1
+          ],
+          "vis_exp": "1",
+          "background": "menu_button_selection_bar",
+          "static_flags": 0,
+          "dvar": "ui_skate_Y",
+          "back_color": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "choices": [],
+          "font_enum": 3,
+          "text_exp": "",
+          "text_align_mode": 10,
+          "item_type": 14,
+          "disabled_exp": "0",
+          "style": 1,
+          "text_align_x": -8,
+          "rect": {
+            "y": 28,
+            "x": 232,
+            "h": 19,
+            "w": 344
+          },
+          "text_key": "",
+          "name": "skate_key_Y",
+          "text_scale": 0.27,
+          "handlers": {
+            "action": [
+              {
+                "Script": "play mouse_click;"
+              }
+            ],
+            "focus": [
+              {
+                "Script": "play mouse_over; setItemColor self backcolor 0 0 0 1;"
+              }
+            ],
+            "leave_focus": [
+              {
+                "Script": "setItemColor self backcolor 0 0 0 0;"
+              }
+            ]
+          },
+          "text_align_y": 0
+        }
+      },
+      {
+        "name": "video_display_mode_label",
+        "fields": {
+          "name": "skate_label_Y",
+          "rect": {
+            "y": 28,
+            "x": 232,
+            "h": 19,
+            "w": 344
+          },
+          "vis_exp": "1",
+          "text_key": "Get on / off board (Y)",
+          "text_scale": 0.28,
+          "disabled_exp": "0"
+        }
+      },
+      {
+        "name": "video_display_mode",
+        "fields": {
+          "fore_color": [
+            1,
+            1,
+            1,
+            1
+          ],
+          "vis_exp": "1",
+          "background": "menu_button_selection_bar",
+          "static_flags": 0,
+          "dvar": "ui_skate_START",
+          "back_color": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "choices": [],
+          "font_enum": 3,
+          "text_exp": "",
+          "text_align_mode": 10,
+          "item_type": 14,
+          "disabled_exp": "0",
+          "style": 1,
+          "text_align_x": -8,
+          "rect": {
+            "y": 47,
+            "x": 232,
+            "h": 19,
+            "w": 344
+          },
+          "text_key": "",
+          "name": "skate_key_START",
+          "text_scale": 0.27,
+          "handlers": {
+            "action": [
+              {
+                "Script": "play mouse_click;"
+              }
+            ],
+            "focus": [
+              {
+                "Script": "play mouse_over; setItemColor self backcolor 0 0 0 1;"
+              }
+            ],
+            "leave_focus": [
+              {
+                "Script": "setItemColor self backcolor 0 0 0 0;"
+              }
+            ]
+          },
+          "text_align_y": 0
+        }
+      },
+      {
+        "name": "video_display_mode_label",
+        "fields": {
+          "name": "skate_label_START",
+          "rect": {
+            "y": 47,
+            "x": 232,
+            "h": 19,
+            "w": 344
+          },
+          "vis_exp": "1",
+          "text_key": "Pause / menu (Start)",
+          "text_scale": 0.28,
+          "disabled_exp": "0"
+        }
+      },
+      {
+        "name": "video_display_mode",
+        "fields": {
+          "fore_color": [
+            1,
+            1,
+            1,
+            1
+          ],
+          "vis_exp": "1",
+          "background": "menu_button_selection_bar",
+          "static_flags": 0,
+          "dvar": "ui_skate_BACK",
+          "back_color": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "choices": [],
+          "font_enum": 3,
+          "text_exp": "",
+          "text_align_mode": 10,
+          "item_type": 14,
+          "disabled_exp": "0",
+          "style": 1,
+          "text_align_x": -8,
+          "rect": {
+            "y": 66,
+            "x": 232,
+            "h": 19,
+            "w": 344
+          },
+          "text_key": "",
+          "name": "skate_key_BACK",
+          "text_scale": 0.27,
+          "handlers": {
+            "action": [
+              {
+                "Script": "play mouse_click;"
+              }
+            ],
+            "focus": [
+              {
+                "Script": "play mouse_over; setItemColor self backcolor 0 0 0 1;"
+              }
+            ],
+            "leave_focus": [
+              {
+                "Script": "setItemColor self backcolor 0 0 0 0;"
+              }
+            ]
+          },
+          "text_align_y": 0
+        }
+      },
+      {
+        "name": "video_display_mode_label",
+        "fields": {
+          "name": "skate_label_BACK",
+          "rect": {
+            "y": 66,
+            "x": 232,
+            "h": 19,
+            "w": 344
+          },
+          "vis_exp": "1",
+          "text_key": "Back / replay (Back)",
+          "text_scale": 0.28,
+          "disabled_exp": "0"
+        }
+      },
+      {
+        "name": "video_display_mode",
+        "fields": {
+          "fore_color": [
+            1,
+            1,
+            1,
+            1
+          ],
+          "vis_exp": "1",
+          "background": "menu_button_selection_bar",
+          "static_flags": 0,
+          "dvar": "ui_skate_UP",
+          "back_color": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "choices": [],
+          "font_enum": 3,
+          "text_exp": "",
+          "text_align_mode": 10,
+          "item_type": 14,
+          "disabled_exp": "0",
+          "style": 1,
+          "text_align_x": -8,
+          "rect": {
+            "y": 85,
+            "x": 232,
+            "h": 19,
+            "w": 344
+          },
+          "text_key": "",
+          "name": "skate_key_UP",
+          "text_scale": 0.27,
+          "handlers": {
+            "action": [
+              {
+                "Script": "play mouse_click;"
+              }
+            ],
+            "focus": [
+              {
+                "Script": "play mouse_over; setItemColor self backcolor 0 0 0 1;"
+              }
+            ],
+            "leave_focus": [
+              {
+                "Script": "setItemColor self backcolor 0 0 0 0;"
+              }
+            ]
+          },
+          "text_align_y": 0
+        }
+      },
+      {
+        "name": "video_display_mode_label",
+        "fields": {
+          "name": "skate_label_UP",
+          "rect": {
+            "y": 85,
+            "x": 232,
+            "h": 19,
+            "w": 344
+          },
+          "vis_exp": "1",
+          "text_key": "D-pad up",
+          "text_scale": 0.28,
+          "disabled_exp": "0"
+        }
+      },
+      {
+        "name": "video_display_mode",
+        "fields": {
+          "fore_color": [
+            1,
+            1,
+            1,
+            1
+          ],
+          "vis_exp": "1",
+          "background": "menu_button_selection_bar",
+          "static_flags": 0,
+          "dvar": "ui_skate_DOWN",
+          "back_color": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "choices": [],
+          "font_enum": 3,
+          "text_exp": "",
+          "text_align_mode": 10,
+          "item_type": 14,
+          "disabled_exp": "0",
+          "style": 1,
+          "text_align_x": -8,
+          "rect": {
+            "y": 104,
+            "x": 232,
+            "h": 19,
+            "w": 344
+          },
+          "text_key": "",
+          "name": "skate_key_DOWN",
+          "text_scale": 0.27,
+          "handlers": {
+            "action": [
+              {
+                "Script": "play mouse_click;"
+              }
+            ],
+            "focus": [
+              {
+                "Script": "play mouse_over; setItemColor self backcolor 0 0 0 1;"
+              }
+            ],
+            "leave_focus": [
+              {
+                "Script": "setItemColor self backcolor 0 0 0 0;"
+              }
+            ]
+          },
+          "text_align_y": 0
+        }
+      },
+      {
+        "name": "video_display_mode_label",
+        "fields": {
+          "name": "skate_label_DOWN",
+          "rect": {
+            "y": 104,
+            "x": 232,
+            "h": 19,
+            "w": 344
+          },
+          "vis_exp": "1",
+          "text_key": "D-pad down",
+          "text_scale": 0.28,
+          "disabled_exp": "0"
+        }
+      },
+      {
+        "name": "video_display_mode",
+        "fields": {
+          "fore_color": [
+            1,
+            1,
+            1,
+            1
+          ],
+          "vis_exp": "1",
+          "background": "menu_button_selection_bar",
+          "static_flags": 0,
+          "dvar": "ui_skate_LEFT",
+          "back_color": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "choices": [],
+          "font_enum": 3,
+          "text_exp": "",
+          "text_align_mode": 10,
+          "item_type": 14,
+          "disabled_exp": "0",
+          "style": 1,
+          "text_align_x": -8,
+          "rect": {
+            "y": 123,
+            "x": 232,
+            "h": 19,
+            "w": 344
+          },
+          "text_key": "",
+          "name": "skate_key_LEFT",
+          "text_scale": 0.27,
+          "handlers": {
+            "action": [
+              {
+                "Script": "play mouse_click;"
+              }
+            ],
+            "focus": [
+              {
+                "Script": "play mouse_over; setItemColor self backcolor 0 0 0 1;"
+              }
+            ],
+            "leave_focus": [
+              {
+                "Script": "setItemColor self backcolor 0 0 0 0;"
+              }
+            ]
+          },
+          "text_align_y": 0
+        }
+      },
+      {
+        "name": "video_display_mode_label",
+        "fields": {
+          "name": "skate_label_LEFT",
+          "rect": {
+            "y": 123,
+            "x": 232,
+            "h": 19,
+            "w": 344
+          },
+          "vis_exp": "1",
+          "text_key": "D-pad left",
+          "text_scale": 0.28,
+          "disabled_exp": "0"
+        }
+      },
+      {
+        "name": "video_display_mode",
+        "fields": {
+          "fore_color": [
+            1,
+            1,
+            1,
+            1
+          ],
+          "vis_exp": "1",
+          "background": "menu_button_selection_bar",
+          "static_flags": 0,
+          "dvar": "ui_skate_RIGHT",
+          "back_color": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "choices": [],
+          "font_enum": 3,
+          "text_exp": "",
+          "text_align_mode": 10,
+          "item_type": 14,
+          "disabled_exp": "0",
+          "style": 1,
+          "text_align_x": -8,
+          "rect": {
+            "y": 142,
+            "x": 232,
+            "h": 19,
+            "w": 344
+          },
+          "text_key": "",
+          "name": "skate_key_RIGHT",
+          "text_scale": 0.27,
+          "handlers": {
+            "action": [
+              {
+                "Script": "play mouse_click;"
+              }
+            ],
+            "focus": [
+              {
+                "Script": "play mouse_over; setItemColor self backcolor 0 0 0 1;"
+              }
+            ],
+            "leave_focus": [
+              {
+                "Script": "setItemColor self backcolor 0 0 0 0;"
+              }
+            ]
+          },
+          "text_align_y": 0
+        }
+      },
+      {
+        "name": "video_display_mode_label",
+        "fields": {
+          "name": "skate_label_RIGHT",
+          "rect": {
+            "y": 142,
+            "x": 232,
+            "h": 19,
+            "w": 344
+          },
+          "vis_exp": "1",
+          "text_key": "D-pad right",
+          "text_scale": 0.28,
+          "disabled_exp": "0"
+        }
+      },
+      {
+        "name": "video_display_mode",
+        "fields": {
+          "fore_color": [
+            1,
+            1,
+            1,
+            1
+          ],
+          "vis_exp": "1",
+          "background": "menu_button_selection_bar",
+          "static_flags": 0,
+          "dvar": "ui_skate_LTB",
+          "back_color": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "choices": [],
+          "font_enum": 3,
+          "text_exp": "",
+          "text_align_mode": 10,
+          "item_type": 14,
+          "disabled_exp": "0",
+          "style": 1,
+          "text_align_x": -8,
+          "rect": {
+            "y": 161,
+            "x": 232,
+            "h": 19,
+            "w": 344
+          },
+          "text_key": "",
+          "name": "skate_key_LTB",
+          "text_scale": 0.27,
+          "handlers": {
+            "action": [
+              {
+                "Script": "play mouse_click;"
+              }
+            ],
+            "focus": [
+              {
+                "Script": "play mouse_over; setItemColor self backcolor 0 0 0 1;"
+              }
+            ],
+            "leave_focus": [
+              {
+                "Script": "setItemColor self backcolor 0 0 0 0;"
+              }
+            ]
+          },
+          "text_align_y": 0
+        }
+      },
+      {
+        "name": "video_display_mode_label",
+        "fields": {
+          "name": "skate_label_LTB",
+          "rect": {
+            "y": 161,
+            "x": 232,
+            "h": 19,
+            "w": 344
+          },
+          "vis_exp": "1",
+          "text_key": "Left stick click (L3)",
+          "text_scale": 0.28,
+          "disabled_exp": "0"
+        }
+      },
+      {
+        "name": "video_display_mode",
+        "fields": {
+          "fore_color": [
+            1,
+            1,
+            1,
+            1
+          ],
+          "vis_exp": "1",
+          "background": "menu_button_selection_bar",
+          "static_flags": 0,
+          "dvar": "ui_skate_RTB",
+          "back_color": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "choices": [],
+          "font_enum": 3,
+          "text_exp": "",
+          "text_align_mode": 10,
+          "item_type": 14,
+          "disabled_exp": "0",
+          "style": 1,
+          "text_align_x": -8,
+          "rect": {
+            "y": 180,
+            "x": 232,
+            "h": 19,
+            "w": 344
+          },
+          "text_key": "",
+          "name": "skate_key_RTB",
+          "text_scale": 0.27,
+          "handlers": {
+            "action": [
+              {
+                "Script": "play mouse_click;"
+              }
+            ],
+            "focus": [
+              {
+                "Script": "play mouse_over; setItemColor self backcolor 0 0 0 1;"
+              }
+            ],
+            "leave_focus": [
+              {
+                "Script": "setItemColor self backcolor 0 0 0 0;"
+              }
+            ]
+          },
+          "text_align_y": 0
+        }
+      },
+      {
+        "name": "video_display_mode_label",
+        "fields": {
+          "name": "skate_label_RTB",
+          "rect": {
+            "y": 180,
+            "x": 232,
+            "h": 19,
+            "w": 344
+          },
+          "vis_exp": "1",
+          "text_key": "Right stick click (R3)",
+          "text_scale": 0.28,
+          "disabled_exp": "0"
+        }
+      },
+      {
+        "name": "video_display_mode_label",
+        "fields": {
+          "name": "skate_layer_hint",
+          "text_exp": "",
+          "text_scale": 0.21,
+          "vis_exp": "1",
+          "text_key": "Click a binding, then press a numpad key. Esc cancels; Backspace clears.",
+          "rect": {
+            "y": 363,
+            "x": 232,
+            "h": 20,
+            "w": 344
+          },
+          "disabled_exp": "0"
+        }
+      },
+      {
+        "name": "video_display_mode_label",
+        "fields": {
+          "name": "skate_mode_hint",
+          "text_exp": "",
+          "text_scale": 0.21,
+          "vis_exp": "1",
+          "text_key": "Hold keypad Enter to bind extra controls. The PC number row stays normal.",
+          "rect": {
+            "y": 378,
+            "x": 232,
+            "h": 20,
+            "w": 344
+          },
+          "disabled_exp": "0"
+        }
+      },
+      {
+        "name": "video_display_mode_label",
+        "fields": {
+          "name": "skate_status",
+          "text_exp": "op 38 s:75695f736b6174655f737461747573 op 1",
+          "text_scale": 0.22,
+          "vis_exp": "1",
+          "text_key": "",
+          "rect": {
+            "y": 394,
+            "x": 232,
+            "h": 20,
+            "w": 344
+          },
+          "disabled_exp": "0"
+        }
+      },
+      {
+        "name": "video_advanced",
+        "fields": {
+          "handlers": {
+            "action": [
+              {
+                "Script": "play mouse_click; close self; open options_skate;"
+              }
+            ],
+            "focus": [
+              {
+                "Script": "play mouse_over;"
+              }
+            ],
+            "leave_focus": []
+          },
+          "name": "skate_next_page",
+          "rect": {
+            "y": 414,
+            "x": 232,
+            "h": 20,
+            "w": 164
+          },
+          "vis_exp": "1",
+          "text_key": "< Main Controls",
+          "text_scale": 0.28,
+          "disabled_exp": "0"
+        }
+      },
+      {
+        "name": "video_advanced",
+        "fields": {
+          "handlers": {
+            "action": [
+              {
+                "Script": "play mouse_click; setdvar ui_skate_reset 1;"
+              }
+            ],
+            "focus": [
+              {
+                "Script": "play mouse_over;"
+              }
+            ],
+            "leave_focus": []
+          },
+          "name": "skate_defaults",
+          "rect": {
+            "y": 414,
+            "x": 400,
+            "h": 20,
+            "w": 176
+          },
+          "vis_exp": "1",
+          "text_key": "Restore Skate Defaults",
+          "text_scale": 0.28,
+          "disabled_exp": "0"
+        }
+      }
+    ],
+    "base": "pc_options_video"
+  }
+]
