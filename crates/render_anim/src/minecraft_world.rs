@@ -3,6 +3,7 @@
 //! whose section meshes go to the renderer. The world sits with its player
 //! spawn at map origin, a block to `sim::voxel::BLOCK` map units.
 use std::collections::HashMap;
+use std::path::Path;
 use std::sync::{Arc, mpsc};
 
 use bevy::input::gamepad::GamepadButton;
@@ -214,20 +215,158 @@ pub(crate) fn register(app: &mut App) {
         );
 }
 
+fn custom_world_dir() -> Option<std::path::PathBuf> {
+    if let Some(dir) = std::env::var_os("IW4L_MINECRAFT_WORLD").map(std::path::PathBuf::from) {
+        if dir.is_dir() {
+            return Some(dir);
+        }
+        diag::warn!(World, "IW4L_MINECRAFT_WORLD={} is not a directory", dir.display());
+    }
+    let cwd = std::env::current_dir().unwrap_or_default();
+    let default_dir = project_root(&cwd).join("minecraft-world");
+    default_dir.is_dir().then_some(default_dir)
+}
+
+fn project_root(cwd: &Path) -> &Path {
+    cwd
+        .ancestors()
+        .find(|ancestor| ancestor.file_name().is_some_and(|name| name == "target"))
+        .and_then(Path::parent)
+        .unwrap_or(cwd)
+}
+
+#[cfg(test)]
+mod custom_world_dir_tests {
+    use super::project_root;
+    use std::path::PathBuf;
+
+    #[test]
+    fn resolves_target_play_to_project_root() {
+        let cwd = PathBuf::from("project").join("target").join("play");
+        assert_eq!(project_root(&cwd), PathBuf::from("project"));
+    }
+
+    #[test]
+    fn leaves_non_target_working_directory_unchanged() {
+        let cwd = PathBuf::from("project");
+        assert_eq!(project_root(&cwd), cwd);
+    }
+}
+
+/// Reads `level.dat` (if present in `world_dir`) to extract `(seed, spawn_xyz)`.
+fn level_dat_info(world_dir: &std::path::Path) -> (Option<i64>, Option<(f64, f64, f64)>) {
+    let bytes = match std::fs::read(world_dir.join("level.dat")) {
+        Ok(b) => b,
+        Err(_) => return (None, None),
+    };
+    let root = match minecraftoss_core::nbt::read(&bytes) {
+        Ok(t) => t,
+        Err(_) => return (None, None),
+    };
+    let data = root.get("Data").unwrap_or(&root);
+    let seed = data
+        .get("WorldGenSettings")
+        .and_then(|w| w.get("seed"))
+        .and_then(|t| t.as_i64())
+        .or_else(|| data.get("RandomSeed").and_then(|t| t.as_i64()));
+
+    let spawn = data
+        .get("spawn")
+        .and_then(|s| s.get("pos"))
+        .and_then(nbt_spawn_position)
+        .or_else(|| {
+            let sx = i32::try_from(data.get("SpawnX")?.as_i64()?).ok()?;
+            let sy = data.get("SpawnY")?.as_i64()?;
+            let sz = i32::try_from(data.get("SpawnZ")?.as_i64()?).ok()?;
+            Some((f64::from(sx) + 0.5, sy as f64, f64::from(sz) + 0.5))
+        });
+
+    (seed, spawn)
+}
+
+fn nbt_spawn_position(tag: &minecraftoss_core::nbt::Tag) -> Option<(f64, f64, f64)> {
+    use minecraftoss_core::nbt::Tag;
+
+    let values = match tag {
+        Tag::IntArray(values) if values.len() == 3 => [i64::from(values[0]), i64::from(values[1]), i64::from(values[2])],
+        Tag::List(values) if values.len() == 3 => [
+            values[0].as_i64()?,
+            values[1].as_i64()?,
+            values[2].as_i64()?,
+        ],
+        _ => return None,
+    };
+    let x = i32::try_from(values[0]).ok()?;
+    let z = i32::try_from(values[2]).ok()?;
+    Some((f64::from(x) + 0.5, values[1] as f64, f64::from(z) + 0.5))
+}
+
+fn custom_spawn_override(world_dir: Option<&std::path::Path>) -> Option<(f64, f64, f64)> {
+    if let Ok(raw) = std::env::var("IW4L_MINECRAFT_SPAWN") {
+        let parsed = raw
+            .split(',')
+            .map(|s| s.trim().parse::<f64>())
+            .collect::<Result<Vec<_>, _>>();
+        if let Ok(nums) = parsed
+            && nums.len() == 3
+            && nums.iter().all(|n| n.is_finite())
+        {
+            return Some((nums[0], nums[1], nums[2]));
+        }
+        diag::warn!(World, "IW4L_MINECRAFT_SPAWN must contain three finite comma-separated coordinates");
+    }
+    world_dir.and_then(|dir| level_dat_info(dir).1)
+}
+
 fn load(seed: i64) -> Result<Loaded, String> {
     let root = assets::minecraft_map::root().ok_or_else(assets::minecraft_setup::status)?;
     let paths = DataPaths::under(&root);
     let registries = Arc::new(Registries::load(&paths)?);
     let packs = PackStack::open(vec![root.join("resourcepacks/local/minecraft-26.3")])
         .map_err(|e| e.to_string())?;
-    let stream = TerrainStream::for_dimension(
+    let world_dir = custom_world_dir();
+    if let Some(ref dir) = world_dir {
+        diag::info!(World, "Minecraft world: loading custom world from {}", dir.display());
+    }
+    let mut stream = TerrainStream::for_dimension(
         registries.clone(),
         seed,
         VIEW_DISTANCE,
         Dimension::Overworld,
-        None,
+        world_dir.as_deref(),
     )
     .map_err(|e| e.to_string())?;
+    if let Some(spawn) = custom_spawn_override(world_dir.as_deref()) {
+        let vertical_range = stream.states.vertical_range();
+        let block_coordinate = |value: f64| {
+            value.is_finite()
+                && value.floor() >= f64::from(i32::MIN)
+                && value.floor() <= f64::from(i32::MAX)
+        };
+        if block_coordinate(spawn.0) && block_coordinate(spawn.2) {
+            if block_coordinate(spawn.1) && vertical_range.contains(&(spawn.1.floor() as i32)) {
+                stream.player_spawn = spawn;
+                stream.world_spawn = (spawn.0.floor() as i32, spawn.1.floor() as i32, spawn.2.floor() as i32);
+                diag::info!(World, "Minecraft world: using custom spawn {:?}", stream.player_spawn);
+            } else {
+                diag::warn!(World, "Minecraft world: custom spawn Y={} is outside build range {:?}; finding a safe spawn near X/Z", spawn.1, vertical_range);
+                stream.world_spawn = (
+                    spawn.0.floor() as i32,
+                    vertical_range.start + (vertical_range.end - vertical_range.start) / 2,
+                    spawn.2.floor() as i32,
+                );
+                stream.player_spawn = stream.respawn_position();
+                stream.world_spawn = (
+                    stream.player_spawn.0.floor() as i32,
+                    stream.player_spawn.1.floor() as i32,
+                    stream.player_spawn.2.floor() as i32,
+                );
+                diag::info!(World, "Minecraft world: using safe spawn near custom X/Z {:?}", stream.player_spawn);
+            }
+        } else {
+            diag::warn!(World, "Minecraft world: custom spawn X/Z are outside supported coordinates; keeping generated spawn");
+        }
+    }
     let build = minecraft_terrain::mesh::build(&HandcraftedScene::default(), &packs)
         .map_err(|e| e.to_string())?;
     let scene = HandcraftedScene::streamed(stream.states.clone());
@@ -289,6 +428,11 @@ fn seed() -> i64 {
         .and_then(|s| s.parse().ok())
     {
         return seed;
+    }
+    if let Some(dir) = custom_world_dir()
+        && let (Some(level_seed), _) = level_dat_info(&dir)
+    {
+        return level_seed;
     }
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

@@ -174,7 +174,13 @@ fn parse_state(registries: &Registries, tag: &Tag) -> Result<BlockStateId, Strin
         Some(p) if !p.is_empty() => format!("{id}[{}]", p.iter().map(|(k, v)| format!("{k}={}", v.as_str().unwrap_or_default())).collect::<Vec<_>>().join(",")),
         _ => id.to_owned(),
     };
-    registries.blocks.parse_state(&text)
+    if let Ok(state) = registries.blocks.parse_state(&text) {
+        return Ok(state);
+    }
+    if let Some(block_id) = registries.blocks.block_by_name(id) {
+        return Ok(registries.blocks.block(block_id).default_state());
+    }
+    Ok(BlockStateId::AIR)
 }
 
 /// Serializes a chunk.
@@ -296,8 +302,13 @@ fn with_keep_packed(nbt: &Tag, keep_packed: Option<bool>) -> Tag {
 pub fn read_chunk(tag: &Tag, registries: &Registries, min_y: i32, height: i32) -> Result<Chunk, String> {
     let int = |key: &str| tag.get(key).and_then(Tag::as_i64).map(|v| v as i32).ok_or_else(|| format!("chunk lacks {key}"));
     let pos = ChunkPos::new(int("xPos")?, int("zPos")?);
-    let status = tag.get("Status").and_then(Tag::as_str).ok_or("chunk lacks Status")?;
-    let status = STATUS_NAMES.iter().position(|&s| s == status).map(|i| ChunkStatus::ALL[i]).ok_or_else(|| format!("unknown status {status}"))?;
+    let status_str = tag.get("Status").and_then(Tag::as_str).unwrap_or("minecraft:full");
+    let status_trimmed = status_str.strip_prefix("minecraft:").unwrap_or(status_str);
+    let status = STATUS_NAMES
+        .iter()
+        .position(|&s| s.strip_prefix("minecraft:").unwrap_or(s) == status_trimmed)
+        .map(|i| ChunkStatus::ALL[i])
+        .unwrap_or(ChunkStatus::Full);
     let plains = registries.biomes.id("minecraft:plains").unwrap_or(BiomeId(0));
     let mut chunk = Chunk::new(pos, min_y, height, plains);
     chunk.status = status;
@@ -314,7 +325,7 @@ pub fn read_chunk(tag: &Tag, registries: &Registries, min_y: i32, height: i32) -
         if section.get("biomes").is_some() {
             slot.biomes = read_container::<BiomeId, SECTION_BIOMES>(section.get("biomes"), false, |t| {
                 let name = t.as_str().ok_or("biome is not a string")?;
-                registries.biomes.id(name).ok_or_else(|| format!("unknown biome {name}"))
+                Ok(registries.biomes.id(name).unwrap_or(plains))
             })?;
         }
         slot.recount(registries);

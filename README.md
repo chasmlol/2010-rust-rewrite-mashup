@@ -22,6 +22,10 @@ Modern Warfare 2, Skate 3 and Minecraft in one game, all running on
 - The minimap shows the Minecraft world around you.
 - Skate 3 mode works here too, with full block collision.
 
+## Minecraft Custom Maps
+- Download any custom map for Minecraft version 1.20.x, extract it, and place the world folder in the project root named `minecraft-world`.
+- The world should be a folder, not the RAR or ZIP file.
+
 You don't need Minecraft installed. The first time the game starts, it downloads Minecraft 26.3's own files (textures, sounds, world data) straight from Mojang's official servers, the same way the Minecraft launcher does. That's about 125 MB, into `iw4l-artifacts/minecraft-26.3`. After that it plays offline. Nothing from Minecraft is included in this repository.
 
 ## What you'll need

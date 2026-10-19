@@ -94,8 +94,21 @@ IW4L-Skate/
 └── LICENSE NOTICE OFL-Oxanium.txt COPYING-FreeFont.txt
 ```
 
-`skate/converter/build.ps1 -SkateEngine <checkout> -Out <folder>` packages the
-converter from a skate-3-rust-engine checkout at `cb79689`. It needs Python
-3.13 with `pyinstaller`, `numpy` and `Pillow`, plus `rustc`.
+On Windows, create a Python 3.13+ environment and install the converter
+dependencies, then build:
+
+```powershell
+py -3 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install pyinstaller numpy Pillow
+$env:PATH = "$PWD\.venv\Scripts;$env:PATH"
+pwsh .\skate\converter\build.ps1
+```
+
+The script fetches the pinned skate-3-rust-engine `tools` subtree into a
+temporary sparse checkout, builds the converter, and removes the checkout
+afterward. By default the executable is written to
+`target/play/skate/iw4l-skate-convert.exe`. Pass `-Out <folder>` to choose
+another destination, or `-SkateEngine <checkout>` to reuse an existing
+checkout. The build also needs `git` and `rustc` on `PATH`.
 
 Unofficial fan project, not affiliated with Activision, Infinity Ward or EA.

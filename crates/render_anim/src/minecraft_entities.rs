@@ -98,7 +98,8 @@ pub(crate) struct PlayerView {
 
 impl Entities {
     pub(crate) fn new(stream: &TerrainStream, seed: i64) -> Self {
-        let sim = ServerSim::new(stream.world_gen(), stream.states.clone(), "minecraft:overworld");
+        let mut sim = ServerSim::new(stream.world_gen(), stream.states.clone(), "minecraft:overworld");
+        sim.set_entity_storage(stream.storage());
         let mut server = ServerHandle::spawn(sim);
         // Mob and block loot and the recipes (stack sizes), from the game's
         // data JAR when MinecraftOSS has one.

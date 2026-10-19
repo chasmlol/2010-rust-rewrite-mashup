@@ -28,6 +28,7 @@ pub struct ChunkStorage {
     /// Held while region files are written, so two flushes never write the
     /// same file at once; loads and saves only take the region caches.
     writing: Mutex<()>,
+    read_only: bool,
 }
 
 /// Region files of the entity storage.
@@ -46,7 +47,24 @@ impl ChunkStorage {
     /// Storage for a dimension (`minecraft:overworld`) of the world at `world`.
     pub fn new(world: &Path, dimension: &str, registries: Arc<Registries>, min_y: i32, height: i32) -> Self {
         let (namespace, path) = dimension.split_once(':').unwrap_or(("minecraft", dimension));
-        let base = world.join("dimensions").join(namespace).join(path);
+        let modern_base = world.join("dimensions").join(namespace).join(path);
+        let legacy_base = match (namespace, path) {
+            ("minecraft", "overworld") => world.to_path_buf(),
+            ("minecraft", "the_nether" | "nether") => world.join("DIM-1"),
+            ("minecraft", "the_end" | "end") => world.join("DIM1"),
+            _ => modern_base.clone(),
+        };
+        let base = if modern_base.join("region").is_dir() {
+            modern_base
+        } else if legacy_base.join("region").is_dir() {
+            legacy_base
+        } else {
+            modern_base
+        };
+        let read_only = std::env::var("IW4L_MINECRAFT_READONLY")
+            .ok()
+            .map(|v| !matches!(v.trim().to_ascii_lowercase().as_str(), "0" | "false" | "no" | "off"))
+            .unwrap_or_else(|| base.join("region").is_dir());
         Self {
             dir: base.join("region"),
             entities: EntityRegions { dir: base.join("entities"), regions: Mutex::default() },
@@ -55,6 +73,7 @@ impl ChunkStorage {
             height,
             regions: Mutex::default(),
             writing: Mutex::default(),
+            read_only,
         }
     }
 
@@ -115,6 +134,12 @@ impl ChunkStorage {
     /// Writes every region with unsaved chunks: each is copied (its chunks
     /// are shared) under the region cache and written outside it.
     pub fn flush(&self) -> Result<(), String> {
+        if self.read_only {
+            for regions in [&self.regions, &self.entities.regions] {
+                regions.lock().expect("region cache").dirty.clear();
+            }
+            return Ok(());
+        }
         let _writing = self.writing.lock().expect("region writer");
         for (dir, regions) in [(&self.dir, &self.regions), (&self.entities.dir, &self.entities.regions)] {
             let snapshots: Vec<((i32, i32), RegionFile)> = {
